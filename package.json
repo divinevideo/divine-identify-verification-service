@@ -1,0 +1,23 @@
+{
+  "name": "divine-identity-verification-service",
+  "version": "1.0.0",
+  "description": "NIP-39 external identity claim verification service for divine ecosystem",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest",
+    "test:once": "vitest run"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "@scure/base": "^2.0.0",
+    "hono": "^4.10.6"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.0",
+    "@cloudflare/workers-types": "^4.20251115.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

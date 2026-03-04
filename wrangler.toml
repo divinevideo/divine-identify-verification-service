@@ -1,0 +1,22 @@
+name = "divine-identity-verification-service"
+main = "src/index.ts"
+compatibility_date = "2024-11-15"
+
+[vars]
+# Optional: GitHub API token for higher rate limits
+# Set via wrangler secret put GITHUB_TOKEN
+#
+# OAuth configuration (set via wrangler secret put):
+# TWITTER_CLIENT_ID - Twitter OAuth 2.0 client ID
+# TWITTER_CLIENT_SECRET - Twitter OAuth 2.0 client secret
+# OAUTH_REDIRECT_BASE - Base URL for callbacks (e.g., https://verify.divine.video)
+
+[[kv_namespaces]]
+binding = "CACHE_KV"
+id = "24ad07be8c144e47aa04bd968495d678"
+preview_id = "da1b5071ce694535b5798970a7b3d5c4"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "5f1378af5d954c16a34c3100a60baee9"
+preview_id = "bb40c0a0d3c346a1894d8043c1b31633"
