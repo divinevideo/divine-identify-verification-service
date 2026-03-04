@@ -33,7 +33,7 @@ export interface OAuthVerification {
   checked_at: number
 }
 
-export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky'
+export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord'
 
 export interface VerifyClaim {
   pubkey: string

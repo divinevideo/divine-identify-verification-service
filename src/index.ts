@@ -203,6 +203,12 @@ app.get('/', (c) => {
           <td><code>channel/messageId</code> (e.g., <code>mygroup/42</code>)</td>
           <td>No</td>
         </tr>
+        <tr>
+          <td><code>discord</code></td><td>Discord</td>
+          <td>Discord username (e.g., <code>alice</code>)</td>
+          <td>Invite code (e.g., <code>AbCdEf</code> from <code>discord.gg/AbCdEf</code>)</td>
+          <td>No</td>
+        </tr>
       </table>
       <div class="note">The proof post must contain the user's <code>npub</code> (bech32-encoded Nostr public key, starting with <code>npub1</code>). The service converts the hex pubkey to npub format before searching.</div>
     </section>
@@ -488,6 +494,10 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         <tr><td><code>Message author does not match claimed identity</code></td><td>Telegram message was posted by someone else</td></tr>
         <tr><td><code>Post or thread not found on Bluesky</code></td><td>Bluesky post doesn't exist</td></tr>
         <tr><td><code>Post author does not match claimed identity</code></td><td>Bluesky post was authored by a different handle/DID</td></tr>
+        <tr><td><code>Invite not found or expired</code></td><td>Discord invite code doesn't exist or was revoked</td></tr>
+        <tr><td><code>Invite does not point to a server</code></td><td>Discord invite is for a group DM, not a server</td></tr>
+        <tr><td><code>Invite has expired</code></td><td>Discord invite is not permanent — user needs to create a non-expiring invite</td></tr>
+        <tr><td><code>npub not found in server name or description</code></td><td>Discord server exists but name/description don't contain the npub</td></tr>
         <tr><td><code>Pubkey does not match NIP-05 registration</code></td><td>The domain's nostr.json has a different pubkey for this name</td></tr>
       </table>
     </section>
@@ -564,7 +574,8 @@ const result = await resp.json()
 ["i", "twitter:jack", "1234567890"]
 ["i", "mastodon:mastodon.social/@alice", "109876543210"]
 ["i", "telegram:alice", "mygroup/42"]
-["i", "bluesky:alice.bsky.social", "3k2la7k"]</pre>
+["i", "bluesky:alice.bsky.social", "3k2la7k"]
+["i", "discord:alice", "AbCdEf"]</pre>
       <p>Each tag is <code>["i", "{platform}:{identity}", "{proof}"]</code>. The <code>pubkey</code> is the event author's public key.</p>
     </section>
 
@@ -707,7 +718,7 @@ const result = await resp.json()
           const [platform, ...rest] = tag[1].split(':');
           const identity = rest.join(':');
           return { platform, identity, proof: tag[2], pubkey };
-        }).filter(c => ['github','twitter','mastodon','telegram','bluesky'].includes(c.platform));
+        }).filter(c => ['github','twitter','mastodon','telegram','bluesky','discord'].includes(c.platform));
 
         if (claims.length === 0) {
           showStatus('Profile has identity tags but none for supported platforms.', 'error');
