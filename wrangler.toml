@@ -6,10 +6,17 @@ compatibility_date = "2024-11-15"
 # Optional: GitHub API token for higher rate limits
 # Set via wrangler secret put GITHUB_TOKEN
 #
+# YouTube Data API v3 key (for video description lookup):
+# wrangler secret put YOUTUBE_API_KEY
+#
 # OAuth configuration (set via wrangler secret put):
 # TWITTER_CLIENT_ID - Twitter OAuth 2.0 client ID
 # TWITTER_CLIENT_SECRET - Twitter OAuth 2.0 client secret
-# OAUTH_REDIRECT_BASE - Base URL for callbacks (e.g., https://verify.divine.video)
+# GOOGLE_CLIENT_ID - Google OAuth 2.0 client ID (for YouTube)
+# GOOGLE_CLIENT_SECRET - Google OAuth 2.0 client secret (for YouTube)
+# TIKTOK_CLIENT_KEY - TikTok Login Kit client key
+# TIKTOK_CLIENT_SECRET - TikTok Login Kit client secret
+# OAUTH_REDIRECT_BASE - Base URL for callbacks (e.g., https://verifier.divine.video)
 
 [[kv_namespaces]]
 binding = "CACHE_KV"

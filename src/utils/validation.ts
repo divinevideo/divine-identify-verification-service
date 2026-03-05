@@ -1,6 +1,6 @@
 import type { Platform, VerifyClaim } from '../types'
 
-const VALID_PLATFORMS: Platform[] = ['github', 'twitter', 'mastodon', 'telegram', 'bluesky', 'discord']
+const VALID_PLATFORMS: Platform[] = ['github', 'twitter', 'mastodon', 'telegram', 'bluesky', 'discord', 'youtube', 'tiktok']
 
 export function isValidPlatform(platform: string): platform is Platform {
   return VALID_PLATFORMS.includes(platform as Platform)

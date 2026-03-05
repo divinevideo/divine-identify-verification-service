@@ -68,7 +68,7 @@ app.get('/', (c) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Divine Identity Verification — Prove You Are Who You Say You Are</title>
-  <meta name="description" content="Verify your identity across platforms. Link your Twitter, GitHub, Bluesky, Mastodon, and more to your Nostr profile to prevent impersonation and build trust.">
+  <meta name="description" content="Verify your identity across platforms. Link your Twitter, GitHub, Bluesky, Mastodon, YouTube, TikTok, and more to your Nostr profile to prevent impersonation and build trust.">
   <meta property="og:title" content="Divine Identity Verification">
   <meta property="og:description" content="Prove you are who you say you are. Link your social accounts to your Nostr identity to prevent impersonation.">
   <meta property="og:type" content="website">
@@ -213,7 +213,7 @@ app.get('/', (c) => {
       <div class="value-card">
         <div class="icon">&#9989;</div>
         <h3>Build Trust</h3>
-        <p>When someone finds your Divine profile, they can see that your Twitter, GitHub, Bluesky, and other accounts are all confirmed to be you. No guessing, no doubt.</p>
+        <p>When someone finds your Divine profile, they can see that your Twitter, GitHub, Bluesky, YouTube, and other accounts are all confirmed to be you. No guessing, no doubt.</p>
       </div>
       <div class="value-card">
         <div class="icon">&#127760;</div>
@@ -251,6 +251,14 @@ app.get('/', (c) => {
         <svg viewBox="0 0 24 24" fill="#333"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1569 2.4189z"/></svg>
         Discord
       </div>
+      <div class="platform-pill">
+        <svg viewBox="0 0 24 24" fill="#333"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+        YouTube
+      </div>
+      <div class="platform-pill">
+        <svg viewBox="0 0 24 24" fill="#333"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>
+        TikTok
+      </div>
     </div>
 
     <!-- HOW TO VERIFY -->
@@ -267,7 +275,7 @@ app.get('/', (c) => {
         <div class="step">
           <div class="step-number">2</div>
           <h4>Pick a platform to link</h4>
-          <p>Choose Twitter, GitHub, Bluesky, Mastodon, Telegram, or Discord.</p>
+          <p>Choose Twitter, GitHub, Bluesky, Mastodon, Telegram, Discord, YouTube, or TikTok.</p>
         </div>
         <div class="step">
           <div class="step-number">3</div>
@@ -282,7 +290,7 @@ app.get('/', (c) => {
       </div>
 
       <div class="note">
-        <strong>No posting required for Twitter and Bluesky.</strong> Just sign in with your account and we'll confirm it's yours. For other platforms, you post a short proof message &mdash; you can delete it afterward if you want, though it's better to keep it up.
+        <strong>No posting required for Twitter, Bluesky, YouTube, and TikTok.</strong> Just sign in with your account and we'll confirm it's yours. For other platforms, you post a short proof message &mdash; you can delete it afterward if you want, though it's better to keep it up.
       </div>
     </section>
 
@@ -321,7 +329,7 @@ app.get('/', (c) => {
       <p>Two verification methods are supported:</p>
       <ul>
         <li><strong>Proof posts</strong> &mdash; User publishes a post containing their <code>npub</code> on the external platform. The service fetches the post and checks that the npub is present and the author matches.</li>
-        <li><strong>OAuth login</strong> (Twitter, Bluesky) &mdash; User authenticates directly. No proof post needed.</li>
+        <li><strong>OAuth login</strong> (Twitter, Bluesky, YouTube, TikTok) &mdash; User authenticates directly. No proof post needed.</li>
       </ul>
     </section>
 
@@ -365,6 +373,18 @@ app.get('/', (c) => {
           <td>Invite code</td>
           <td>No</td>
         </tr>
+        <tr>
+          <td><code>youtube</code></td>
+          <td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td>
+          <td>Video ID (11 chars)</td>
+          <td>Yes</td>
+        </tr>
+        <tr>
+          <td><code>tiktok</code></td>
+          <td>Username (without @)</td>
+          <td>Video ID (numeric)</td>
+          <td>Yes</td>
+        </tr>
       </table>
     </section>
 
@@ -385,7 +405,7 @@ Content-Type: application/json
 
       <table>
         <tr><th>Field</th><th>Type</th><th>Description</th></tr>
-        <tr><td><code>platform</code></td><td>string</td><td>One of: <code>github</code>, <code>twitter</code>, <code>bluesky</code>, <code>mastodon</code>, <code>telegram</code>, <code>discord</code></td></tr>
+        <tr><td><code>platform</code></td><td>string</td><td>One of: <code>github</code>, <code>twitter</code>, <code>bluesky</code>, <code>mastodon</code>, <code>telegram</code>, <code>discord</code>, <code>youtube</code>, <code>tiktok</code></td></tr>
         <tr><td><code>identity</code></td><td>string</td><td>Username or handle on the platform</td></tr>
         <tr><td><code>proof</code></td><td>string</td><td>ID of the proof post</td></tr>
         <tr><td><code>pubkey</code></td><td>string</td><td>64-character lowercase hex Nostr public key</td></tr>
@@ -453,17 +473,19 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     </section>
 
     <section id="oauth">
-      <h2>OAuth Verification (Twitter, Bluesky)</h2>
+      <h2>OAuth Verification (Twitter, Bluesky, YouTube, TikTok)</h2>
       <p>Users can verify by logging in instead of posting a proof.</p>
 
       <h3>Start OAuth</h3>
       <pre>GET ${origin}/auth/twitter/start?pubkey=hex64&amp;return_url=https://divine.video/settings
-GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;return_url=https://divine.video/settings</pre>
+GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;return_url=https://divine.video/settings
+GET ${origin}/auth/youtube/start?pubkey=hex64&amp;return_url=https://divine.video/settings
+GET ${origin}/auth/tiktok/start?pubkey=hex64&amp;return_url=https://divine.video/settings</pre>
 
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/twitter/status?pubkey=hex64&amp;identity=jack</pre>
 
-      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for Twitter and Bluesky.</div>
+      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for Twitter, Bluesky, YouTube, and TikTok.</div>
     </section>
 
     <section id="other">
@@ -629,7 +651,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
           const [platform, ...rest] = tag[1].split(':');
           const identity = rest.join(':');
           return { platform, identity, proof: tag[2], pubkey };
-        }).filter(c => ['github','twitter','mastodon','telegram','bluesky','discord'].includes(c.platform));
+        }).filter(c => ['github','twitter','mastodon','telegram','bluesky','discord','youtube','tiktok'].includes(c.platform));
 
         if (claims.length === 0) {
           showStatus('Profile has identity tags but none for supported platforms.', 'error');

@@ -2,14 +2,20 @@ export type Bindings = {
   CACHE_KV: KVNamespace
   RATE_LIMIT_KV: KVNamespace
   GITHUB_TOKEN?: string
+  // YouTube Data API v3 key — set via wrangler secret put YOUTUBE_API_KEY
+  YOUTUBE_API_KEY?: string
   // OAuth — set via wrangler secret
   TWITTER_CLIENT_ID?: string
   TWITTER_CLIENT_SECRET?: string
+  GOOGLE_CLIENT_ID?: string
+  GOOGLE_CLIENT_SECRET?: string
+  TIKTOK_CLIENT_KEY?: string
+  TIKTOK_CLIENT_SECRET?: string
   // Base URL for OAuth callbacks (e.g., https://verify.divine.video)
   OAUTH_REDIRECT_BASE?: string
 }
 
-export type OAuthPlatform = 'twitter' | 'bluesky'
+export type OAuthPlatform = 'twitter' | 'bluesky' | 'youtube' | 'tiktok'
 
 export interface OAuthState {
   platform: OAuthPlatform
@@ -33,7 +39,7 @@ export interface OAuthVerification {
   checked_at: number
 }
 
-export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord'
+export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord' | 'youtube' | 'tiktok'
 
 export interface VerifyClaim {
   pubkey: string

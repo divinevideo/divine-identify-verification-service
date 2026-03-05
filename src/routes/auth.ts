@@ -5,6 +5,8 @@ import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { getOAuthVerification } from '../oauth/state'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
+import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
+import { startTikTokOAuth, handleTikTokCallback } from '../oauth/tiktok'
 
 const auth = new Hono<{ Bindings: Bindings }>()
 
@@ -87,8 +89,14 @@ auth.get('/:platform/start', async (c) => {
       }
       return startBlueskyOAuth(c.env, normalizedPubkey, handle, returnUrl)
 
+    case 'youtube':
+      return startYouTubeOAuth(c.env, normalizedPubkey, returnUrl)
+
+    case 'tiktok':
+      return startTikTokOAuth(c.env, normalizedPubkey, returnUrl)
+
     default:
-      return c.json({ error: 'OAuth not supported for this platform. Supported: twitter, bluesky' }, 400)
+      return c.json({ error: 'OAuth not supported for this platform. Supported: twitter, bluesky, youtube, tiktok' }, 400)
   }
 })
 
@@ -114,6 +122,56 @@ auth.get('/twitter/callback', async (c) => {
     return c.redirect(redirectUrl)
   } catch (err) {
     console.error('Twitter callback error:', err instanceof Error ? err.message : err)
+    return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
+  }
+})
+
+auth.get('/youtube/callback', async (c) => {
+  const code = c.req.query('code')
+  const state = c.req.query('state')
+  const error = c.req.query('error')
+
+  if (error) {
+    return c.json({ error: 'YouTube OAuth was denied or cancelled' }, 400)
+  }
+  if (!code || !state) {
+    return c.json({ error: 'Missing code or state parameter' }, 400)
+  }
+
+  try {
+    const result = await handleYouTubeCallback(c.env, code, state)
+    const redirectUrl = buildReturnUrl(result.returnUrl, result.success
+      ? { oauth_verified: 'true', platform: 'youtube', identity: result.identity || '' }
+      : { oauth_error: 'Verification failed' }
+    )
+    return c.redirect(redirectUrl)
+  } catch (err) {
+    console.error('YouTube callback error:', err instanceof Error ? err.message : err)
+    return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
+  }
+})
+
+auth.get('/tiktok/callback', async (c) => {
+  const code = c.req.query('code')
+  const state = c.req.query('state')
+  const error = c.req.query('error')
+
+  if (error) {
+    return c.json({ error: 'TikTok OAuth was denied or cancelled' }, 400)
+  }
+  if (!code || !state) {
+    return c.json({ error: 'Missing code or state parameter' }, 400)
+  }
+
+  try {
+    const result = await handleTikTokCallback(c.env, code, state)
+    const redirectUrl = buildReturnUrl(result.returnUrl, result.success
+      ? { oauth_verified: 'true', platform: 'tiktok', identity: result.identity || '' }
+      : { oauth_error: 'Verification failed' }
+    )
+    return c.redirect(redirectUrl)
+  } catch (err) {
+    console.error('TikTok callback error:', err instanceof Error ? err.message : err)
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -157,8 +215,8 @@ auth.get('/:platform/status', async (c) => {
   if (!identity) {
     return c.json({ error: 'Missing identity parameter' }, 400)
   }
-  if (platform !== 'twitter' && platform !== 'bluesky') {
-    return c.json({ error: 'OAuth status only available for twitter and bluesky' }, 400)
+  if (platform !== 'twitter' && platform !== 'bluesky' && platform !== 'youtube' && platform !== 'tiktok') {
+    return c.json({ error: 'OAuth status only available for twitter, bluesky, youtube, and tiktok' }, 400)
   }
 
   const normalizedPubkey = normalizePubkey(pubkey)
