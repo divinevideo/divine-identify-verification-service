@@ -65,6 +65,7 @@ app.get('/', (c) => {
   const origin = new URL(c.req.url).origin
   const hasYouTube = !!c.env.YOUTUBE_API_KEY
   const hasTikTok = true // TikTok oEmbed is public, no key needed for proof verification
+  const divineLoginUrl = `https://login.divine.video/?return_url=${encodeURIComponent(`${origin}/#verify-here`)}`
 
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
   const ytPill = hasYouTube ? '<div class="platform-pill"><svg viewBox="0 0 24 24" fill="#333"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg> YouTube</div>' : ''
@@ -419,8 +420,8 @@ app.get('/', (c) => {
       <div class="steps">
         <div class="step">
           <div class="step-number">1</div>
-          <h4>Open Verify Here</h4>
-          <p>Scroll to <a href="#verify-here">Verify Here</a> and paste your Divine address, <code>npub</code>, profile link, or key.</p>
+          <h4>Sign in first</h4>
+          <p>Scroll to <a href="#verify-here">Verify Here</a> and connect your Nostr signer so this app can publish your verified links.</p>
         </div>
         <div class="step">
           <div class="step-number">2</div>
@@ -446,15 +447,21 @@ app.get('/', (c) => {
 
     <section id="verify-here" class="verify-here">
       <h2>Verify Here</h2>
-      <p class="verify-lead">This page is built for regular users: fill in your account once, then use Quick Connect.</p>
+      <p class="verify-lead">Yes, login is required. Connect your Nostr signer first so verified links can be published to your profile.</p>
 
       <div class="verify-step-grid">
         <div class="verify-card">
           <span class="step-pill">Step 1</span>
-          <h3 style="margin-top:0;">Your Divine / Nostr account</h3>
-          <label for="verify-pubkey-input" class="field-label">Paste your Divine address, npub, profile link, or key</label>
+          <h3 style="margin-top:0;">Sign in with your Nostr account</h3>
+          <p>Use your signer/extension. This lets us publish the final verification tag into your Nostr profile (kind 0).</p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
+            <button id="connect-nostr-btn" class="verify-btn verify-btn-primary" type="button">Connect Nostr signer</button>
+            <a href="${divineLoginUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-outline" style="padding:0.52rem 0.85rem;border-radius:8px;font-size:0.9rem;">Open login.divine.video</a>
+          </div>
+          <label for="verify-pubkey-input" class="field-label">Account (auto-filled after login; manual paste fallback)</label>
           <input id="verify-pubkey-input" class="field-input" type="text" placeholder="alice@divine.video or npub1...">
-          <p class="field-help">We will resolve this automatically to your public key.</p>
+          <p class="field-help">If signer is not available, you can still paste your Divine address, npub, profile URL, or 64-char key.</p>
+          <div id="verify-login-status" class="status-row"></div>
           <div id="verify-global-status" class="status-row"></div>
         </div>
 
@@ -490,6 +497,11 @@ app.get('/', (c) => {
           <p id="proof-helper" class="field-help">Tip: for Twitter and Bluesky, paste the full post URL.</p>
           <button id="proof-verify-btn" class="verify-btn verify-btn-success" type="button">Verify this link</button>
           <div id="proof-status" class="status-row"></div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+            <button id="publish-kind0-btn" class="verify-btn verify-btn-primary" type="button">Publish to Nostr profile</button>
+          </div>
+          <p class="field-help">This writes/updates your identity tag in your signed Nostr kind 0 profile event.</p>
+          <div id="publish-status" class="status-row"></div>
           <pre id="proof-result" style="display:none;margin-top:0.75rem;"></pre>
         </div>
       </details>
@@ -703,6 +715,8 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 
     <script>
     const API = '${origin}';
+    const PROFILE_RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
+    let signerPubkeyHex = null;
 
     function npubToHex(npub) {
       const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
@@ -795,6 +809,75 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       if (nip05Match) return await resolveNip05ToHex(nip05Match[1]);
 
       throw new Error('Could not read your key. Paste a Divine address, npub, profile URL, or 64-character key.');
+    }
+
+    function setAccountInputValue(value) {
+      const inputEl = document.getElementById('verify-pubkey-input');
+      if (!inputEl) return;
+      inputEl.value = value;
+      if (value) localStorage.setItem('verifyer_account_input', value);
+    }
+
+    function inferLoginQueryPubkey(params) {
+      const keys = ['npub', 'pubkey', 'nostr_pubkey', 'key'];
+      for (const key of keys) {
+        const value = params.get(key);
+        if (!value) continue;
+        const hex = extractHexFromText(value);
+        if (hex) return hex;
+        const npub = extractNpubFromText(value);
+        if (npub) return npubToHex(npub);
+      }
+      return null;
+    }
+
+    function applyLoginQueryHint() {
+      const params = new URLSearchParams(window.location.search);
+      const hintPubkey = inferLoginQueryPubkey(params);
+      if (!hintPubkey) return;
+      signerPubkeyHex = hintPubkey;
+      setAccountInputValue(hintPubkey);
+      setStatus('verify-login-status', 'Logged in. Nostr key detected from return URL.', 'ok');
+      params.delete('npub');
+      params.delete('pubkey');
+      params.delete('nostr_pubkey');
+      params.delete('key');
+      const cleanUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
+      window.history.replaceState({}, '', cleanUrl);
+    }
+
+    async function connectNostrSigner() {
+      clearStatus('verify-login-status');
+      try {
+        setButtonLoading('connect-nostr-btn', true, 'Connecting...');
+        if (!window.nostr || typeof window.nostr.getPublicKey !== 'function') {
+          throw new Error('No Nostr signer found. Install a signer extension or use login.divine.video.');
+        }
+        const pubkey = await window.nostr.getPublicKey();
+        if (!pubkey || !/^[0-9a-f]{64}$/i.test(pubkey)) {
+          throw new Error('Signer returned an invalid key.');
+        }
+        signerPubkeyHex = pubkey.toLowerCase();
+        setAccountInputValue(signerPubkeyHex);
+        setStatus('verify-login-status', 'Connected. You are signed in with your Nostr account.', 'ok');
+      } catch (e) {
+        setStatus('verify-login-status', e.message || 'Could not connect signer.', 'error');
+      } finally {
+        setButtonLoading('connect-nostr-btn', false, '');
+      }
+    }
+
+    async function getActivePubkey() {
+      const accountInput = document.getElementById('verify-pubkey-input').value;
+      if (accountInput && accountInput.trim()) {
+        const parsed = await normalizePubkeyInput(accountInput);
+        if (signerPubkeyHex && signerPubkeyHex !== parsed) {
+          throw new Error('The typed account does not match your signed-in signer key.');
+        }
+        return parsed;
+      }
+      if (signerPubkeyHex) return signerPubkeyHex;
+      throw new Error('Please sign in with Nostr first, or paste your account.');
     }
 
     function setButtonLoading(buttonId, isLoading, loadingText) {
@@ -999,10 +1082,9 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         setButtonLoading('oauth-start-btn', true, 'Opening sign-in...');
         setStatus('oauth-status', 'Checking your Divine account...', 'loading');
 
-        const accountInput = document.getElementById('verify-pubkey-input').value;
-        const pubkey = await normalizePubkeyInput(accountInput);
+        const pubkey = await getActivePubkey();
         const platform = document.getElementById('oauth-platform-select').value;
-        localStorage.setItem('verifyer_account_input', accountInput.trim());
+        setAccountInputValue(pubkey);
 
         const params = new URLSearchParams({
           pubkey,
@@ -1026,13 +1108,13 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       resultEl.style.display = 'none';
       try {
         clearStatus('verify-global-status');
+        clearStatus('publish-status');
         clearStatus('proof-status');
         setButtonLoading('proof-verify-btn', true, 'Checking...');
         setStatus('proof-status', 'Checking your account...', 'loading');
 
-        const accountInput = document.getElementById('verify-pubkey-input').value;
-        const pubkey = await normalizePubkeyInput(accountInput);
-        localStorage.setItem('verifyer_account_input', accountInput.trim());
+        const pubkey = await getActivePubkey();
+        setAccountInputValue(pubkey);
 
         const platform = document.getElementById('proof-platform-select').value;
         const rawIdentity = document.getElementById('proof-identity-input').value;
@@ -1072,6 +1154,131 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         setStatus('proof-status', e.message || 'Verification failed.', 'error');
       } finally {
         setButtonLoading('proof-verify-btn', false, '');
+      }
+    }
+
+    function currentProofContext() {
+      const platform = document.getElementById('proof-platform-select').value;
+      const normalized = normalizeProofInputs(
+        platform,
+        document.getElementById('proof-identity-input').value,
+        document.getElementById('proof-proof-input').value
+      );
+      document.getElementById('proof-identity-input').value = normalized.identity;
+      document.getElementById('proof-proof-input').value = normalized.proof;
+      return { platform, identity: normalized.identity, proof: normalized.proof || 'oauth' };
+    }
+
+    function publishEventToRelay(relayUrl, event) {
+      return new Promise((resolve) => {
+        let settled = false;
+        let ws = null;
+        const done = (ok, message) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (ws) {
+            try { ws.close(); } catch {}
+          }
+          resolve({ relay: relayUrl, ok, message });
+        };
+
+        const timer = setTimeout(() => done(false, 'timeout'), 7000);
+        try {
+          ws = new WebSocket(relayUrl);
+        } catch {
+          done(false, 'connect failed');
+          return;
+        }
+
+        ws.onopen = () => {
+          try {
+            ws.send(JSON.stringify(['EVENT', event]));
+          } catch {
+            done(false, 'send failed');
+          }
+        };
+        ws.onmessage = (msg) => {
+          try {
+            const data = JSON.parse(msg.data);
+            if (data[0] === 'OK' && data[1] === event.id) {
+              done(Boolean(data[2]), data[3] || (data[2] ? 'accepted' : 'rejected'));
+            } else if (data[0] === 'NOTICE') {
+              done(false, data[1] || 'notice');
+            }
+          } catch {}
+        };
+        ws.onerror = () => done(false, 'relay error');
+        ws.onclose = () => done(false, 'closed');
+      });
+    }
+
+    async function publishIdentityTagToNostr() {
+      clearStatus('verify-global-status');
+      clearStatus('publish-status');
+      try {
+        setButtonLoading('publish-kind0-btn', true, 'Publishing...');
+        setStatus('publish-status', 'Checking signer and profile...', 'loading');
+
+        if (!window.nostr || typeof window.nostr.signEvent !== 'function') {
+          throw new Error('A Nostr signer is required to publish. Click "Connect Nostr signer" first.');
+        }
+
+        const activePubkey = await getActivePubkey();
+        const signerPubkey = (await window.nostr.getPublicKey()).toLowerCase();
+        if (activePubkey !== signerPubkey) {
+          throw new Error('Signed-in key and selected account do not match.');
+        }
+        signerPubkeyHex = signerPubkey;
+        setAccountInputValue(signerPubkey);
+
+        const link = currentProofContext();
+        if (!link.identity) {
+          throw new Error('Enter the platform account name first.');
+        }
+
+        setStatus('publish-status', 'Loading current kind 0 profile...', 'loading');
+        let profile = null;
+        for (const relay of PROFILE_RELAYS) {
+          try {
+            profile = await fetchProfile(relay, signerPubkey);
+            if (profile) break;
+          } catch {}
+        }
+
+        const content = profile && typeof profile.content === 'string' ? profile.content : '{}';
+        const tags = Array.isArray(profile?.tags) ? profile.tags.filter(Array.isArray) : [];
+        const claimKey = link.platform + ':' + link.identity;
+        const nextTags = tags.filter(tag => !(tag[0] === 'i' && typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey.toLowerCase()));
+        nextTags.push(['i', claimKey, link.proof]);
+
+        const unsignedEvent = {
+          kind: 0,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: nextTags,
+          content,
+          pubkey: signerPubkey,
+        };
+
+        setStatus('publish-status', 'Requesting signature from your signer...', 'loading');
+        const signedEvent = await window.nostr.signEvent(unsignedEvent);
+        if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
+          throw new Error('Signer did not return a valid signed event.');
+        }
+
+        setStatus('publish-status', 'Publishing kind 0 event to relays...', 'loading');
+        const relayResults = await Promise.all(PROFILE_RELAYS.map(relay => publishEventToRelay(relay, signedEvent)));
+        const successCount = relayResults.filter(r => r.ok).length;
+        if (successCount === 0) {
+          const firstError = relayResults[0] && relayResults[0].message ? relayResults[0].message : 'no relay accepted the event';
+          throw new Error('Publish failed: ' + firstError);
+        }
+
+        setStatus('publish-status', 'Published to ' + successCount + '/' + PROFILE_RELAYS.length + ' relays. Your Nostr profile link is now updated.', 'ok');
+      } catch (e) {
+        setStatus('publish-status', e.message || 'Could not publish to Nostr profile.', 'error');
+      } finally {
+        setButtonLoading('publish-kind0-btn', false, '');
       }
     }
 
@@ -1166,7 +1373,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         showStatus('Found pubkey: ' + pubkey.slice(0, 8) + '...' + pubkey.slice(-8) + '. Fetching profile from relays...', 'loading');
 
         // Fetch profile from Nostr relays to get i-tags
-        const relays = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
+        const relays = PROFILE_RELAYS;
         let profile = null;
 
         for (const relay of relays) {
@@ -1287,10 +1494,12 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     }
 
     // Verify Here wiring
+    document.getElementById('connect-nostr-btn').addEventListener('click', connectNostrSigner);
     document.getElementById('oauth-platform-select').addEventListener('change', updateOAuthInputs);
     document.getElementById('proof-platform-select').addEventListener('change', updateProofInputs);
     document.getElementById('oauth-start-btn').addEventListener('click', startOAuthVerification);
     document.getElementById('proof-verify-btn').addEventListener('click', verifySingleHere);
+    document.getElementById('publish-kind0-btn').addEventListener('click', publishIdentityTagToNostr);
     document.getElementById('verify-pubkey-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') startOAuthVerification();
     });
@@ -1308,6 +1517,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     if (savedAccountInput) {
       document.getElementById('verify-pubkey-input').value = savedAccountInput;
     }
+    applyLoginQueryHint();
     updateOAuthInputs();
     updateProofInputs();
     handleOAuthCallbackMessage();
