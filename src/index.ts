@@ -65,7 +65,7 @@ app.get('/', (c) => {
   const origin = new URL(c.req.url).origin
   const hasYouTube = !!c.env.YOUTUBE_API_KEY
   const hasTikTok = true // TikTok oEmbed is public, no key needed for proof verification
-  const divineLoginUrl = `https://login.divine.video/?return_url=${encodeURIComponent(`${origin}/#verify-here`)}`
+  const divineLoginUrl = `https://login.divine.video/login?return_url=${encodeURIComponent(`${origin}/#verify-here`)}`
 
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
   const ytPill = hasYouTube ? '<div class="platform-pill"><svg viewBox="0 0 24 24" fill="#333"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg> YouTube</div>' : ''
@@ -715,6 +715,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 
     <script>
     const API = '${origin}';
+    const DIVINE_LOGIN_URL = '${divineLoginUrl}';
     const PROFILE_RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
     let signerPubkeyHex = null;
 
@@ -851,7 +852,9 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       try {
         setButtonLoading('connect-nostr-btn', true, 'Signing in...');
         if (!window.nostr || typeof window.nostr.signEvent !== 'function') {
-          throw new Error('No Nostr signer found. Install a signer extension or use login.divine.video.');
+          setStatus('verify-login-status', 'Opening secure Divine Login...', 'loading');
+          window.location.href = DIVINE_LOGIN_URL;
+          return;
         }
 
         const loginUrl = 'https://login.divine.video/api/auth/login';
@@ -1099,7 +1102,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         }
       }
 
-      proof = proof.replace(/^\/+/, '').replace(/\/+$/, '');
+      proof = proof.replace(/^\\/+/, '').replace(/\\/+$/, '');
       return { identity, proof };
     }
 
