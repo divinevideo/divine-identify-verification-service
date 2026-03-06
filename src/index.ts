@@ -20,6 +20,7 @@ app.use('*', cors({
   origin: [
     'https://divine.video',
     'https://www.divine.video',
+    'https://verifyer.divine.video',
     'https://verifier.divine.video',
     'http://localhost:5173',
     'http://localhost:3000',
@@ -206,6 +207,143 @@ app.get('/', (c) => {
       content: ''; display: block; height: 1px; background: #e2e8f0;
       position: relative; top: 0.7rem;
     }
+
+    /* Verify flow */
+    .verify-here {
+      border: 2px solid #2b6cb0;
+      background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+    }
+    .verify-lead {
+      font-size: 1rem;
+      color: #2d3748;
+      margin-bottom: 1rem;
+    }
+    .verify-step-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+    .verify-card {
+      background: white;
+      border: 1px solid #dbe7f5;
+      border-radius: 12px;
+      padding: 1rem;
+    }
+    .step-pill {
+      display: inline-block;
+      background: #ebf8ff;
+      color: #2b6cb0;
+      border-radius: 999px;
+      padding: 0.25rem 0.65rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+    }
+    .field-label {
+      display: block;
+      font-size: 0.82rem;
+      color: #4a5568;
+      margin-bottom: 0.25rem;
+      font-weight: 600;
+    }
+    .field-input,
+    .field-select {
+      width: 100%;
+      padding: 0.62rem 0.72rem;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      margin-bottom: 0.6rem;
+      transition: border-color 0.2s;
+      outline: none;
+      background: #fff;
+    }
+    .field-input:focus,
+    .field-select:focus {
+      border-color: #2b6cb0;
+    }
+    .field-help {
+      color: #718096;
+      font-size: 0.82rem;
+      margin-top: -0.1rem;
+      margin-bottom: 0.55rem;
+    }
+    .status-row {
+      display: none;
+      padding: 0.52rem 0.75rem;
+      border-radius: 8px;
+      margin-top: 0.7rem;
+      font-size: 0.86rem;
+    }
+    .verify-btn {
+      padding: 0.62rem 1rem;
+      border: none;
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+      font-size: 0.93rem;
+      font-weight: 700;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    .verify-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.75;
+    }
+    .verify-btn-primary {
+      background: #2b6cb0;
+    }
+    .verify-btn-primary:hover:not(:disabled) {
+      background: #2c5282;
+    }
+    .verify-btn-success {
+      background: #2f855a;
+    }
+    .verify-btn-success:hover:not(:disabled) {
+      background: #276749;
+    }
+    .advanced-proof {
+      margin-top: 1rem;
+      border: 1px solid #dbe7f5;
+      border-radius: 12px;
+      padding: 0.8rem 0.9rem;
+      background: #fff;
+    }
+    .advanced-proof summary {
+      cursor: pointer;
+      font-weight: 700;
+      color: #2d3748;
+      outline: none;
+    }
+    .advanced-proof-inner {
+      margin-top: 0.8rem;
+    }
+
+    @media (max-width: 640px) {
+      .container {
+        padding: 1rem;
+      }
+      .hero {
+        padding-top: 2rem;
+      }
+      .hero h1 {
+        font-size: 1.9rem;
+      }
+      .verify-card {
+        padding: 0.85rem;
+      }
+      .steps {
+        gap: 0.75rem;
+      }
+      .step {
+        text-align: left;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+      }
+      .step-number {
+        margin-bottom: 0.5rem;
+      }
+    }
   </style>
 </head>
 <body>
@@ -276,23 +414,23 @@ app.get('/', (c) => {
     <!-- HOW TO VERIFY -->
     <section id="how-to-verify">
       <h2>How to Get Verified</h2>
-      <p>It takes about a minute. You're basically telling both platforms "these accounts belong to the same person."</p>
+      <p>Most people finish in under a minute. You are just confirming that your Divine account and social account belong to the same person.</p>
 
       <div class="steps">
         <div class="step">
           <div class="step-number">1</div>
-          <h4>Use the form below</h4>
-          <p>Scroll to <a href="#verify-here">Verify Here</a> and enter your Nostr pubkey once (hex or npub).</p>
+          <h4>Open Verify Here</h4>
+          <p>Scroll to <a href="#verify-here">Verify Here</a> and paste your Divine address, <code>npub</code>, profile link, or key.</p>
         </div>
         <div class="step">
           <div class="step-number">2</div>
-          <h4>Pick a platform to link</h4>
+          <h4>Pick a platform</h4>
           <p>${choosePlatforms}</p>
         </div>
         <div class="step">
           <div class="step-number">3</div>
-          <h4>Connect your account</h4>
-          <p>For Twitter and Bluesky, start OAuth right here. For other platforms, paste your identity + proof and verify directly.</p>
+          <h4>Use Quick Connect</h4>
+          <p>For Twitter/X, Bluesky, YouTube, and TikTok, just sign in from this page. No posting required.</p>
         </div>
         <div class="step">
           <div class="step-number">4</div>
@@ -302,51 +440,59 @@ app.get('/', (c) => {
       </div>
 
       <div class="note">
-        <strong>${noPostingPlatforms}</strong> Just sign in with your account and we'll confirm it's yours. For other platforms, you post a short proof message &mdash; you can delete it afterward if you want, though it's better to keep it up.
+        <strong>${noPostingPlatforms}</strong> For GitHub, Mastodon, Telegram, and Discord, use the advanced section to paste a post/invite link and verify it.
       </div>
     </section>
 
-    <section id="verify-here" style="border:2px solid #2b6cb0;">
+    <section id="verify-here" class="verify-here">
       <h2>Verify Here</h2>
-      <p>Do verification setup directly on this page. Start OAuth links or run a proof check without leaving Verifyer.</p>
+      <p class="verify-lead">This page is built for regular users: fill in your account once, then use Quick Connect.</p>
 
-      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
-        <input id="verify-pubkey-input" type="text" placeholder="Your npub1... or 64-char hex pubkey" style="flex:1;min-width:280px;padding:0.6rem 0.75rem;border:2px solid #e2e8f0;border-radius:8px;font-size:0.95rem;font-family:inherit;outline:none;transition:border-color 0.2s;" onfocus="this.style.borderColor='#2b6cb0'" onblur="this.style.borderColor='#e2e8f0'">
-      </div>
-      <div id="verify-global-status" style="display:none;padding:0.5rem 0.75rem;border-radius:6px;margin-bottom:0.75rem;font-size:0.85rem;"></div>
+      <div class="verify-step-grid">
+        <div class="verify-card">
+          <span class="step-pill">Step 1</span>
+          <h3 style="margin-top:0;">Your Divine / Nostr account</h3>
+          <label for="verify-pubkey-input" class="field-label">Paste your Divine address, npub, profile link, or key</label>
+          <input id="verify-pubkey-input" class="field-input" type="text" placeholder="alice@divine.video or npub1...">
+          <p class="field-help">We will resolve this automatically to your public key.</p>
+          <div id="verify-global-status" class="status-row"></div>
+        </div>
 
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem;">
-        <div style="background:#f7fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem;">
-          <h3 style="margin-top:0;">OAuth Link (No Post)</h3>
-          <p style="margin-bottom:0.75rem;">Twitter/X and Bluesky can be linked by login flow directly.</p>
-          <label style="display:block;font-size:0.8rem;color:#4a5568;margin-bottom:0.25rem;">Platform</label>
-          <select id="oauth-platform-select" style="width:100%;padding:0.55rem;border:2px solid #e2e8f0;border-radius:8px;margin-bottom:0.6rem;">
+        <div class="verify-card">
+          <span class="step-pill">Step 2 (Recommended)</span>
+          <h3 style="margin-top:0;">Quick Connect (no posting)</h3>
+          <p>Sign in with the platform account you want to link.</p>
+          <label for="oauth-platform-select" class="field-label">Platform</label>
+          <select id="oauth-platform-select" class="field-select">
             ${oauthPlatformOptions}
           </select>
           <div id="oauth-bluesky-handle-wrap" style="display:none;">
-            <label style="display:block;font-size:0.8rem;color:#4a5568;margin-bottom:0.25rem;">Bluesky handle</label>
-            <input id="oauth-bluesky-handle-input" type="text" placeholder="alice.bsky.social" style="width:100%;padding:0.55rem;border:2px solid #e2e8f0;border-radius:8px;margin-bottom:0.6rem;">
+            <label for="oauth-bluesky-handle-input" class="field-label">Bluesky handle</label>
+            <input id="oauth-bluesky-handle-input" class="field-input" type="text" placeholder="alice.bsky.social">
           </div>
-          <button id="oauth-start-btn" style="padding:0.55rem 1rem;background:#2b6cb0;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Start OAuth Verification</button>
-          <div id="oauth-status" style="display:none;padding:0.5rem 0.75rem;border-radius:6px;margin-top:0.75rem;font-size:0.85rem;"></div>
-        </div>
-
-        <div style="background:#f7fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem;">
-          <h3 style="margin-top:0;">Proof Verification</h3>
-          <p style="margin-bottom:0.75rem;">Check an identity claim with <code>/verify/single</code>.</p>
-          <label style="display:block;font-size:0.8rem;color:#4a5568;margin-bottom:0.25rem;">Platform</label>
-          <select id="proof-platform-select" style="width:100%;padding:0.55rem;border:2px solid #e2e8f0;border-radius:8px;margin-bottom:0.6rem;">
-            ${proofPlatformOptions}
-          </select>
-          <label style="display:block;font-size:0.8rem;color:#4a5568;margin-bottom:0.25rem;">Identity</label>
-          <input id="proof-identity-input" type="text" placeholder="e.g. octocat, alice.bsky.social, mastodon.social/@alice" style="width:100%;padding:0.55rem;border:2px solid #e2e8f0;border-radius:8px;margin-bottom:0.6rem;">
-          <label id="proof-label" style="display:block;font-size:0.8rem;color:#4a5568;margin-bottom:0.25rem;">Proof ID</label>
-          <input id="proof-proof-input" type="text" placeholder="e.g. gist id / tweet id / post rkey / status id" style="width:100%;padding:0.55rem;border:2px solid #e2e8f0;border-radius:8px;margin-bottom:0.6rem;">
-          <button id="proof-verify-btn" style="padding:0.55rem 1rem;background:#2f855a;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Verify Claim</button>
-          <div id="proof-status" style="display:none;padding:0.5rem 0.75rem;border-radius:6px;margin-top:0.75rem;font-size:0.85rem;"></div>
-          <pre id="proof-result" style="display:none;margin-top:0.75rem;"></pre>
+          <button id="oauth-start-btn" class="verify-btn verify-btn-primary" type="button">Continue to secure sign-in</button>
+          <div id="oauth-status" class="status-row"></div>
         </div>
       </div>
+
+      <details class="advanced-proof" id="advanced-proof">
+        <summary>Step 3 (Advanced): verify by post/link proof instead</summary>
+        <div class="advanced-proof-inner">
+          <p style="margin-bottom:0.75rem;">Use this only if you do not want Quick Connect. You can paste a full URL and we'll extract IDs where possible.</p>
+          <label for="proof-platform-select" class="field-label">Platform</label>
+          <select id="proof-platform-select" class="field-select">
+            ${proofPlatformOptions}
+          </select>
+          <label for="proof-identity-input" class="field-label">Your account name on that platform</label>
+          <input id="proof-identity-input" class="field-input" type="text" placeholder="e.g. octocat or alice.bsky.social">
+          <label id="proof-label" for="proof-proof-input" class="field-label">Post link or proof ID</label>
+          <input id="proof-proof-input" class="field-input" type="text" placeholder="Paste full post URL or just the ID">
+          <p id="proof-helper" class="field-help">Tip: for Twitter and Bluesky, paste the full post URL.</p>
+          <button id="proof-verify-btn" class="verify-btn verify-btn-success" type="button">Verify this link</button>
+          <div id="proof-status" class="status-row"></div>
+          <pre id="proof-result" style="display:none;margin-top:0.75rem;"></pre>
+        </div>
+      </details>
     </section>
 
     <!-- HOW IT WORKS -->
@@ -596,12 +742,69 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       if (el) el.style.display = 'none';
     }
 
-    function normalizePubkeyInput(raw) {
+    function safeDecodeText(input) {
+      try {
+        return decodeURIComponent(input);
+      } catch {
+        return input;
+      }
+    }
+
+    async function resolveNip05ToHex(identifier) {
+      const normalized = (identifier || '').trim().toLowerCase();
+      const parts = normalized.split('@');
+      if (parts.length !== 2) {
+        throw new Error('That address does not look valid. Use format name@domain.');
+      }
+      const local = parts[0] || '_';
+      const domain = parts[1];
+      const resp = await fetch('https://' + domain + '/.well-known/nostr.json?name=' + encodeURIComponent(local));
+      if (!resp.ok) {
+        throw new Error('Could not find "' + normalized + '". Check spelling and try again.');
+      }
+      const data = await resp.json();
+      const key = data && data.names ? data.names[local] : null;
+      if (!key || !/^[0-9a-f]{64}$/i.test(key)) {
+        throw new Error('That address did not resolve to a usable Nostr key.');
+      }
+      return key.toLowerCase();
+    }
+
+    function extractHexFromText(text) {
+      const match = (text || '').match(/([0-9a-fA-F]{64})/);
+      return match ? match[1].toLowerCase() : null;
+    }
+
+    function extractNpubFromText(text) {
+      const match = (text || '').toLowerCase().match(/(npub1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]+)/);
+      return match ? match[1] : null;
+    }
+
+    async function normalizePubkeyInput(raw) {
       const input = (raw || '').trim();
-      if (!input) throw new Error('Enter your Nostr pubkey first (npub or hex).');
-      if (input.startsWith('npub1')) return npubToHex(input);
-      if (/^[0-9a-f]{64}$/i.test(input)) return input.toLowerCase();
-      throw new Error('Pubkey must be npub1... or 64-char hex.');
+      if (!input) throw new Error('Enter your Divine address or npub first.');
+
+      const decoded = safeDecodeText(input);
+      const hex = extractHexFromText(decoded);
+      if (hex) return hex;
+
+      const npub = extractNpubFromText(decoded);
+      if (npub) return npubToHex(npub);
+
+      const nip05Match = decoded.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);
+      if (nip05Match) return await resolveNip05ToHex(nip05Match[1]);
+
+      throw new Error('Could not read your key. Paste a Divine address, npub, profile URL, or 64-character key.');
+    }
+
+    function setButtonLoading(buttonId, isLoading, loadingText) {
+      const button = document.getElementById(buttonId);
+      if (!button) return;
+      if (!button.dataset.defaultText) {
+        button.dataset.defaultText = button.textContent || '';
+      }
+      button.disabled = isLoading;
+      button.textContent = isLoading ? loadingText : button.dataset.defaultText;
     }
 
     function updateOAuthInputs() {
@@ -612,35 +815,209 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 
     function updateProofInputs() {
       const platform = document.getElementById('proof-platform-select').value;
-      const label = document.getElementById('proof-label');
-      const input = document.getElementById('proof-proof-input');
+      const identityInput = document.getElementById('proof-identity-input');
+      const proofLabel = document.getElementById('proof-label');
+      const proofInput = document.getElementById('proof-proof-input');
+      const helper = document.getElementById('proof-helper');
+
       if (platform === 'bluesky') {
-        label.textContent = 'Proof ID (optional with OAuth/link record)';
-        input.placeholder = 'Optional: post rkey if you want proof-post fallback';
+        identityInput.placeholder = 'alice.bsky.social';
+        proofLabel.textContent = 'Post link or proof ID (optional)';
+        proofInput.placeholder = 'Paste full Bluesky post URL or leave blank for identity-link check';
+        helper.textContent = 'Bluesky can verify by login or identity-link record, even without a post ID.';
+      } else if (platform === 'github') {
+        identityInput.placeholder = 'octocat';
+        proofLabel.textContent = 'Gist link or Gist ID';
+        proofInput.placeholder = 'https://gist.github.com/octocat/abc123... or abc123...';
+        helper.textContent = 'Paste a gist URL and we will extract the ID for you.';
+      } else if (platform === 'twitter') {
+        identityInput.placeholder = 'jack';
+        proofLabel.textContent = 'Post link or Tweet ID';
+        proofInput.placeholder = 'https://x.com/jack/status/123... or 123...';
+        helper.textContent = 'Paste an X/Twitter post URL for easiest setup.';
+      } else if (platform === 'mastodon') {
+        identityInput.placeholder = 'mastodon.social/@alice';
+        proofLabel.textContent = 'Status link or Status ID';
+        proofInput.placeholder = 'https://mastodon.social/@alice/123... or 123...';
+        helper.textContent = 'Identity format is instance/@user. A full status URL also works.';
+      } else if (platform === 'telegram') {
+        identityInput.placeholder = 'mychannel';
+        proofLabel.textContent = 'Message link or channel/message ID';
+        proofInput.placeholder = 'https://t.me/mychannel/123 or mychannel/123';
+        helper.textContent = 'Telegram proof should point to a public message that contains your npub.';
+      } else if (platform === 'discord') {
+        identityInput.placeholder = 'your server name';
+        proofLabel.textContent = 'Invite link or invite code';
+        proofInput.placeholder = 'https://discord.gg/abc123 or abc123';
+        helper.textContent = 'Use a non-expiring invite and include your npub in server name/description.';
+      } else if (platform === 'youtube') {
+        identityInput.placeholder = 'UC... or @channelhandle';
+        proofLabel.textContent = 'Video link or video ID';
+        proofInput.placeholder = 'https://www.youtube.com/watch?v=... or 11-char ID';
+        helper.textContent = 'We verify your npub inside the video description.';
+      } else if (platform === 'tiktok') {
+        identityInput.placeholder = 'username';
+        proofLabel.textContent = 'Video link or video ID';
+        proofInput.placeholder = 'https://www.tiktok.com/@user/video/123... or numeric ID';
+        helper.textContent = 'Paste a TikTok video URL and we will extract the ID.';
       } else {
-        label.textContent = 'Proof ID';
-        input.placeholder = 'e.g. gist id / tweet id / post rkey / status id';
+        identityInput.placeholder = 'Account identity';
+        proofLabel.textContent = 'Post link or proof ID';
+        proofInput.placeholder = 'Paste full URL or proof ID';
+        helper.textContent = 'Paste a full link if available.';
       }
     }
 
-    function startOAuthVerification() {
+    function tryMakeUrl(input) {
+      const raw = (input || '').trim();
+      if (!raw) return null;
+      try {
+        return new URL(raw);
+      } catch {}
+      if (/^[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}\\/.+/.test(raw)) {
+        try {
+          return new URL('https://' + raw);
+        } catch {}
+      }
+      return null;
+    }
+
+    function parseProofUrl(platform, parsedUrl) {
+      const host = parsedUrl.hostname.toLowerCase();
+      const path = parsedUrl.pathname.split('/').filter(Boolean);
+
+      if (platform === 'github' && host.includes('gist.github.com')) {
+        if (path.length >= 2) {
+          return { identity: path[0], proof: path[1] };
+        }
+      }
+
+      if (platform === 'twitter' && (host === 'x.com' || host === 'www.x.com' || host === 'twitter.com' || host === 'www.twitter.com')) {
+        const statusIdx = path.indexOf('status');
+        if (statusIdx > 0 && path[statusIdx + 1]) {
+          return { identity: path[statusIdx - 1].replace(/^@/, ''), proof: path[statusIdx + 1] };
+        }
+      }
+
+      if (platform === 'bluesky' && host === 'bsky.app') {
+        if (path[0] === 'profile' && path[1] && path[2] === 'post' && path[3]) {
+          return { identity: path[1], proof: path[3] };
+        }
+      }
+
+      if (platform === 'mastodon') {
+        if (path.length >= 2 && path[0].startsWith('@')) {
+          return { identity: host + '/' + path[0], proof: path[1] };
+        }
+        if (path[0] === 'users' && path[1] && path[2] === 'statuses' && path[3]) {
+          return { identity: host + '/@' + path[1], proof: path[3] };
+        }
+      }
+
+      if (platform === 'telegram' && (host === 't.me' || host === 'www.t.me')) {
+        if (path[0] && path[1]) {
+          const channel = path[0].replace(/^@/, '');
+          return { identity: channel, proof: channel + '/' + path[1] };
+        }
+      }
+
+      if (platform === 'discord') {
+        if ((host === 'discord.gg' || host === 'www.discord.gg') && path[0]) {
+          return { proof: path[0] };
+        }
+        if ((host === 'discord.com' || host === 'www.discord.com') && path[0] === 'invite' && path[1]) {
+          return { proof: path[1] };
+        }
+      }
+
+      if (platform === 'youtube') {
+        if ((host === 'youtube.com' || host === 'www.youtube.com') && parsedUrl.searchParams.get('v')) {
+          return { proof: parsedUrl.searchParams.get('v') };
+        }
+        if ((host === 'youtube.com' || host === 'www.youtube.com') && path[0] === 'shorts' && path[1]) {
+          return { proof: path[1] };
+        }
+        if ((host === 'youtu.be' || host === 'www.youtu.be') && path[0]) {
+          return { proof: path[0] };
+        }
+      }
+
+      if (platform === 'tiktok' && host.endsWith('tiktok.com')) {
+        const userPart = path.find(part => part.startsWith('@'));
+        const videoIdx = path.indexOf('video');
+        if (videoIdx !== -1 && path[videoIdx + 1]) {
+          return {
+            identity: userPart ? userPart.slice(1) : undefined,
+            proof: path[videoIdx + 1],
+          };
+        }
+      }
+
+      return {};
+    }
+
+    function normalizeProofInputs(platform, rawIdentity, rawProof) {
+      let identity = (rawIdentity || '').trim();
+      let proof = (rawProof || '').trim();
+
+      const proofUrl = tryMakeUrl(proof);
+      if (proofUrl) {
+        const parsed = parseProofUrl(platform, proofUrl);
+        if (parsed.identity && !identity) identity = parsed.identity;
+        if (parsed.proof) proof = parsed.proof;
+      } else if (!proof) {
+        const identityUrl = tryMakeUrl(identity);
+        if (identityUrl) {
+          const parsed = parseProofUrl(platform, identityUrl);
+          if (parsed.identity) identity = parsed.identity;
+          if (parsed.proof) proof = parsed.proof;
+        }
+      }
+
+      if (platform === 'twitter' || platform === 'telegram' || platform === 'tiktok') {
+        identity = identity.replace(/^@/, '');
+      }
+      if (platform === 'bluesky') {
+        identity = identity.replace(/^@/, '').toLowerCase();
+      }
+      if (platform === 'discord') {
+        const maybeCodeUrl = tryMakeUrl(proof);
+        if (maybeCodeUrl) {
+          const parsed = parseProofUrl(platform, maybeCodeUrl);
+          if (parsed.proof) proof = parsed.proof;
+        }
+      }
+
+      proof = proof.replace(/^\/+/, '').replace(/\/+$/, '');
+      return { identity, proof };
+    }
+
+    async function startOAuthVerification() {
       try {
         clearStatus('verify-global-status');
         clearStatus('oauth-status');
-        const pubkey = normalizePubkeyInput(document.getElementById('verify-pubkey-input').value);
+        setButtonLoading('oauth-start-btn', true, 'Opening sign-in...');
+        setStatus('oauth-status', 'Checking your Divine account...', 'loading');
+
+        const accountInput = document.getElementById('verify-pubkey-input').value;
+        const pubkey = await normalizePubkeyInput(accountInput);
         const platform = document.getElementById('oauth-platform-select').value;
+        localStorage.setItem('verifyer_account_input', accountInput.trim());
+
         const params = new URLSearchParams({
           pubkey,
           return_url: window.location.origin + window.location.pathname + '#verify-here',
         });
         if (platform === 'bluesky') {
-          const handle = document.getElementById('oauth-bluesky-handle-input').value.trim();
-          if (!handle) throw new Error('Bluesky handle is required for Bluesky OAuth.');
+          const handle = document.getElementById('oauth-bluesky-handle-input').value.trim().replace(/^@/, '').toLowerCase();
+          if (!handle) throw new Error('Enter your Bluesky handle (example: alice.bsky.social).');
           params.set('handle', handle);
         }
+        setStatus('oauth-status', 'Opening secure ' + platform + ' sign-in...', 'loading');
         window.location.href = API + '/auth/' + platform + '/start?' + params.toString();
       } catch (e) {
-        setStatus('oauth-status', e.message || 'Failed to start OAuth', 'error');
+        setStatus('oauth-status', e.message || 'Could not start sign-in.', 'error');
+        setButtonLoading('oauth-start-btn', false, '');
       }
     }
 
@@ -650,42 +1027,73 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       try {
         clearStatus('verify-global-status');
         clearStatus('proof-status');
-        const pubkey = normalizePubkeyInput(document.getElementById('verify-pubkey-input').value);
-        const platform = document.getElementById('proof-platform-select').value;
-        const identity = document.getElementById('proof-identity-input').value.trim();
-        const proof = document.getElementById('proof-proof-input').value.trim();
-        if (!identity) throw new Error('Identity is required.');
-        if (platform !== 'bluesky' && !proof) throw new Error('Proof ID is required for this platform.');
+        setButtonLoading('proof-verify-btn', true, 'Checking...');
+        setStatus('proof-status', 'Checking your account...', 'loading');
 
-        setStatus('proof-status', 'Verifying claim...', 'loading');
+        const accountInput = document.getElementById('verify-pubkey-input').value;
+        const pubkey = await normalizePubkeyInput(accountInput);
+        localStorage.setItem('verifyer_account_input', accountInput.trim());
+
+        const platform = document.getElementById('proof-platform-select').value;
+        const rawIdentity = document.getElementById('proof-identity-input').value;
+        const rawProof = document.getElementById('proof-proof-input').value;
+        const normalized = normalizeProofInputs(platform, rawIdentity, rawProof);
+
+        document.getElementById('proof-identity-input').value = normalized.identity;
+        document.getElementById('proof-proof-input').value = normalized.proof;
+
+        if (!normalized.identity) throw new Error('Enter your account name for this platform.');
+        if (platform !== 'bluesky' && !normalized.proof) throw new Error('Paste the post link or proof ID for this platform.');
+
+        setStatus('proof-status', 'Verifying link now...', 'loading');
         const resp = await fetch(API + '/verify/single', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ platform, identity, proof, pubkey }),
+          body: JSON.stringify({
+            platform,
+            identity: normalized.identity,
+            proof: normalized.proof,
+            pubkey,
+          }),
         });
+
         const data = await resp.json();
         if (!resp.ok || data.error) {
-          setStatus('proof-status', data.error || 'Verification failed', 'error');
+          setStatus('proof-status', data.error || 'Not verified yet.', 'error');
         } else if (data.verified) {
-          setStatus('proof-status', 'Verified', 'ok');
+          const method = data.method ? ' via ' + data.method.replace('_', ' ') : '';
+          setStatus('proof-status', 'Success. This account is verified' + method + '.', 'ok');
         } else {
-          setStatus('proof-status', data.error || 'Not verified', 'error');
+          setStatus('proof-status', data.error || 'Not verified yet.', 'error');
         }
         resultEl.textContent = JSON.stringify(data, null, 2);
         resultEl.style.display = 'block';
       } catch (e) {
-        setStatus('proof-status', e.message || 'Verification failed', 'error');
+        setStatus('proof-status', e.message || 'Verification failed.', 'error');
+      } finally {
+        setButtonLoading('proof-verify-btn', false, '');
       }
     }
 
     function handleOAuthCallbackMessage() {
       const params = new URLSearchParams(window.location.search);
+      let shouldClean = false;
       if (params.get('oauth_verified') === 'true') {
-        const platform = params.get('platform') || 'unknown';
+        const platform = params.get('platform') || 'account';
         const identity = params.get('identity') || '';
-        setStatus('verify-global-status', 'OAuth linked for ' + platform + (identity ? ' as ' + identity : ''), 'ok');
+        setStatus('verify-global-status', 'Success. Your ' + platform + ' account is now linked' + (identity ? ': ' + identity : '') + '.', 'ok');
+        shouldClean = true;
       } else if (params.get('oauth_error')) {
-        setStatus('verify-global-status', 'OAuth error: ' + params.get('oauth_error'), 'error');
+        setStatus('verify-global-status', 'Sign-in was not completed: ' + params.get('oauth_error'), 'error');
+        shouldClean = true;
+      }
+      if (shouldClean) {
+        params.delete('oauth_verified');
+        params.delete('platform');
+        params.delete('identity');
+        params.delete('oauth_error');
+        const cleanUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
+        window.history.replaceState({}, '', cleanUrl);
       }
     }
 
@@ -886,6 +1294,20 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     document.getElementById('verify-pubkey-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') startOAuthVerification();
     });
+    document.getElementById('proof-identity-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') verifySingleHere();
+    });
+    document.getElementById('proof-proof-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') verifySingleHere();
+    });
+    document.getElementById('verify-pubkey-input').addEventListener('blur', () => {
+      const value = document.getElementById('verify-pubkey-input').value.trim();
+      if (value) localStorage.setItem('verifyer_account_input', value);
+    });
+    const savedAccountInput = localStorage.getItem('verifyer_account_input');
+    if (savedAccountInput) {
+      document.getElementById('verify-pubkey-input').value = savedAccountInput;
+    }
     updateOAuthInputs();
     updateProofInputs();
     handleOAuthCallbackMessage();

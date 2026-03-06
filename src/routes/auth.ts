@@ -14,6 +14,7 @@ const auth = new Hono<{ Bindings: Bindings }>()
 const ALLOWED_RETURN_ORIGINS = new Set([
   'https://divine.video',
   'https://www.divine.video',
+  'https://verifyer.divine.video',
   'https://verifier.divine.video',
 ])
 
