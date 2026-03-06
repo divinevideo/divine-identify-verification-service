@@ -279,8 +279,8 @@ app.get('/', (c) => {
       <div class="steps">
         <div class="step">
           <div class="step-number">1</div>
-          <h4>Open your Divine settings</h4>
-          <p>Go to <a href="https://divine.video">divine.video</a> and click on your profile settings.</p>
+          <h4>Sign in with Nostr</h4>
+          <p>Start at <a href="https://login.divine.video">login.divine.video</a>, then open <a href="https://divine.video/settings">divine.video/settings</a> to manage your verifications.</p>
         </div>
         <div class="step">
           <div class="step-number">2</div>
