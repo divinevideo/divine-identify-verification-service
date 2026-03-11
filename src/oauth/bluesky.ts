@@ -512,7 +512,7 @@ export function blueskyClientMetadata(baseUrl: string): object {
   return {
     client_id: `${baseUrl}/auth/bluesky/client-metadata.json`,
     client_name: 'Divine Identity Verification',
-    client_uri: 'https://divine.video',
+    client_uri: baseUrl,
     redirect_uris: [`${baseUrl}/auth/bluesky/callback`],
     grant_types: ['authorization_code'],
     response_types: ['code'],
