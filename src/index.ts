@@ -453,7 +453,7 @@ app.get('/', (c) => {
         <div class="verify-card">
           <span class="step-pill">Step 1</span>
           <h3 style="margin-top:0;">Sign in with your Nostr account</h3>
-          <p>Use your browser signer, login.divine.video session, bunker URL, or Nostr Connect. Any of these lets us publish the final verification tag into your Nostr profile (kind 0).</p>
+          <p>Use your browser signer, login.divine.video session, bunker URL, or Nostr Connect. Any of these lets us publish the final verification tag into your Nostr identity event (NIP-39).</p>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
             <button id="connect-nostr-btn" class="verify-btn verify-btn-primary" type="button">Login with Nostr</button>
             <button id="connect-keycast-btn" class="verify-btn" type="button">Use login.divine.video</button>
@@ -554,6 +554,24 @@ app.get('/', (c) => {
       </div>
       <div id="lookup-status" style="display:none;padding:0.5rem 0.75rem;border-radius:6px;margin-bottom:0.75rem;font-size:0.85rem;"></div>
       <div id="lookup-results"></div>
+    </section>
+
+    <!-- MANAGE LINKED VERIFICATIONS -->
+    <section id="manage" style="border:2px solid #e2e8f0;">
+      <h2>Manage verified links</h2>
+      <p>View and remove your linked identity verifications. Requires a signer session.</p>
+      <button id="load-links-btn" class="verify-btn verify-btn-primary" type="button" onclick="loadLinkedVerifications()">Load my links</button>
+      <div id="manage-links-container" style="margin-top:1rem;"></div>
+      <div id="manage-status" class="status-row"></div>
+      <div id="remove-confirm-dialog" style="display:none;margin-top:1rem;padding:1rem;background:#fff5f5;border:2px solid #fc8181;border-radius:8px;">
+        <h4 style="margin-bottom:0.5rem;">Remove this verification?</h4>
+        <p>This unlinks <strong id="remove-confirm-claim"></strong> from your Nostr profile.</p>
+        <p class="field-help">Relay updates may take a short moment.</p>
+        <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+          <button class="verify-btn" type="button" onclick="cancelRemove()">Cancel</button>
+          <button class="verify-btn" type="button" style="background:#e53e3e;color:white;" onclick="executeRemoveVerification()">Remove verification</button>
+        </div>
+      </div>
     </section>
 
     <!-- DIVIDER -->
@@ -2047,6 +2065,228 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         };
         ws.onerror = () => { clearTimeout(timeout); reject(new Error('ws error')); };
       });
+    }
+
+    // --- Manage / Remove linked verifications ---
+    const OAUTH_PLATFORMS_SET = new Set(['twitter', 'bluesky', 'youtube', 'tiktok']);
+
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    async function loadLinkedVerifications() {
+      const container = document.getElementById('manage-links-container');
+      container.textContent = 'Loading...';
+      clearStatus('manage-status');
+
+      try {
+        const pubkey = await getActivePubkey();
+        if (!pubkey) {
+          container.textContent = 'Connect a signer first to see your linked accounts.';
+          return;
+        }
+
+        let event = null;
+        for (const relay of PROFILE_RELAYS) {
+          try {
+            event = await fetchIdentityEvent(relay, pubkey);
+            if (event) break;
+          } catch {}
+        }
+        if (!event) {
+          for (const relay of PROFILE_RELAYS) {
+            try {
+              event = await fetchProfileLegacy(relay, pubkey);
+              if (event) break;
+            } catch {}
+          }
+        }
+
+        const iTags = event ? (event.tags || []).filter(t => t[0] === 'i' && t[1]) : [];
+        if (iTags.length === 0) {
+          container.textContent = 'No linked verifications found.';
+          return;
+        }
+
+        renderLinkedVerifications(iTags, container);
+      } catch (e) {
+        setStatus('manage-status', e.message || 'Failed to load linked verifications.', 'error');
+      }
+    }
+
+    // Renders manage table using DOM methods for safety. All user data goes through
+    // textContent (platform, identity, proof come from the user's own signed Nostr events).
+    function renderLinkedVerifications(iTags, container) {
+      container.textContent = '';
+      const table = document.createElement('table');
+      table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.9rem;';
+
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+      headerRow.style.cssText = 'border-bottom:2px solid #e2e8f0;text-align:left;';
+      ['Platform', 'Identity', 'Proof', ''].forEach(text => {
+        const th = document.createElement('th');
+        th.style.padding = '0.5rem';
+        th.textContent = text;
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      for (const tag of iTags) {
+        const claim = tag[1];
+        const proof = tag[2] || '';
+        const sep = claim.indexOf(':');
+        const platform = sep > 0 ? claim.slice(0, sep) : claim;
+        const identity = sep > 0 ? claim.slice(sep + 1) : '';
+
+        const row = document.createElement('tr');
+        row.style.cssText = 'border-bottom:1px solid #e2e8f0;';
+
+        const tdPlatform = document.createElement('td');
+        tdPlatform.style.padding = '0.5rem';
+        tdPlatform.textContent = platform;
+        row.appendChild(tdPlatform);
+
+        const tdIdentity = document.createElement('td');
+        tdIdentity.style.padding = '0.5rem';
+        tdIdentity.textContent = identity;
+        row.appendChild(tdIdentity);
+
+        const tdProof = document.createElement('td');
+        tdProof.style.padding = '0.5rem';
+        tdProof.textContent = proof.length > 20 ? proof.slice(0, 20) + '...' : proof;
+        row.appendChild(tdProof);
+
+        const tdAction = document.createElement('td');
+        tdAction.style.padding = '0.5rem';
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'verify-btn';
+        removeBtn.style.cssText = 'background:#e53e3e;color:white;padding:0.3rem 0.75rem;font-size:0.85rem;';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', () => confirmRemoveVerification(platform, identity));
+        tdAction.appendChild(removeBtn);
+        row.appendChild(tdAction);
+
+        tbody.appendChild(row);
+      }
+      table.appendChild(tbody);
+      container.appendChild(table);
+    }
+
+    function confirmRemoveVerification(platform, identity) {
+      const dialog = document.getElementById('remove-confirm-dialog');
+      document.getElementById('remove-confirm-claim').textContent = platform + ':' + identity;
+      dialog.dataset.platform = platform;
+      dialog.dataset.identity = identity;
+      dialog.style.display = 'block';
+    }
+
+    function cancelRemove() {
+      document.getElementById('remove-confirm-dialog').style.display = 'none';
+    }
+
+    async function executeRemoveVerification() {
+      const dialog = document.getElementById('remove-confirm-dialog');
+      const platform = dialog.dataset.platform;
+      const identity = dialog.dataset.identity;
+      dialog.style.display = 'none';
+
+      setStatus('manage-status', 'Removing verification...', 'loading');
+
+      try {
+        if (!activeSigner) {
+          throw new Error('Connect a signer first.');
+        }
+
+        const pubkey = await getActivePubkey();
+        const signerPubkey = String(await activeSigner.getPublicKey()).toLowerCase();
+        if (pubkey !== signerPubkey) {
+          throw new Error('Signed-in key and selected account do not match.');
+        }
+
+        // Fetch current identity event (kind 10011, fall back to kind 0)
+        let event = null;
+        for (const relay of PROFILE_RELAYS) {
+          try {
+            event = await fetchIdentityEvent(relay, signerPubkey);
+            if (event) break;
+          } catch {}
+        }
+        if (!event) {
+          for (const relay of PROFILE_RELAYS) {
+            try {
+              event = await fetchProfileLegacy(relay, signerPubkey);
+              if (event) break;
+            } catch {}
+          }
+        }
+
+        const tags = event ? (event.tags || []).filter(Array.isArray) : [];
+        const claimKey = (platform + ':' + identity).toLowerCase();
+        const nextTags = tags.filter(tag => !(tag[0] === 'i' && typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey));
+
+        const unsignedEvent = {
+          kind: 10011,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: nextTags,
+          content: '',
+          pubkey: signerPubkey,
+        };
+
+        const signedEvent = await activeSigner.signEvent(unsignedEvent);
+        if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
+          throw new Error('Signer did not return a valid signed event.');
+        }
+
+        const relayResults = await Promise.all(PROFILE_RELAYS.map(relay => publishEventToRelay(relay, signedEvent)));
+        const successCount = relayResults.filter(r => r.ok).length;
+        if (successCount === 0) {
+          throw new Error('No relay accepted the updated event.');
+        }
+
+        // Attempt OAuth cache revoke for OAuth platforms
+        let revokeWarning = '';
+        if (OAUTH_PLATFORMS_SET.has(platform)) {
+          try {
+            const nip98Event = await buildNip98EventForRevoke(API + '/auth/oauth/revoke', 'POST');
+            const revokeResp = await fetch(API + '/auth/oauth/revoke', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ platform: platform, identity: identity, pubkey: signerPubkey, event: nip98Event }),
+            });
+            if (!revokeResp.ok) {
+              revokeWarning = ' OAuth cache revoke did not complete.';
+            }
+          } catch {
+            revokeWarning = ' OAuth cache revoke did not complete.';
+          }
+        }
+
+        if (revokeWarning) {
+          setStatus('manage-status', 'Removed from profile, but' + revokeWarning, 'ok');
+        } else {
+          setStatus('manage-status', 'Verification removed from your Nostr profile.', 'ok');
+        }
+
+        await loadLinkedVerifications();
+      } catch (e) {
+        setStatus('manage-status', e.message || 'Could not remove verification.', 'error');
+      }
+    }
+
+    async function buildNip98EventForRevoke(url, method) {
+      const event = {
+        kind: 27235,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ['u', url],
+          ['method', method],
+        ],
+        content: '',
+      };
+      return await activeSigner.signEvent(event);
     }
 
     // Verify Here wiring

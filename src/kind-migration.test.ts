@@ -44,3 +44,24 @@ describe('kind 10011 migration', () => {
     expect(html).toContain('fetchProfileLegacy')
   })
 })
+
+describe('manage linked verifications UI', () => {
+  it('serves a manage section with load and remove controls', async () => {
+    const html = await getServedHtml()
+    expect(html).toContain('Manage verified links')
+    expect(html).toContain('loadLinkedVerifications')
+  })
+})
+
+describe('remove verification flow', () => {
+  it('includes confirmation dialog markup', async () => {
+    const html = await getServedHtml()
+    expect(html).toContain('Remove this verification?')
+    expect(html).toContain('confirmRemoveVerification')
+  })
+
+  it('calls revoke endpoint for OAuth platforms', async () => {
+    const html = await getServedHtml()
+    expect(html).toContain('/auth/oauth/revoke')
+  })
+})
