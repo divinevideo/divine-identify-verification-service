@@ -355,8 +355,9 @@ app.get('/', (c) => {
       <h1>Prove You Are Who You Say You Are</h1>
       <p class="subtitle">Link your social media accounts to your <a href="https://divine.video">Divine</a> profile so people know it's really you. Like a verified badge &mdash; but one that you control, and anyone can check.</p>
       <div class="cta-row">
-        <a href="#check" class="btn btn-primary">Look Up Someone</a>
-        <a href="#how-to-verify" class="btn btn-outline">Get Verified</a>
+        <a href="#how-to-verify" class="btn btn-primary">Get Verified</a>
+        <a href="#manage" class="btn btn-outline">Manage My Links</a>
+        <a href="#check" class="btn btn-outline">Look Up Someone</a>
       </div>
     </div>
 
