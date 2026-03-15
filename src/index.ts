@@ -524,7 +524,7 @@ app.get('/', (c) => {
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
             <button id="publish-kind0-btn" class="verify-btn verify-btn-primary" type="button">Publish to Nostr profile</button>
           </div>
-          <p class="field-help">This writes/updates your identity tag in your signed Nostr kind 0 profile event.</p>
+          <p class="field-help">This writes/updates your identity tag in your signed Nostr identity event (NIP-39).</p>
           <div id="publish-status" class="status-row"></div>
           <pre id="proof-result" style="display:none;margin-top:0.75rem;"></pre>
         </div>
@@ -1769,26 +1769,36 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
           throw new Error('Enter the platform account name first.');
         }
 
-        setStatus('publish-status', 'Loading current kind 0 profile...', 'loading');
-        let profile = null;
+        setStatus('publish-status', 'Loading identity event...', 'loading');
+        let identityEvent = null;
         for (const relay of PROFILE_RELAYS) {
           try {
-            profile = await fetchProfile(relay, signerPubkey);
-            if (profile) break;
+            identityEvent = await fetchIdentityEvent(relay, signerPubkey);
+            if (identityEvent) break;
           } catch {}
         }
+        // Fall back to kind 0 for pre-migration profiles
+        if (!identityEvent) {
+          for (const relay of PROFILE_RELAYS) {
+            try {
+              identityEvent = await fetchProfileLegacy(relay, signerPubkey);
+              if (identityEvent) break;
+            } catch {}
+          }
+        }
 
-        const content = profile && typeof profile.content === 'string' ? profile.content : '{}';
-        const tags = Array.isArray(profile?.tags) ? profile.tags.filter(Array.isArray) : [];
+        const tags = Array.isArray(identityEvent?.tags) ? identityEvent.tags.filter(Array.isArray) : [];
+        // Only carry forward i-tags (kind 10011 has no content or other tag types)
+        const iTags = tags.filter(tag => tag[0] === 'i');
         const claimKey = link.platform + ':' + link.identity;
-        const nextTags = tags.filter(tag => !(tag[0] === 'i' && typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey.toLowerCase()));
+        const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey.toLowerCase()));
         nextTags.push(['i', claimKey, link.proof]);
 
         const unsignedEvent = {
-          kind: 0,
+          kind: 10011,
           created_at: Math.floor(Date.now() / 1000),
           tags: nextTags,
-          content,
+          content: '',
           pubkey: signerPubkey,
         };
 
@@ -1801,7 +1811,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
           throw new Error('Signer returned an event for a different pubkey.');
         }
 
-        setStatus('publish-status', 'Publishing kind 0 event to relays...', 'loading');
+        setStatus('publish-status', 'Publishing identity event to relays...', 'loading');
         const relayResults = await Promise.all(PROFILE_RELAYS.map(relay => publishEventToRelay(relay, signedEvent)));
         const successCount = relayResults.filter(r => r.ok).length;
         if (successCount === 0) {
@@ -1905,37 +1915,40 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
           }
         }
 
-        showStatus('Found pubkey: ' + pubkey.slice(0, 8) + '...' + pubkey.slice(-8) + '. Fetching profile from relays...', 'loading');
+        showStatus('Found pubkey: ' + pubkey.slice(0, 8) + '...' + pubkey.slice(-8) + '. Fetching identity claims from relays...', 'loading');
 
-        // Fetch profile from Nostr relays to get i-tags
+        // Fetch identity event (kind 10011) from Nostr relays, fall back to kind 0
         const relays = PROFILE_RELAYS;
-        let profile = null;
+        let identityEvent = null;
+        let legacyProfile = null;
 
         for (const relay of relays) {
           try {
-            profile = await fetchProfile(relay, pubkey);
-            if (profile) break;
+            if (!identityEvent) identityEvent = await fetchIdentityEvent(relay, pubkey);
+            if (!legacyProfile) legacyProfile = await fetchProfileLegacy(relay, pubkey);
+            if (identityEvent) break;
           } catch { /* try next relay */ }
         }
 
-        if (!profile) {
-          showStatus('Could not find Nostr profile on relays.', 'error');
+        const source = identityEvent || legacyProfile;
+        if (!source) {
+          showStatus('Could not find identity claims on relays.', 'error');
           return;
         }
 
         // Extract i-tags (NIP-39 identity claims)
-        const iTags = (profile.tags || []).filter(t => t[0] === 'i' && t[1] && t[2]);
+        const iTags = (source.tags || []).filter(t => t[0] === 'i' && t[1] && t[2]);
         if (iTags.length === 0) {
-          showStatus('Profile found but has no linked identity claims (NIP-39 i-tags).', 'error');
-          // Check NIP-05 if present
-          const content = tryParseJSON(profile.content);
-          if (content && content.nip05) {
-            const nip05Resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(content.nip05) + '&pubkey=' + pubkey);
+          showStatus('No linked identity claims (NIP-39 i-tags) found.', 'error');
+          // Check NIP-05 if present in kind 0 profile
+          const profileContent = legacyProfile ? tryParseJSON(legacyProfile.content) : null;
+          if (profileContent && profileContent.nip05) {
+            const nip05Resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(profileContent.nip05) + '&pubkey=' + pubkey);
             const nip05Result = await nip05Resp.json();
             showStatus('No NIP-39 claims, but found NIP-05:', 'loading');
             renderResults([{
               platform: 'nip05',
-              identity: content.nip05,
+              identity: profileContent.nip05,
               verified: nip05Result.verified,
               error: nip05Result.error,
               cached: nip05Result.cached
@@ -1998,7 +2011,15 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       try { return JSON.parse(s); } catch { return null; }
     }
 
-    function fetchProfile(relayUrl, pubkey) {
+    function fetchIdentityEvent(relayUrl, pubkey) {
+      return fetchEventByKind(relayUrl, pubkey, 10011);
+    }
+
+    function fetchProfileLegacy(relayUrl, pubkey) {
+      return fetchEventByKind(relayUrl, pubkey, 0);
+    }
+
+    function fetchEventByKind(relayUrl, pubkey, kind) {
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 8000);
         let ws;
@@ -2007,7 +2028,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         } catch { reject(new Error('ws failed')); return; }
         const subId = 'lookup_' + Math.random().toString(36).slice(2, 8);
         ws.onopen = () => {
-          ws.send(JSON.stringify(['REQ', subId, { kinds: [0], authors: [pubkey], limit: 1 }]));
+          ws.send(JSON.stringify(['REQ', subId, { kinds: [kind], authors: [pubkey], limit: 1 }]));
         };
         ws.onmessage = (msg) => {
           try {
