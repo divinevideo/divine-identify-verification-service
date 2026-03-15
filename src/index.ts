@@ -413,6 +413,18 @@ app.get('/', (c) => {
       ${ttPill}
     </div>
 
+    <!-- HOW IT WORKS -->
+    <section id="how-it-works">
+      <h2>How Does It Work?</h2>
+      <p>Think of it like a handshake between two accounts:</p>
+      <ul>
+        <li><strong>Your Divine profile says</strong> "I'm @alice on Twitter"</li>
+        <li><strong>Your Twitter account confirms</strong> "Yes, that Divine profile is mine"</li>
+      </ul>
+      <p>We check both sides automatically. If they match, you're verified. The beauty of this system is that <strong>nobody can fake it</strong> &mdash; an impersonator might copy your name and photo, but they can't post from your real Twitter account.</p>
+      <p>This is the same approach used by <a href="https://keybase.io">Keybase</a> &mdash; a proven method for cross-platform identity verification, now available for Divine and the broader Nostr ecosystem.</p>
+    </section>
+
     <!-- HOW TO VERIFY -->
     <section id="how-to-verify">
       <h2>How to Get Verified</h2>
@@ -530,18 +542,6 @@ app.get('/', (c) => {
           <pre id="proof-result" style="display:none;margin-top:0.75rem;"></pre>
         </div>
       </details>
-    </section>
-
-    <!-- HOW IT WORKS -->
-    <section id="how-it-works">
-      <h2>How Does It Work?</h2>
-      <p>Think of it like a handshake between two accounts:</p>
-      <ul>
-        <li><strong>Your Divine profile says</strong> "I'm @alice on Twitter"</li>
-        <li><strong>Your Twitter account confirms</strong> "Yes, that Divine profile is mine"</li>
-      </ul>
-      <p>We check both sides automatically. If they match, you're verified. The beauty of this system is that <strong>nobody can fake it</strong> &mdash; an impersonator might copy your name and photo, but they can't post from your real Twitter account.</p>
-      <p>This is the same approach used by <a href="https://keybase.io">Keybase</a> &mdash; a proven method for cross-platform identity verification, now available for Divine and the broader Nostr ecosystem.</p>
     </section>
 
     <!-- CHECK TOOL -->
