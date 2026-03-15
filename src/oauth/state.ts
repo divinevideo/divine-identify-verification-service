@@ -49,3 +49,13 @@ export async function getOAuthVerification(
     return null
   }
 }
+
+export async function deleteOAuthVerification(
+  kv: KVNamespace,
+  platform: string,
+  identity: string,
+  pubkey: string
+): Promise<void> {
+  const key = oauthVerificationKey(platform, identity, pubkey)
+  await kv.delete(key)
+}
