@@ -544,19 +544,6 @@ app.get('/', (c) => {
       </details>
     </section>
 
-    <!-- CHECK TOOL -->
-    <section id="check" style="border:2px solid #4299e1;">
-      <h2>Look Up Someone</h2>
-      <p>Want to know if a profile is real? Enter their address (like alice@divine.video) or their public key to see which accounts they've verified.</p>
-
-      <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
-        <input id="lookup-input" type="text" placeholder="alice@divine.video or npub1..." style="flex:1;min-width:200px;padding:0.6rem 0.75rem;border:2px solid #e2e8f0;border-radius:8px;font-size:0.95rem;font-family:inherit;outline:none;transition:border-color 0.2s;" onfocus="this.style.borderColor='#4299e1'" onblur="this.style.borderColor='#e2e8f0'">
-        <button id="lookup-btn" onclick="doLookup()" style="padding:0.6rem 1.5rem;background:#4299e1;color:white;border:none;border-radius:8px;font-size:0.95rem;cursor:pointer;font-weight:600;transition:background 0.2s;" onmouseover="this.style.background='#3182ce'" onmouseout="this.style.background='#4299e1'">Check</button>
-      </div>
-      <div id="lookup-status" style="display:none;padding:0.5rem 0.75rem;border-radius:6px;margin-bottom:0.75rem;font-size:0.85rem;"></div>
-      <div id="lookup-results"></div>
-    </section>
-
     <!-- MANAGE LINKED VERIFICATIONS -->
     <section id="manage" style="border:2px solid #e2e8f0;">
       <h2>Manage verified links</h2>
@@ -573,6 +560,19 @@ app.get('/', (c) => {
           <button class="verify-btn" type="button" style="background:#e53e3e;color:white;" onclick="executeRemoveVerification()">Remove verification</button>
         </div>
       </div>
+    </section>
+
+    <!-- CHECK TOOL -->
+    <section id="check" style="border:2px solid #4299e1;">
+      <h2>Look Up Someone</h2>
+      <p>Want to know if a profile is real? Enter their address (like alice@divine.video) or their public key to see which accounts they've verified.</p>
+
+      <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+        <input id="lookup-input" type="text" placeholder="alice@divine.video or npub1..." style="flex:1;min-width:200px;padding:0.6rem 0.75rem;border:2px solid #e2e8f0;border-radius:8px;font-size:0.95rem;font-family:inherit;outline:none;transition:border-color 0.2s;" onfocus="this.style.borderColor='#4299e1'" onblur="this.style.borderColor='#e2e8f0'">
+        <button id="lookup-btn" onclick="doLookup()" style="padding:0.6rem 1.5rem;background:#4299e1;color:white;border:none;border-radius:8px;font-size:0.95rem;cursor:pointer;font-weight:600;transition:background 0.2s;" onmouseover="this.style.background='#3182ce'" onmouseout="this.style.background='#4299e1'">Check</button>
+      </div>
+      <div id="lookup-status" style="display:none;padding:0.5rem 0.75rem;border-radius:6px;margin-bottom:0.75rem;font-size:0.85rem;"></div>
+      <div id="lookup-results"></div>
     </section>
 
     <!-- DIVIDER -->
