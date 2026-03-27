@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import type { Bindings, OAuthPlatform } from '../types'
 import { isValidHexPubkey, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
-import { getOAuthVerification } from '../oauth/state'
+import { getOAuthVerification, deleteOAuthVerification } from '../oauth/state'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
@@ -323,6 +323,71 @@ auth.get('/:platform/status', async (c) => {
     verified: false,
     method: null,
   })
+})
+
+const OAUTH_PLATFORMS = new Set(['twitter', 'bluesky', 'youtube', 'tiktok'])
+
+// Revoke OAuth verification cache entry
+// POST /auth/oauth/revoke { platform, identity, pubkey, event }
+auth.post('/oauth/revoke', async (c) => {
+  const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
+  const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
+  if (!ipLimit.allowed) {
+    return c.json({ error: 'Rate limit exceeded' }, 429)
+  }
+
+  let body: { platform?: string; identity?: string; pubkey?: string; event?: Record<string, unknown> }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400)
+  }
+
+  const { platform, identity, pubkey, event } = body
+  if (!platform || !identity || !pubkey || !event) {
+    return c.json({ error: 'Missing required fields: platform, identity, pubkey, event' }, 400)
+  }
+  if (!OAUTH_PLATFORMS.has(platform)) {
+    return c.json({ error: `OAuth revoke only supported for: ${[...OAUTH_PLATFORMS].join(', ')}` }, 400)
+  }
+  if (!isValidHexPubkey(pubkey)) {
+    return c.json({ error: 'Invalid pubkey (64-char hex required)' }, 400)
+  }
+  if (typeof event.pubkey !== 'string' || event.kind !== 27235) {
+    return c.json({ error: 'Invalid NIP-98 event' }, 400)
+  }
+
+  const normalizedBodyPubkey = normalizePubkey(pubkey)
+  const eventPubkey = typeof event.pubkey === 'string' ? normalizePubkey(event.pubkey) : ''
+  if (normalizedBodyPubkey !== eventPubkey) {
+    return c.json({ error: 'Pubkey mismatch: body pubkey does not match event pubkey' }, 401)
+  }
+
+  // Verify NIP-98 event via login.divine.video
+  const encodedEvent = btoa(JSON.stringify(event))
+  let upstreamResp: Response
+  try {
+    upstreamResp = await fetch(`${DIVINE_LOGIN_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Nostr ${encodedEvent}`,
+        'Content-Type': 'application/json',
+        'Origin': 'https://divine.video',
+      },
+      body: '{}',
+    })
+  } catch {
+    return c.json({ error: 'Failed to reach login.divine.video' }, 502)
+  }
+
+  if (!upstreamResp.ok) {
+    return c.json({ error: 'NIP-98 verification failed' }, 401)
+  }
+
+  // Delete OAuth verification from KV
+  await deleteOAuthVerification(c.env.CACHE_KV, platform, identity, normalizedBodyPubkey)
+
+  return c.json({ revoked: true, platform, identity })
 })
 
 export default auth

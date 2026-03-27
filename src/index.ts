@@ -355,8 +355,9 @@ app.get('/', (c) => {
       <h1>Prove You Are Who You Say You Are</h1>
       <p class="subtitle">Link your social media accounts to your <a href="https://divine.video">Divine</a> profile so people know it's really you. Like a verified badge &mdash; but one that you control, and anyone can check.</p>
       <div class="cta-row">
-        <a href="#check" class="btn btn-primary">Look Up Someone</a>
-        <a href="#how-to-verify" class="btn btn-outline">Get Verified</a>
+        <a href="#how-to-verify" class="btn btn-primary">Get Verified</a>
+        <a href="#manage" class="btn btn-outline">Manage My Links</a>
+        <a href="#check" class="btn btn-outline">Look Up Someone</a>
       </div>
     </div>
 
@@ -412,6 +413,18 @@ app.get('/', (c) => {
       ${ttPill}
     </div>
 
+    <!-- HOW IT WORKS -->
+    <section id="how-it-works">
+      <h2>How Does It Work?</h2>
+      <p>Think of it like a handshake between two accounts:</p>
+      <ul>
+        <li><strong>Your Divine profile says</strong> "I'm @alice on Twitter"</li>
+        <li><strong>Your Twitter account confirms</strong> "Yes, that Divine profile is mine"</li>
+      </ul>
+      <p>We check both sides automatically. If they match, you're verified. The beauty of this system is that <strong>nobody can fake it</strong> &mdash; an impersonator might copy your name and photo, but they can't post from your real Twitter account.</p>
+      <p>This is the same approach used by <a href="https://keybase.io">Keybase</a> &mdash; a proven method for cross-platform identity verification, now available for Divine and the broader Nostr ecosystem.</p>
+    </section>
+
     <!-- HOW TO VERIFY -->
     <section id="how-to-verify">
       <h2>How to Get Verified</h2>
@@ -453,7 +466,7 @@ app.get('/', (c) => {
         <div class="verify-card">
           <span class="step-pill">Step 1</span>
           <h3 style="margin-top:0;">Sign in with your Nostr account</h3>
-          <p>Use your browser signer, login.divine.video session, bunker URL, or Nostr Connect. Any of these lets us publish the final verification tag into your Nostr profile (kind 0).</p>
+          <p>Use your browser signer, login.divine.video session, bunker URL, or Nostr Connect. Any of these lets us publish the final verification tag into your Nostr identity event (NIP-39).</p>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
             <button id="connect-nostr-btn" class="verify-btn verify-btn-primary" type="button">Login with Nostr</button>
             <button id="connect-keycast-btn" class="verify-btn" type="button">Use login.divine.video</button>
@@ -524,23 +537,29 @@ app.get('/', (c) => {
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
             <button id="publish-kind0-btn" class="verify-btn verify-btn-primary" type="button">Publish to Nostr profile</button>
           </div>
-          <p class="field-help">This writes/updates your identity tag in your signed Nostr kind 0 profile event.</p>
+          <p class="field-help">This writes/updates your identity tag in your signed Nostr identity event (NIP-39).</p>
           <div id="publish-status" class="status-row"></div>
           <pre id="proof-result" style="display:none;margin-top:0.75rem;"></pre>
         </div>
       </details>
     </section>
 
-    <!-- HOW IT WORKS -->
-    <section id="how-it-works">
-      <h2>How Does It Work?</h2>
-      <p>Think of it like a handshake between two accounts:</p>
-      <ul>
-        <li><strong>Your Divine profile says</strong> "I'm @alice on Twitter"</li>
-        <li><strong>Your Twitter account confirms</strong> "Yes, that Divine profile is mine"</li>
-      </ul>
-      <p>We check both sides automatically. If they match, you're verified. The beauty of this system is that <strong>nobody can fake it</strong> &mdash; an impersonator might copy your name and photo, but they can't post from your real Twitter account.</p>
-      <p>This is the same approach used by <a href="https://keybase.io">Keybase</a> &mdash; a proven method for cross-platform identity verification, now available for Divine and the broader Nostr ecosystem.</p>
+    <!-- MANAGE LINKED VERIFICATIONS -->
+    <section id="manage" style="border:2px solid #e2e8f0;">
+      <h2>Manage verified links</h2>
+      <p>View and remove your linked identity verifications. Requires a signer session.</p>
+      <button id="load-links-btn" class="verify-btn verify-btn-primary" type="button" onclick="loadLinkedVerifications()">Load my links</button>
+      <div id="manage-links-container" style="margin-top:1rem;"></div>
+      <div id="manage-status" class="status-row"></div>
+      <div id="remove-confirm-dialog" style="display:none;margin-top:1rem;padding:1rem;background:#fff5f5;border:2px solid #fc8181;border-radius:8px;">
+        <h4 style="margin-bottom:0.5rem;">Remove this verification?</h4>
+        <p>This unlinks <strong id="remove-confirm-claim"></strong> from your Nostr profile.</p>
+        <p class="field-help">Relay updates may take a short moment.</p>
+        <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+          <button class="verify-btn" type="button" onclick="cancelRemove()">Cancel</button>
+          <button class="verify-btn" type="button" style="background:#e53e3e;color:white;" onclick="executeRemoveVerification()">Remove verification</button>
+        </div>
+      </div>
     </section>
 
     <!-- CHECK TOOL -->
@@ -1769,26 +1788,36 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
           throw new Error('Enter the platform account name first.');
         }
 
-        setStatus('publish-status', 'Loading current kind 0 profile...', 'loading');
-        let profile = null;
+        setStatus('publish-status', 'Loading identity event...', 'loading');
+        let identityEvent = null;
         for (const relay of PROFILE_RELAYS) {
           try {
-            profile = await fetchProfile(relay, signerPubkey);
-            if (profile) break;
+            identityEvent = await fetchIdentityEvent(relay, signerPubkey);
+            if (identityEvent) break;
           } catch {}
         }
+        // Fall back to kind 0 for pre-migration profiles
+        if (!identityEvent) {
+          for (const relay of PROFILE_RELAYS) {
+            try {
+              identityEvent = await fetchProfileLegacy(relay, signerPubkey);
+              if (identityEvent) break;
+            } catch {}
+          }
+        }
 
-        const content = profile && typeof profile.content === 'string' ? profile.content : '{}';
-        const tags = Array.isArray(profile?.tags) ? profile.tags.filter(Array.isArray) : [];
+        const tags = Array.isArray(identityEvent?.tags) ? identityEvent.tags.filter(Array.isArray) : [];
+        // Only carry forward i-tags (kind 10011 has no content or other tag types)
+        const iTags = tags.filter(tag => tag[0] === 'i');
         const claimKey = link.platform + ':' + link.identity;
-        const nextTags = tags.filter(tag => !(tag[0] === 'i' && typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey.toLowerCase()));
+        const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey.toLowerCase()));
         nextTags.push(['i', claimKey, link.proof]);
 
         const unsignedEvent = {
-          kind: 0,
+          kind: 10011,
           created_at: Math.floor(Date.now() / 1000),
           tags: nextTags,
-          content,
+          content: '',
           pubkey: signerPubkey,
         };
 
@@ -1801,7 +1830,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
           throw new Error('Signer returned an event for a different pubkey.');
         }
 
-        setStatus('publish-status', 'Publishing kind 0 event to relays...', 'loading');
+        setStatus('publish-status', 'Publishing identity event to relays...', 'loading');
         const relayResults = await Promise.all(PROFILE_RELAYS.map(relay => publishEventToRelay(relay, signedEvent)));
         const successCount = relayResults.filter(r => r.ok).length;
         if (successCount === 0) {
@@ -1923,37 +1952,40 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
           }
         }
 
-        showStatus('Found pubkey: ' + pubkey.slice(0, 8) + '...' + pubkey.slice(-8) + '. Fetching profile from relays...', 'loading');
+        showStatus('Found pubkey: ' + pubkey.slice(0, 8) + '...' + pubkey.slice(-8) + '. Fetching identity claims from relays...', 'loading');
 
-        // Fetch profile from Nostr relays to get i-tags
+        // Fetch identity event (kind 10011) from Nostr relays, fall back to kind 0
         const relays = PROFILE_RELAYS;
-        let profile = null;
+        let identityEvent = null;
+        let legacyProfile = null;
 
         for (const relay of relays) {
           try {
-            profile = await fetchProfile(relay, pubkey);
-            if (profile) break;
+            if (!identityEvent) identityEvent = await fetchIdentityEvent(relay, pubkey);
+            if (!legacyProfile) legacyProfile = await fetchProfileLegacy(relay, pubkey);
+            if (identityEvent) break;
           } catch { /* try next relay */ }
         }
 
-        if (!profile) {
-          showStatus('Could not find Nostr profile on relays.', 'error');
+        const source = identityEvent || legacyProfile;
+        if (!source) {
+          showStatus('Could not find identity claims on relays.', 'error');
           return;
         }
 
         // Extract i-tags (NIP-39 identity claims)
-        const iTags = (profile.tags || []).filter(t => t[0] === 'i' && t[1] && t[2]);
+        const iTags = (source.tags || []).filter(t => t[0] === 'i' && t[1] && t[2]);
         if (iTags.length === 0) {
-          showStatus('Profile found but has no linked identity claims (NIP-39 i-tags).', 'error');
-          // Check NIP-05 if present
-          const content = tryParseJSON(profile.content);
-          if (content && content.nip05) {
-            const nip05Resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(content.nip05) + '&pubkey=' + pubkey);
+          showStatus('No linked identity claims (NIP-39 i-tags) found.', 'error');
+          // Check NIP-05 if present in kind 0 profile
+          const profileContent = legacyProfile ? tryParseJSON(legacyProfile.content) : null;
+          if (profileContent && profileContent.nip05) {
+            const nip05Resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(profileContent.nip05) + '&pubkey=' + pubkey);
             const nip05Result = await nip05Resp.json();
             showStatus('No NIP-39 claims, but found NIP-05:', 'loading');
             renderResults([{
               platform: 'nip05',
-              identity: content.nip05,
+              identity: profileContent.nip05,
               verified: nip05Result.verified,
               error: nip05Result.error,
               cached: nip05Result.cached
@@ -2016,7 +2048,15 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       try { return JSON.parse(s); } catch { return null; }
     }
 
-    function fetchProfile(relayUrl, pubkey) {
+    function fetchIdentityEvent(relayUrl, pubkey) {
+      return fetchEventByKind(relayUrl, pubkey, 10011);
+    }
+
+    function fetchProfileLegacy(relayUrl, pubkey) {
+      return fetchEventByKind(relayUrl, pubkey, 0);
+    }
+
+    function fetchEventByKind(relayUrl, pubkey, kind) {
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 8000);
         let ws;
@@ -2025,7 +2065,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         } catch { reject(new Error('ws failed')); return; }
         const subId = 'lookup_' + Math.random().toString(36).slice(2, 8);
         ws.onopen = () => {
-          ws.send(JSON.stringify(['REQ', subId, { kinds: [0], authors: [pubkey], limit: 1 }]));
+          ws.send(JSON.stringify(['REQ', subId, { kinds: [kind], authors: [pubkey], limit: 1 }]));
         };
         ws.onmessage = (msg) => {
           try {
@@ -2044,6 +2084,228 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         };
         ws.onerror = () => { clearTimeout(timeout); reject(new Error('ws error')); };
       });
+    }
+
+    // --- Manage / Remove linked verifications ---
+    const OAUTH_PLATFORMS_SET = new Set(['twitter', 'bluesky', 'youtube', 'tiktok']);
+
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    async function loadLinkedVerifications() {
+      const container = document.getElementById('manage-links-container');
+      container.textContent = 'Loading...';
+      clearStatus('manage-status');
+
+      try {
+        const pubkey = await getActivePubkey();
+        if (!pubkey) {
+          container.textContent = 'Connect a signer first to see your linked accounts.';
+          return;
+        }
+
+        let event = null;
+        for (const relay of PROFILE_RELAYS) {
+          try {
+            event = await fetchIdentityEvent(relay, pubkey);
+            if (event) break;
+          } catch {}
+        }
+        if (!event) {
+          for (const relay of PROFILE_RELAYS) {
+            try {
+              event = await fetchProfileLegacy(relay, pubkey);
+              if (event) break;
+            } catch {}
+          }
+        }
+
+        const iTags = event ? (event.tags || []).filter(t => t[0] === 'i' && t[1]) : [];
+        if (iTags.length === 0) {
+          container.textContent = 'No linked verifications found.';
+          return;
+        }
+
+        renderLinkedVerifications(iTags, container);
+      } catch (e) {
+        setStatus('manage-status', e.message || 'Failed to load linked verifications.', 'error');
+      }
+    }
+
+    // Renders manage table using DOM methods for safety. All user data goes through
+    // textContent (platform, identity, proof come from the user's own signed Nostr events).
+    function renderLinkedVerifications(iTags, container) {
+      container.textContent = '';
+      const table = document.createElement('table');
+      table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.9rem;';
+
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+      headerRow.style.cssText = 'border-bottom:2px solid #e2e8f0;text-align:left;';
+      ['Platform', 'Identity', 'Proof', ''].forEach(text => {
+        const th = document.createElement('th');
+        th.style.padding = '0.5rem';
+        th.textContent = text;
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      for (const tag of iTags) {
+        const claim = tag[1];
+        const proof = tag[2] || '';
+        const sep = claim.indexOf(':');
+        const platform = sep > 0 ? claim.slice(0, sep) : claim;
+        const identity = sep > 0 ? claim.slice(sep + 1) : '';
+
+        const row = document.createElement('tr');
+        row.style.cssText = 'border-bottom:1px solid #e2e8f0;';
+
+        const tdPlatform = document.createElement('td');
+        tdPlatform.style.padding = '0.5rem';
+        tdPlatform.textContent = platform;
+        row.appendChild(tdPlatform);
+
+        const tdIdentity = document.createElement('td');
+        tdIdentity.style.padding = '0.5rem';
+        tdIdentity.textContent = identity;
+        row.appendChild(tdIdentity);
+
+        const tdProof = document.createElement('td');
+        tdProof.style.padding = '0.5rem';
+        tdProof.textContent = proof.length > 20 ? proof.slice(0, 20) + '...' : proof;
+        row.appendChild(tdProof);
+
+        const tdAction = document.createElement('td');
+        tdAction.style.padding = '0.5rem';
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'verify-btn';
+        removeBtn.style.cssText = 'background:#e53e3e;color:white;padding:0.3rem 0.75rem;font-size:0.85rem;';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', () => confirmRemoveVerification(platform, identity));
+        tdAction.appendChild(removeBtn);
+        row.appendChild(tdAction);
+
+        tbody.appendChild(row);
+      }
+      table.appendChild(tbody);
+      container.appendChild(table);
+    }
+
+    function confirmRemoveVerification(platform, identity) {
+      const dialog = document.getElementById('remove-confirm-dialog');
+      document.getElementById('remove-confirm-claim').textContent = platform + ':' + identity;
+      dialog.dataset.platform = platform;
+      dialog.dataset.identity = identity;
+      dialog.style.display = 'block';
+    }
+
+    function cancelRemove() {
+      document.getElementById('remove-confirm-dialog').style.display = 'none';
+    }
+
+    async function executeRemoveVerification() {
+      const dialog = document.getElementById('remove-confirm-dialog');
+      const platform = dialog.dataset.platform;
+      const identity = dialog.dataset.identity;
+      dialog.style.display = 'none';
+
+      setStatus('manage-status', 'Removing verification...', 'loading');
+
+      try {
+        if (!activeSigner) {
+          throw new Error('Connect a signer first.');
+        }
+
+        const pubkey = await getActivePubkey();
+        const signerPubkey = String(await activeSigner.getPublicKey()).toLowerCase();
+        if (pubkey !== signerPubkey) {
+          throw new Error('Signed-in key and selected account do not match.');
+        }
+
+        // Fetch current identity event (kind 10011, fall back to kind 0)
+        let event = null;
+        for (const relay of PROFILE_RELAYS) {
+          try {
+            event = await fetchIdentityEvent(relay, signerPubkey);
+            if (event) break;
+          } catch {}
+        }
+        if (!event) {
+          for (const relay of PROFILE_RELAYS) {
+            try {
+              event = await fetchProfileLegacy(relay, signerPubkey);
+              if (event) break;
+            } catch {}
+          }
+        }
+
+        const tags = event ? (event.tags || []).filter(Array.isArray) : [];
+        const claimKey = (platform + ':' + identity).toLowerCase();
+        const nextTags = tags.filter(tag => !(tag[0] === 'i' && typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey));
+
+        const unsignedEvent = {
+          kind: 10011,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: nextTags,
+          content: '',
+          pubkey: signerPubkey,
+        };
+
+        const signedEvent = await activeSigner.signEvent(unsignedEvent);
+        if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
+          throw new Error('Signer did not return a valid signed event.');
+        }
+
+        const relayResults = await Promise.all(PROFILE_RELAYS.map(relay => publishEventToRelay(relay, signedEvent)));
+        const successCount = relayResults.filter(r => r.ok).length;
+        if (successCount === 0) {
+          throw new Error('No relay accepted the updated event.');
+        }
+
+        // Attempt OAuth cache revoke for OAuth platforms
+        let revokeWarning = '';
+        if (OAUTH_PLATFORMS_SET.has(platform)) {
+          try {
+            const nip98Event = await buildNip98EventForRevoke(API + '/auth/oauth/revoke', 'POST');
+            const revokeResp = await fetch(API + '/auth/oauth/revoke', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ platform: platform, identity: identity, pubkey: signerPubkey, event: nip98Event }),
+            });
+            if (!revokeResp.ok) {
+              revokeWarning = ' OAuth cache revoke did not complete.';
+            }
+          } catch {
+            revokeWarning = ' OAuth cache revoke did not complete.';
+          }
+        }
+
+        if (revokeWarning) {
+          setStatus('manage-status', 'Removed from profile, but' + revokeWarning, 'ok');
+        } else {
+          setStatus('manage-status', 'Verification removed from your Nostr profile.', 'ok');
+        }
+
+        await loadLinkedVerifications();
+      } catch (e) {
+        setStatus('manage-status', e.message || 'Could not remove verification.', 'error');
+      }
+    }
+
+    async function buildNip98EventForRevoke(url, method) {
+      const event = {
+        kind: 27235,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ['u', url],
+          ['method', method],
+        ],
+        content: '',
+      };
+      return await activeSigner.signEvent(event);
     }
 
     // Verify Here wiring
