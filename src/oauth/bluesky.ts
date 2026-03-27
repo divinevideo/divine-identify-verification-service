@@ -280,7 +280,10 @@ export async function startBlueskyOAuth(
     login_hint: handle,
   })
 
-  const parResp = await fetch(authServer.pushedAuthorizationRequestEndpoint, {
+  // AT Protocol OAuth requires DPoP nonce exchange: the auth server rejects
+  // the first PAR request with a use_dpop_nonce error and a DPoP-Nonce header.
+  // We retry once with the nonce included in the DPoP proof.
+  let parResp = await fetch(authServer.pushedAuthorizationRequestEndpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -290,7 +293,31 @@ export async function startBlueskyOAuth(
   })
 
   if (!parResp.ok) {
-    return new Response(JSON.stringify({ error: 'Bluesky authorization request failed' }), {
+    const dpopNonce = parResp.headers.get('DPoP-Nonce')
+    if (dpopNonce) {
+      const dpopProofWithNonce = await createDPoPProof(
+        privateKey,
+        publicJwk,
+        'POST',
+        authServer.pushedAuthorizationRequestEndpoint,
+        dpopNonce,
+      )
+      parResp = await fetch(authServer.pushedAuthorizationRequestEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'DPoP': dpopProofWithNonce,
+        },
+        body: parBody,
+      })
+    }
+  }
+
+  if (!parResp.ok) {
+    let detail = ''
+    try { detail = await parResp.text() } catch {}
+    console.error('Bluesky PAR failed:', parResp.status, detail)
+    return new Response(JSON.stringify({ error: 'Bluesky authorization request failed', status: parResp.status, detail }), {
       status: 502,
       headers: { 'Content-Type': 'application/json' },
     })
@@ -485,7 +512,7 @@ export function blueskyClientMetadata(baseUrl: string): object {
   return {
     client_id: `${baseUrl}/auth/bluesky/client-metadata.json`,
     client_name: 'Divine Identity Verification',
-    client_uri: 'https://divine.video',
+    client_uri: baseUrl,
     redirect_uris: [`${baseUrl}/auth/bluesky/callback`],
     grant_types: ['authorization_code'],
     response_types: ['code'],

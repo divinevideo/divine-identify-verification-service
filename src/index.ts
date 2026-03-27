@@ -1823,7 +1823,25 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       if (params.get('oauth_verified') === 'true') {
         const platform = params.get('platform') || 'account';
         const identity = params.get('identity') || '';
-        setStatus('verify-global-status', 'Success. Your ' + platform + ' account is now linked' + (identity ? ': ' + identity : '') + '.', 'ok');
+        setStatus('verify-global-status', 'Success. Your ' + platform + ' account is now linked' + (identity ? ': ' + identity : '') + '. You can now publish this to your Nostr profile below.', 'ok');
+
+        // Pre-fill the Advanced section so the Publish button works for this OAuth result
+        const proofPlatformEl = document.getElementById('proof-platform-select');
+        const proofIdentityEl = document.getElementById('proof-identity-input');
+        const proofProofEl = document.getElementById('proof-proof-input');
+        if (proofPlatformEl && proofIdentityEl) {
+          proofPlatformEl.value = platform;
+          proofIdentityEl.value = identity;
+          if (proofProofEl) proofProofEl.value = 'oauth';
+          // Open the Advanced section and scroll the publish button into view
+          const advancedDetails = document.getElementById('advanced-proof');
+          if (advancedDetails) {
+            advancedDetails.open = true;
+            const publishBtn = document.getElementById('publish-kind0-btn');
+            if (publishBtn) publishBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+
         shouldClean = true;
       } else if (params.get('oauth_error')) {
         setStatus('verify-global-status', 'Sign-in was not completed: ' + params.get('oauth_error'), 'error');
