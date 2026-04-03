@@ -1,11 +1,16 @@
 import { Hono } from 'hono'
-import { cors } from 'hono/cors'
 import type { Bindings } from './types'
 import health from './routes/health'
 import platforms from './routes/platforms'
 import verify from './routes/verify'
 import nip05 from './routes/nip05'
 import auth from './routes/auth'
+
+const APP_ORIGIN = 'https://app.divine.video'
+const PREVIEW_SUFFIX = '.openvine-app.pages.dev'
+const ALLOW_METHODS = 'GET, POST, PUT, DELETE, OPTIONS'
+const ALLOW_HEADERS = 'Content-Type, Authorization, X-Requested-With'
+const MAX_AGE = '86400'
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -15,17 +20,21 @@ app.onError((err, c) => {
   return c.json({ error: 'Internal server error' }, 500)
 })
 
-// CORS middleware — restrict to known frontends
-app.use('*', cors({
-  origin: [
-    'https://divine.video',
-    'https://www.divine.video',
-    'https://verifyer.divine.video',
-    'https://verifier.divine.video',
-    'http://localhost:5173',
-    'http://localhost:3000',
-  ],
-}))
+// CORS middleware — restrict browser access to the managed web app hosts.
+app.use('*', async (c, next) => {
+  const allowedOrigin = resolveCorsOrigin(c.req.header('Origin'))
+
+  if (c.req.method === 'OPTIONS') {
+    applyCorsHeaders(c, allowedOrigin)
+    return new Response(null, {
+      status: 204,
+      headers: c.res.headers,
+    })
+  }
+
+  await next()
+  applyCorsHeaders(c, allowedOrigin)
+})
 
 // Routes
 app.route('/health', health)
@@ -2098,3 +2107,37 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 })
 
 export default { fetch: app.fetch }
+
+function resolveCorsOrigin(origin?: string | null): string | null {
+  if (!origin) {
+    return null
+  }
+
+  if (origin === APP_ORIGIN) {
+    return origin
+  }
+
+  try {
+    const url = new URL(origin)
+    if (url.protocol !== 'https:' || url.port || url.hostname === 'openvine-app.pages.dev') {
+      return null
+    }
+
+    return url.hostname.endsWith(PREVIEW_SUFFIX) ? origin : null
+  } catch {
+    return null
+  }
+}
+
+function applyCorsHeaders(c: { header: (name: string, value: string, options?: { append?: boolean }) => void; res: Response }, allowedOrigin: string | null) {
+  c.header('Access-Control-Allow-Methods', ALLOW_METHODS)
+  c.header('Access-Control-Allow-Headers', ALLOW_HEADERS)
+  c.header('Access-Control-Max-Age', MAX_AGE)
+
+  if (allowedOrigin) {
+    c.header('Access-Control-Allow-Origin', allowedOrigin)
+    c.header('Vary', 'Origin', { append: true })
+  } else {
+    c.res.headers.delete('Access-Control-Allow-Origin')
+  }
+}
