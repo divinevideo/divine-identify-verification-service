@@ -17,14 +17,9 @@ app.onError((err, c) => {
 
 // CORS middleware — restrict to known frontends
 app.use('*', cors({
-  origin: [
-    'https://divine.video',
-    'https://www.divine.video',
-    'https://verifyer.divine.video',
-    'https://verifier.divine.video',
-    'http://localhost:5173',
-    'http://localhost:3000',
-  ],
+  origin: '*',
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  maxAge: 86400,
 }))
 
 // Routes
