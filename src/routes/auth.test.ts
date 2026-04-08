@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { Hono } from 'hono'
 import type { Bindings } from '../types'
 import auth from './auth'
@@ -24,17 +24,29 @@ function createTestEnv(): Bindings {
   }
 }
 
-function buildNip98Event(pubkey: string) {
+const REVOKE_URL = 'http://localhost/auth/oauth/revoke'
+
+function buildNip98Event(
+  pubkey: string,
+  overrides: Partial<{ url: string; method: string; created_at: number }> = {}
+) {
   return {
     id: 'a'.repeat(64),
     pubkey,
     sig: 'b'.repeat(128),
     kind: 27235,
-    tags: [],
-    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ['u', overrides.url || REVOKE_URL],
+      ['method', overrides.method || 'POST'],
+    ],
+    created_at: overrides.created_at ?? Math.floor(Date.now() / 1000),
     content: '',
   }
 }
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('POST /auth/oauth/revoke', () => {
   const testPubkey = 'aa'.repeat(32)
@@ -97,6 +109,59 @@ describe('POST /auth/oauth/revoke', () => {
     expect(res.status).toBe(401)
   })
 
+  it('rejects NIP-98 events for a different URL', async () => {
+    const env = createTestEnv()
+    const res = await app.request('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        platform: 'twitter',
+        identity: 'user',
+        pubkey: testPubkey,
+        event: buildNip98Event(testPubkey, { url: 'http://localhost/auth/nostr/login' }),
+      }),
+    }, env)
+    expect(res.status).toBe(401)
+    const data = await res.json() as { error: string }
+    expect(data.error).toMatch(/URL/)
+  })
+
+  it('rejects NIP-98 events for a different method', async () => {
+    const env = createTestEnv()
+    const res = await app.request('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        platform: 'twitter',
+        identity: 'user',
+        pubkey: testPubkey,
+        event: buildNip98Event(testPubkey, { method: 'GET' }),
+      }),
+    }, env)
+    expect(res.status).toBe(401)
+    const data = await res.json() as { error: string }
+    expect(data.error).toMatch(/method/)
+  })
+
+  it('rejects stale NIP-98 events', async () => {
+    const env = createTestEnv()
+    const res = await app.request('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        platform: 'twitter',
+        identity: 'user',
+        pubkey: testPubkey,
+        event: buildNip98Event(testPubkey, {
+          created_at: Math.floor(Date.now() / 1000) - 600,
+        }),
+      }),
+    }, env)
+    expect(res.status).toBe(401)
+    const data = await res.json() as { error: string }
+    expect(data.error).toMatch(/too old/)
+  })
+
   it('returns revoked:true and deletes KV entry', async () => {
     const env = createTestEnv()
     const key = `oauth_verified:twitter:alice:${testPubkey}`
@@ -126,8 +191,6 @@ describe('POST /auth/oauth/revoke', () => {
 
     const after = await env.CACHE_KV.get(key)
     expect(after).toBeNull()
-
-    vi.restoreAllMocks()
   })
 
   it('returns revoked:true even when KV entry already absent (idempotent)', async () => {
@@ -152,7 +215,5 @@ describe('POST /auth/oauth/revoke', () => {
     expect(res.status).toBe(200)
     const data = await res.json() as { revoked: boolean }
     expect(data.revoked).toBe(true)
-
-    vi.restoreAllMocks()
   })
 })

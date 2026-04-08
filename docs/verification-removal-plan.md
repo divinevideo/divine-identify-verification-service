@@ -10,7 +10,6 @@
 Users can publish identity links to their Nostr profile today, but cannot remove a link from the Verifyer UI. This plan adds a first-class remove flow that:
 - Removes selected `i` tags from the latest `kind:10011` identity event (NIP-39).
 - Attempts OAuth cache revocation for OAuth-backed platforms.
-- For Bluesky, attempts deletion of the `video.divine.identity.link` AT Protocol record created during OAuth.
 - Preserves signer ownership checks and existing relay publish behavior.
 
 ## Prerequisites
@@ -54,18 +53,9 @@ divine-web's `LinkedAccountsSettingsPage` already lets users remove identity cla
 - Missing today:
   - `deleteOAuthVerification()`.
 
-### Bluesky Identity-Link Record (`src/identity-link.ts`, `src/oauth/bluesky.ts`)
-- Existing:
-  - Bluesky OAuth flow writes a `video.divine.identity.link` record to the user's AT Protocol repo via `com.atproto.repo.putRecord`.
-  - Record key: `nostr-{npub}` (deterministic, one per Nostr identity).
-  - Written as best-effort (failure doesn't block OAuth success).
-- Missing today:
-  - No `com.atproto.repo.deleteRecord` call to clean up the identity-link record on removal.
-
 ## Problem
 - Users need a direct, non-technical unlink path.
 - OAuth cache entries live for up to 24 hours, so unlinking only profile tags is insufficient for immediate de-verification.
-- For Bluesky, the OAuth flow creates a persistent `video.divine.identity.link` record in the user's AT Protocol repo that is not cleaned up on unlink.
 
 ## Goals
 1. Users can view linked verifications for the active account.
@@ -109,7 +99,6 @@ divine-web's `LinkedAccountsSettingsPage` already lets users remove identity cla
 4. Require active signer session and pubkey ownership match.
 5. Publish new `kind:10011` event to existing relay set (`PROFILE_RELAYS`).
 6. For OAuth platforms (`twitter`, `bluesky`, `youtube`, `tiktok`), attempt revoke after successful publish.
-7. For Bluesky, attempt deletion of `video.divine.identity.link` AT Protocol record (best-effort, non-blocking).
 7. Idempotency:
   - Missing target tag should still return success (`already removed` semantics).
   - Missing OAuth KV key should still return `revoked:true`.
@@ -162,8 +151,7 @@ Behavior:
 4. Verify `event` through same upstream trust path used by `/auth/nostr/login` (`login.divine.video`).
 5. Ensure authenticated pubkey equals body pubkey.
 6. Delete OAuth verification key from `CACHE_KV`.
-7. For Bluesky: attempt `com.atproto.repo.deleteRecord` to remove the `video.divine.identity.link` record (rkey: `nostr-{npub}`). Requires stored OAuth token or re-auth. Best-effort; failure is non-blocking.
-8. Return `200 { revoked: true, platform, identity, atproto_record_deleted: true|false }` (Bluesky) or `200 { revoked: true, platform, identity }` (other platforms).
+7. Return `200 { revoked: true, platform, identity }`.
 
 Recommended refactor:
 - Extract shared helper from `/auth/nostr/login` for login.divine.video verification to avoid duplicated event validation/fetch logic.
@@ -283,8 +271,6 @@ Track:
   - Remove all duplicates for selected key.
 - Upstream auth outage:
   - Revoke failure is non-blocking if unlink publish succeeded.
-- Bluesky AT Protocol record deletion:
-  - Requires a valid OAuth token. If the user's token has expired or been revoked, the record persists in their AT repo. This is acceptable: the Nostr-side `i` tag removal is the authoritative unlink. The AT record is supplementary.
 - Kind 0 / kind 10011 legacy data:
   - Users who published `i` tags via the verifier before the kind 10011 migration have tags in kind 0 only. The dual-read lookup (Slice 0) surfaces these. Any subsequent add/remove action publishes to kind 10011, effectively migrating that user. Stale kind 0 `i` tags are harmless (NIP-39-compliant clients ignore them).
 

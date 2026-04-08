@@ -2071,10 +2071,6 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     // --- Manage / Remove linked verifications ---
     const OAUTH_PLATFORMS_SET = new Set(['twitter', 'bluesky', 'youtube', 'tiktok']);
 
-    function escapeHtml(str) {
-      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
     async function loadLinkedVerifications() {
       const container = document.getElementById('manage-links-container');
       container.textContent = 'Loading...';
@@ -2225,8 +2221,9 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         }
 
         const tags = event ? (event.tags || []).filter(Array.isArray) : [];
+        const iTags = tags.filter(tag => tag[0] === 'i');
         const claimKey = (platform + ':' + identity).toLowerCase();
-        const nextTags = tags.filter(tag => !(tag[0] === 'i' && typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey));
+        const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey));
 
         const unsignedEvent = {
           kind: 10011,
@@ -2239,6 +2236,9 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         const signedEvent = await activeSigner.signEvent(unsignedEvent);
         if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
           throw new Error('Signer did not return a valid signed event.');
+        }
+        if (String(signedEvent.pubkey || '').toLowerCase() !== signerPubkey) {
+          throw new Error('Signer returned an event for a different pubkey.');
         }
 
         const relayResults = await Promise.all(PROFILE_RELAYS.map(relay => publishEventToRelay(relay, signedEvent)));
@@ -2278,6 +2278,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     }
 
     async function buildNip98EventForRevoke(url, method) {
+      const signerPubkey = String(await activeSigner.getPublicKey()).toLowerCase();
       const event = {
         kind: 27235,
         created_at: Math.floor(Date.now() / 1000),
@@ -2286,8 +2287,16 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
           ['method', method],
         ],
         content: '',
+        pubkey: signerPubkey,
       };
-      return await activeSigner.signEvent(event);
+      const signedEvent = await activeSigner.signEvent(event);
+      if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
+        throw new Error('Signer did not return a valid auth event.');
+      }
+      if (String(signedEvent.pubkey || '').toLowerCase() !== signerPubkey) {
+        throw new Error('Signer returned an auth event for a different pubkey.');
+      }
+      return signedEvent;
     }
 
     // Verify Here wiring
