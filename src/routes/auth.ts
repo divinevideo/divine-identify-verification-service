@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import type { Bindings, OAuthPlatform } from '../types'
 import { isValidHexPubkey, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
-import { getOAuthVerification } from '../oauth/state'
+import { getOAuthVerification, deleteOAuthVerification } from '../oauth/state'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
@@ -10,6 +10,138 @@ import { startTikTokOAuth, handleTikTokCallback } from '../oauth/tiktok'
 
 const auth = new Hono<{ Bindings: Bindings }>()
 const DIVINE_LOGIN_BASE = 'https://login.divine.video'
+const NIP98_MAX_AGE_SECONDS = 120
+
+type Nip98Event = {
+  id: string
+  pubkey: string
+  sig: string
+  kind: number
+  tags: string[][]
+  created_at: number
+  content?: unknown
+}
+
+function getFirstTagValue(tags: string[][], tagName: string): string | null {
+  for (const tag of tags) {
+    if (Array.isArray(tag) && tag[0] === tagName && typeof tag[1] === 'string') {
+      return tag[1]
+    }
+  }
+  return null
+}
+
+function parseAndValidateNip98Event(
+  rawEvent: unknown,
+  expectedUrl: string,
+  expectedMethod: string,
+): { event: Nip98Event } | { error: string; status: 400 | 401 } {
+  const event = rawEvent as
+    | { id?: unknown; pubkey?: unknown; sig?: unknown; kind?: unknown; tags?: unknown; created_at?: unknown; content?: unknown }
+    | undefined
+
+  if (!event || typeof event !== 'object') {
+    return { error: 'Missing event payload', status: 400 }
+  }
+  if (typeof event.id !== 'string' || typeof event.pubkey !== 'string' || typeof event.sig !== 'string') {
+    return { error: 'Invalid event: id/pubkey/sig are required', status: 400 }
+  }
+  if (!isValidHexPubkey(event.pubkey)) {
+    return { error: 'Invalid event pubkey', status: 400 }
+  }
+  if (event.kind !== 27235) {
+    return { error: 'Invalid event kind: expected 27235 (NIP-98)', status: 400 }
+  }
+  if (!Array.isArray(event.tags) || event.tags.some((tag) => !Array.isArray(tag))) {
+    return { error: 'Invalid event tags', status: 400 }
+  }
+  if (typeof event.created_at !== 'number' || !Number.isFinite(event.created_at)) {
+    return { error: 'Invalid event created_at', status: 400 }
+  }
+
+  const now = Math.floor(Date.now() / 1000)
+  if (Math.abs(now - Math.floor(event.created_at)) > NIP98_MAX_AGE_SECONDS) {
+    return { error: 'NIP-98 event is too old or too far in the future', status: 401 }
+  }
+
+  const urlTag = getFirstTagValue(event.tags as string[][], 'u')
+  if (urlTag !== expectedUrl) {
+    return { error: 'NIP-98 event URL does not match this action', status: 401 }
+  }
+
+  const methodTag = getFirstTagValue(event.tags as string[][], 'method')
+  if (methodTag !== expectedMethod) {
+    return { error: 'NIP-98 event method does not match this action', status: 401 }
+  }
+
+  return {
+    event: {
+      id: event.id,
+      pubkey: event.pubkey,
+      sig: event.sig,
+      kind: event.kind,
+      tags: event.tags as string[][],
+      created_at: Math.floor(event.created_at),
+      content: event.content,
+    },
+  }
+}
+
+async function verifyNip98EventWithUpstream(
+  rawEvent: unknown,
+  expectedUrl: string,
+  expectedMethod: string,
+): Promise<
+  | { ok: true; event: Nip98Event; upstreamPubkey: string }
+  | { ok: false; error: string; status: number; upstreamStatus?: number }
+> {
+  const parsed = parseAndValidateNip98Event(rawEvent, expectedUrl, expectedMethod)
+  if ('error' in parsed) {
+    return { ok: false, error: parsed.error, status: parsed.status }
+  }
+
+  const loginUrl = `${DIVINE_LOGIN_BASE}/api/auth/login`
+  const encodedEvent = btoa(JSON.stringify(parsed.event))
+
+  let upstreamResp: Response
+  try {
+    upstreamResp = await fetch(loginUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Nostr ${encodedEvent}`,
+        'Content-Type': 'application/json',
+        // login.divine.video currently whitelists divine.video origin for this endpoint.
+        'Origin': 'https://divine.video',
+      },
+      body: '{}',
+    })
+  } catch {
+    return { ok: false, error: 'Failed to reach login.divine.video', status: 502 }
+  }
+
+  let upstreamData: { pubkey?: string; error?: string } = {}
+  try {
+    upstreamData = await upstreamResp.json() as typeof upstreamData
+  } catch {
+    // Keep empty object fallback.
+  }
+
+  if (!upstreamResp.ok) {
+    return {
+      ok: false,
+      error: upstreamData.error || 'Nostr login failed at login.divine.video',
+      status: 502,
+      upstreamStatus: upstreamResp.status,
+    }
+  }
+
+  const upstreamPubkey = typeof upstreamData.pubkey === 'string' ? upstreamData.pubkey : parsed.event.pubkey
+  if (!isValidHexPubkey(upstreamPubkey)) {
+    return { ok: false, error: 'Invalid pubkey returned by login provider', status: 502 }
+  }
+
+  return { ok: true, event: parsed.event, upstreamPubkey: normalizePubkey(upstreamPubkey) }
+}
 
 // Allowed origins for OAuth return_url (prevent open redirect)
 const ALLOWED_RETURN_ORIGINS = new Set([
@@ -72,66 +204,18 @@ auth.post('/nostr/login', async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400)
   }
 
-  const event = body.event as
-    | { id?: unknown; pubkey?: unknown; sig?: unknown; kind?: unknown; tags?: unknown; created_at?: unknown; content?: unknown }
-    | undefined
-  if (!event || typeof event !== 'object') {
-    return c.json({ error: 'Missing event payload' }, 400)
-  }
-  if (typeof event.id !== 'string' || typeof event.pubkey !== 'string' || typeof event.sig !== 'string') {
-    return c.json({ error: 'Invalid event: id/pubkey/sig are required' }, 400)
-  }
-  if (!isValidHexPubkey(event.pubkey)) {
-    return c.json({ error: 'Invalid event pubkey' }, 400)
-  }
-  if (event.kind !== 27235) {
-    return c.json({ error: 'Invalid event kind: expected 27235 (NIP-98)' }, 400)
-  }
-  if (!Array.isArray(event.tags)) {
-    return c.json({ error: 'Invalid event tags' }, 400)
-  }
-
   const loginUrl = `${DIVINE_LOGIN_BASE}/api/auth/login`
-  const encodedEvent = btoa(JSON.stringify(event))
-
-  let upstreamResp: Response
-  try {
-    upstreamResp = await fetch(loginUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Nostr ${encodedEvent}`,
-        'Content-Type': 'application/json',
-        // login.divine.video currently whitelists divine.video origin for this endpoint.
-        'Origin': 'https://divine.video',
-      },
-      body: '{}',
-    })
-  } catch {
-    return c.json({ error: 'Failed to reach login.divine.video' }, 502)
-  }
-
-  let upstreamData: { pubkey?: string; error?: string } = {}
-  try {
-    upstreamData = await upstreamResp.json() as typeof upstreamData
-  } catch {
-    // Keep empty object fallback.
-  }
-
-  if (!upstreamResp.ok) {
-    return c.json({
-      error: upstreamData.error || 'Nostr login failed at login.divine.video',
-      upstream_status: upstreamResp.status,
-    }, 502)
-  }
-
-  const upstreamPubkey = typeof upstreamData.pubkey === 'string' ? upstreamData.pubkey : event.pubkey
-  if (!isValidHexPubkey(upstreamPubkey)) {
-    return c.json({ error: 'Invalid pubkey returned by login provider' }, 502)
+  const verification = await verifyNip98EventWithUpstream(body.event, loginUrl, 'POST')
+  if (!verification.ok) {
+    const payload = verification.upstreamStatus
+      ? { error: verification.error, upstream_status: verification.upstreamStatus }
+      : { error: verification.error }
+    return c.json(payload, verification.status as 400 | 401 | 502)
   }
 
   return c.json({
     authenticated: true,
-    pubkey: normalizePubkey(upstreamPubkey),
+    pubkey: verification.upstreamPubkey,
     provider: 'login.divine.video',
     method: 'nostr_nip98',
   })
@@ -323,6 +407,60 @@ auth.get('/:platform/status', async (c) => {
     verified: false,
     method: null,
   })
+})
+
+const OAUTH_PLATFORMS = new Set(['twitter', 'bluesky', 'youtube', 'tiktok'])
+
+// Revoke OAuth verification cache entry
+// POST /auth/oauth/revoke { platform, identity, pubkey, event }
+auth.post('/oauth/revoke', async (c) => {
+  const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
+  const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
+  if (!ipLimit.allowed) {
+    return c.json({ error: 'Rate limit exceeded' }, 429)
+  }
+
+  let body: { platform?: string; identity?: string; pubkey?: string; event?: Record<string, unknown> }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400)
+  }
+
+  const { platform, identity, pubkey, event } = body
+  if (!platform || !identity || !pubkey || !event) {
+    return c.json({ error: 'Missing required fields: platform, identity, pubkey, event' }, 400)
+  }
+  if (!OAUTH_PLATFORMS.has(platform)) {
+    return c.json({ error: `OAuth revoke only supported for: ${[...OAUTH_PLATFORMS].join(', ')}` }, 400)
+  }
+  if (!isValidHexPubkey(pubkey)) {
+    return c.json({ error: 'Invalid pubkey (64-char hex required)' }, 400)
+  }
+  const normalizedBodyPubkey = normalizePubkey(pubkey)
+  if (typeof event?.pubkey === 'string' && normalizePubkey(event.pubkey) !== normalizedBodyPubkey) {
+    return c.json({ error: 'Pubkey mismatch: body pubkey does not match event pubkey' }, 401)
+  }
+  const revokeUrl = new URL(c.req.url).toString()
+  const verification = await verifyNip98EventWithUpstream(event, revokeUrl, 'POST')
+  if (!verification.ok) {
+    const payload = verification.upstreamStatus
+      ? { error: verification.error, upstream_status: verification.upstreamStatus }
+      : { error: verification.error }
+    return c.json(payload, verification.status as 400 | 401 | 502)
+  }
+
+  if (normalizedBodyPubkey !== normalizePubkey(verification.event.pubkey)) {
+    return c.json({ error: 'Pubkey mismatch: body pubkey does not match event pubkey' }, 401)
+  }
+  if (normalizedBodyPubkey !== verification.upstreamPubkey) {
+    return c.json({ error: 'Pubkey mismatch: verified pubkey does not match request pubkey' }, 401)
+  }
+
+  // Delete OAuth verification from KV
+  await deleteOAuthVerification(c.env.CACHE_KV, platform, identity, normalizedBodyPubkey)
+
+  return c.json({ revoked: true, platform, identity })
 })
 
 export default auth
