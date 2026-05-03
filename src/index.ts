@@ -88,271 +88,367 @@ app.get('/', (c) => {
   <meta property="og:description" content="Prove you are who you say you are. Link your social accounts to your Nostr identity to prevent impersonation.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="${origin}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&display=swap">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-      line-height: 1.6; color: #333; background: #f8fafc;
+    :root {
+      --green: #27C58B;
+      --dark: #07241B;
+      --mint: #D0FBCB;
+      --off: #F9F7F6;
+      --yellow: #FFF140;
+      --pink: #FF7FAF;
+      --orange: #FF7640;
+      --violet: #A3A9FF;
+      color-scheme: dark;
     }
-    .container { max-width: 900px; margin: 0 auto; padding: 2rem; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: var(--dark); color: var(--off);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 17px; line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3, h4 {
+      font-family: 'Bricolage Grotesque', 'Inter', sans-serif;
+      font-weight: 800; letter-spacing: -0.02em; line-height: 1.05;
+    }
+    .container { max-width: 960px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 32px); }
+
+    /* Top brand bar */
+    .topbar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 24px 0; gap: 16px; flex-wrap: wrap;
+    }
+    .brand {
+      display: inline-flex; align-items: center; gap: 12px;
+      color: var(--off);
+      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800; font-size: 1.3rem;
+      text-decoration: none;
+    }
+    .logomark {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: var(--green); border: 2px solid var(--off);
+      position: relative; display: inline-block;
+    }
+    .logomark::after {
+      content: ""; position: absolute; inset: 5px;
+      background: var(--dark); border-radius: 50%;
+    }
+    .nav-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+    .nav-link {
+      font-size: 0.92rem; color: var(--mint);
+      border-bottom: 1.5px solid rgba(208, 251, 203, 0.4); padding-bottom: 1px;
+      text-decoration: none;
+    }
+    .nav-link:hover { color: var(--green); border-bottom-color: var(--green); }
 
     /* Hero */
-    .hero { text-align: center; padding: 3rem 1rem 2rem; }
-    .hero h1 { font-size: 2.4rem; color: #1a202c; margin-bottom: 0.75rem; font-weight: 800; }
-    .hero .subtitle { font-size: 1.2rem; color: #4a5568; max-width: 600px; margin: 0 auto 1.5rem; }
-    .hero .cta-row { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem; }
-    .btn {
-      display: inline-block; padding: 0.7rem 1.5rem; border-radius: 10px;
-      font-size: 1rem; font-weight: 600; text-decoration: none; cursor: pointer;
-      border: none; transition: all 0.2s;
+    .hero { padding: 32px 0 24px; text-align: left; }
+    .hero h1 {
+      font-size: clamp(2.2rem, 6vw, 3.8rem);
+      color: var(--off); max-width: 18ch; margin-bottom: 18px;
     }
-    .btn-primary { background: #4299e1; color: white; }
-    .btn-primary:hover { background: #3182ce; text-decoration: none; }
-    .btn-outline { background: white; color: #4299e1; border: 2px solid #4299e1; }
-    .btn-outline:hover { background: #ebf8ff; text-decoration: none; }
+    .hero h1 .punct { color: var(--green); }
+    .hero .subtitle {
+      max-width: 60ch; color: var(--mint);
+      font-size: 1.05rem; line-height: 1.5; margin-bottom: 1.5rem;
+    }
+    .hero .subtitle a { color: var(--off); border-bottom: 1.5px solid rgba(249, 247, 246, 0.35); padding-bottom: 1px; text-decoration: none; }
+    .hero .subtitle a:hover { color: var(--green); border-bottom-color: var(--green); }
+    .hero .cta-row { display: flex; gap: 12px; justify-content: flex-start; flex-wrap: wrap; margin-top: 4px; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 44px; padding: 10px 18px; border-radius: 999px;
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 0.96rem; font-weight: 800; line-height: 1;
+      text-decoration: none; cursor: pointer;
+      border: 2px solid transparent;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .btn-primary { background: var(--green); color: var(--dark); border-color: var(--green); }
+    .btn-primary:hover { transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--off); text-decoration: none; }
+    .btn-outline { background: transparent; color: var(--mint); border-color: rgba(208, 251, 203, 0.4); }
+    .btn-outline:hover { color: var(--off); border-color: var(--mint); transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--green); text-decoration: none; }
 
     /* Value props */
     .value-grid {
       display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 1.25rem; margin: 2rem 0;
+      gap: 14px; margin: 2rem 0;
     }
     .value-card {
-      background: white; border-radius: 12px; padding: 1.5rem;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      background: var(--off); color: var(--dark);
+      border: 2px solid var(--dark); border-radius: 22px; padding: 22px;
+      box-shadow: 6px 6px 0 var(--green);
     }
     .value-card .icon { font-size: 2rem; margin-bottom: 0.75rem; }
-    .value-card h3 { font-size: 1.1rem; color: #1a202c; margin-bottom: 0.5rem; }
-    .value-card p { font-size: 0.9rem; color: #4a5568; margin: 0; }
+    .value-card h3 { font-size: 1.15rem; color: var(--dark); margin-bottom: 0.5rem; }
+    .value-card p { font-size: 0.95rem; color: rgba(7, 36, 27, 0.78); margin: 0; line-height: 1.5; }
 
     /* How it works */
     .steps {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 1.5rem; margin: 1.5rem 0;
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 16px; margin: 1.25rem 0;
+    }
+    @media (max-width: 820px) {
+      .steps { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 460px) {
+      .steps { grid-template-columns: 1fr; }
     }
     .step {
-      text-align: center; padding: 1rem;
+      padding: 16px;
+      border: 2px solid rgba(7, 36, 27, 0.12);
+      border-radius: 16px;
+      background: rgba(208, 251, 203, 0.35);
     }
     .step-number {
       display: inline-flex; align-items: center; justify-content: center;
-      width: 40px; height: 40px; border-radius: 50%;
-      background: #4299e1; color: white; font-weight: 700; font-size: 1.1rem;
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--dark); color: var(--mint);
+      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800; font-size: 1.05rem;
       margin-bottom: 0.75rem;
     }
-    .step h4 { color: #1a202c; margin-bottom: 0.25rem; font-size: 1rem; }
-    .step p { color: #718096; font-size: 0.85rem; margin: 0; }
+    .step h4 { color: var(--dark); margin-bottom: 6px; font-size: 1rem; }
+    .step p { color: rgba(7, 36, 27, 0.78); font-size: 0.9rem; margin: 0; line-height: 1.45; }
+    .step a { color: var(--dark); border-bottom: 1.5px solid rgba(7, 36, 27, 0.4); padding-bottom: 1px; text-decoration: none; font-weight: 600; }
+    .step a:hover { border-bottom-color: var(--green); }
 
     /* Platform pills */
     .platform-grid {
-      display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center;
-      margin: 1.5rem 0;
+      display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+      margin: 1.5rem auto;
+      max-width: 640px;
     }
     .platform-pill {
-      display: flex; align-items: center; gap: 0.5rem;
-      background: white; border-radius: 10px; padding: 0.6rem 1rem;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08); font-size: 0.9rem; color: #2d3748;
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      background: var(--off); color: var(--dark);
+      border: 2px solid var(--dark); border-radius: 999px;
+      padding: 8px 14px; font-size: 0.92rem; font-weight: 600;
+      box-shadow: 3px 3px 0 var(--green);
     }
-    .platform-pill svg { width: 20px; height: 20px; flex-shrink: 0; }
+    .platform-pill svg { width: 18px; height: 18px; flex-shrink: 0; fill: var(--dark); }
 
-    /* Sections */
+    /* Sections (cards) */
     section {
-      background: white; border-radius: 12px; padding: 1.5rem;
-      margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      background: var(--off); color: var(--dark);
+      border: 2px solid var(--dark); border-radius: 22px;
+      padding: 24px; margin-bottom: 18px;
+      box-shadow: 6px 6px 0 var(--green);
     }
-    h2 { font-size: 1.3rem; color: #2d3748; margin-bottom: 1rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; }
-    h3 { font-size: 1rem; color: #4a5568; margin: 1.25rem 0 0.5rem; }
-    h4 { font-size: 0.9rem; color: #718096; margin: 0.75rem 0 0.25rem; }
+    section h2 {
+      font-size: 1.45rem; color: var(--dark);
+      margin-bottom: 0.85rem; padding-bottom: 0.5rem;
+      border-bottom: 2px solid rgba(7, 36, 27, 0.12);
+    }
+    section h3 { font-size: 1.05rem; color: var(--dark); margin: 1.25rem 0 0.5rem; }
+    section h4 { font-size: 0.95rem; color: rgba(7, 36, 27, 0.78); margin: 0.75rem 0 0.25rem; }
+    section p { margin-bottom: 0.55rem; color: rgba(7, 36, 27, 0.78); font-size: 0.95rem; line-height: 1.5; }
+    section ul { margin: 0.4rem 0 0.6rem 1.25rem; color: rgba(7, 36, 27, 0.78); font-size: 0.95rem; }
+    section li { margin-bottom: 0.25rem; }
+    section a { color: var(--dark); border-bottom: 1.5px solid rgba(7, 36, 27, 0.4); padding-bottom: 1px; text-decoration: none; font-weight: 600; }
+    section a:hover { border-bottom-color: var(--green); color: var(--dark); }
+    section strong { color: var(--dark); }
+
     code {
-      background: #edf2f7; padding: 0.15rem 0.4rem; border-radius: 4px;
-      font-size: 0.85rem; font-family: 'SF Mono', Menlo, Consolas, monospace;
+      background: rgba(7, 36, 27, 0.08); color: var(--dark);
+      padding: 1px 6px; border-radius: 6px;
+      font-size: 0.88em; font-family: 'SF Mono', Menlo, Consolas, monospace;
     }
     pre {
-      background: #2d3748; color: #e2e8f0; padding: 1rem; border-radius: 8px;
-      overflow-x: auto; font-size: 0.8rem; margin: 0.5rem 0 0.75rem;
+      background: var(--dark); color: var(--mint);
+      padding: 1rem; border-radius: 14px;
+      overflow-x: auto; font-size: 0.82rem; margin: 0.5rem 0 0.75rem;
       font-family: 'SF Mono', Menlo, Consolas, monospace; line-height: 1.5;
+      border: 2px solid var(--dark);
     }
-    pre .comment { color: #a0aec0; }
-    .endpoint { margin-bottom: 1.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid #edf2f7; }
+    pre .comment { color: rgba(208, 251, 203, 0.55); }
+
+    .endpoint { margin-bottom: 1.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid rgba(7, 36, 27, 0.1); }
     .endpoint:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
     .method {
-      display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px;
-      font-size: 0.75rem; font-weight: 700; margin-right: 0.5rem; color: white;
+      display: inline-block; padding: 2px 8px; border-radius: 6px;
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 0.72rem; font-weight: 800; margin-right: 0.5rem; color: var(--dark);
+      letter-spacing: 0.02em;
     }
-    .get { background: #48bb78; }
-    .post { background: #4299e1; }
-    .head { background: #9f7aea; }
+    .get { background: var(--green); }
+    .post { background: var(--mint); }
+    .head { background: var(--violet); }
+
     table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; }
-    th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #e2e8f0; font-size: 0.85rem; }
-    th { color: #718096; font-weight: 600; }
-    td code { font-size: 0.8rem; }
-    p { margin-bottom: 0.5rem; color: #4a5568; font-size: 0.9rem; }
-    ul { margin: 0.25rem 0 0.5rem 1.25rem; color: #4a5568; font-size: 0.9rem; }
-    li { margin-bottom: 0.2rem; }
-    a { color: #4299e1; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .note { background: #ebf8ff; border-left: 3px solid #4299e1; padding: 0.5rem 0.75rem; border-radius: 0 6px 6px 0; margin: 0.5rem 0; font-size: 0.85rem; }
-    footer { text-align: center; padding: 2rem 0; color: #a0aec0; font-size: 0.85rem; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid rgba(7, 36, 27, 0.12); font-size: 0.9rem; }
+    th { color: rgba(7, 36, 27, 0.6); font-weight: 700; font-family: 'Bricolage Grotesque', sans-serif; }
+    td code { font-size: 0.82rem; }
+
+    .note {
+      background: var(--mint); color: var(--dark);
+      border-left: 4px solid var(--green); padding: 0.7rem 0.9rem;
+      border-radius: 0 12px 12px 0; margin: 0.75rem 0; font-size: 0.92rem;
+    }
+    .note strong { color: var(--dark); }
 
     /* Divider */
     .section-divider {
-      text-align: center; padding: 2rem 0 1rem; color: #a0aec0; font-size: 0.85rem;
+      text-align: center; padding: 2.25rem 0 1rem;
+      color: var(--mint); font-size: 0.82rem;
+      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
     }
     .section-divider span {
-      background: #f8fafc; padding: 0 1rem; position: relative;
+      background: var(--dark); padding: 0 1rem; position: relative;
     }
     .section-divider::before {
-      content: ''; display: block; height: 1px; background: #e2e8f0;
+      content: ''; display: block; height: 1px;
+      background: rgba(208, 251, 203, 0.2);
       position: relative; top: 0.7rem;
     }
 
     /* Verify flow */
     .verify-here {
-      border: 2px solid #2b6cb0;
-      background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+      box-shadow: 6px 6px 0 var(--yellow);
+      background: var(--off);
     }
-    .verify-lead {
-      font-size: 1rem;
-      color: #2d3748;
-      margin-bottom: 1rem;
-    }
+    .verify-lead { font-size: 1rem; color: var(--dark); margin-bottom: 1rem; }
     .verify-step-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 1rem;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
     }
     .verify-card {
-      background: white;
-      border: 1px solid #dbe7f5;
-      border-radius: 12px;
-      padding: 1rem;
+      background: var(--mint); color: var(--dark);
+      border: 2px solid var(--dark); border-radius: 16px;
+      padding: 16px;
     }
     .step-pill {
       display: inline-block;
-      background: #ebf8ff;
-      color: #2b6cb0;
-      border-radius: 999px;
-      padding: 0.25rem 0.65rem;
-      font-size: 0.75rem;
-      font-weight: 700;
-      margin-bottom: 0.6rem;
+      background: var(--dark); color: var(--mint);
+      border-radius: 999px; padding: 4px 10px;
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      margin-bottom: 0.7rem;
     }
     .field-label {
-      display: block;
-      font-size: 0.82rem;
-      color: #4a5568;
-      margin-bottom: 0.25rem;
-      font-weight: 600;
+      display: block; font-size: 0.82rem; color: var(--dark);
+      margin-bottom: 0.3rem; font-weight: 700;
     }
-    .field-input,
-    .field-select {
-      width: 100%;
-      padding: 0.62rem 0.72rem;
-      border: 2px solid #e2e8f0;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      font-family: inherit;
+    .field-input, .field-select {
+      width: 100%; padding: 10px 12px;
+      border: 2px solid var(--dark); border-radius: 12px;
+      font-size: 0.95rem; font-family: 'Inter', sans-serif;
       margin-bottom: 0.6rem;
-      transition: border-color 0.2s;
-      outline: none;
-      background: #fff;
+      background: var(--off); color: var(--dark);
+      outline: none; transition: box-shadow 0.15s ease;
     }
-    .field-input:focus,
-    .field-select:focus {
-      border-color: #2b6cb0;
+    .field-input:focus, .field-select:focus {
+      box-shadow: 3px 3px 0 var(--green);
     }
     .field-help {
-      color: #718096;
-      font-size: 0.82rem;
-      margin-top: -0.1rem;
-      margin-bottom: 0.55rem;
+      color: rgba(7, 36, 27, 0.65); font-size: 0.82rem;
+      margin-top: -0.1rem; margin-bottom: 0.55rem;
     }
     .status-row {
-      display: none;
-      padding: 0.52rem 0.75rem;
-      border-radius: 8px;
-      margin-top: 0.7rem;
-      font-size: 0.86rem;
+      display: none; padding: 10px 14px;
+      border-radius: 12px; margin-top: 0.75rem;
+      font-size: 0.9rem; line-height: 1.4;
+      border: 1px solid transparent;
     }
     .verify-btn {
-      padding: 0.62rem 1rem;
-      border: none;
-      border-radius: 8px;
-      color: white;
+      padding: 10px 16px; border-radius: 12px;
+      border: 2px solid var(--dark);
+      background: var(--dark); color: var(--mint);
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 0.95rem; font-weight: 700;
       cursor: pointer;
-      font-size: 0.93rem;
-      font-weight: 700;
-      transition: background 0.2s, opacity 0.2s;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.2s;
     }
-    .verify-btn:disabled {
-      cursor: not-allowed;
-      opacity: 0.75;
-    }
-    .verify-btn-primary {
-      background: #2b6cb0;
-    }
-    .verify-btn-primary:hover:not(:disabled) {
-      background: #2c5282;
-    }
-    .verify-btn-success {
-      background: #2f855a;
-    }
-    .verify-btn-success:hover:not(:disabled) {
-      background: #276749;
-    }
+    .verify-btn:hover:not(:disabled) { transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--green); }
+    .verify-btn:disabled { cursor: not-allowed; opacity: 0.55; }
+    .verify-btn-primary { background: var(--green); color: var(--dark); }
+    .verify-btn-primary:hover:not(:disabled) { box-shadow: 4px 4px 0 var(--dark); }
+    .verify-btn-success { background: var(--yellow); color: var(--dark); }
+    .verify-btn-success:hover:not(:disabled) { box-shadow: 4px 4px 0 var(--dark); }
     .advanced-proof {
       margin-top: 1rem;
-      border: 1px solid #dbe7f5;
-      border-radius: 12px;
-      padding: 0.8rem 0.9rem;
-      background: #fff;
+      border: 2px dashed rgba(7, 36, 27, 0.25);
+      border-radius: 16px; padding: 14px 16px;
+      background: rgba(7, 36, 27, 0.04);
     }
     .advanced-proof summary {
-      cursor: pointer;
-      font-weight: 700;
-      color: #2d3748;
+      cursor: pointer; font-weight: 800; color: var(--dark);
+      font-family: 'Bricolage Grotesque', sans-serif;
       outline: none;
     }
-    .advanced-proof-inner {
-      margin-top: 0.8rem;
+    .advanced-proof-inner { margin-top: 0.85rem; }
+
+    /* Lookup section */
+    .lookup-input {
+      flex: 1; min-width: 200px;
+      padding: 10px 14px;
+      border: 2px solid var(--dark); border-radius: 12px;
+      font-size: 0.95rem; font-family: 'Inter', sans-serif;
+      background: var(--off); color: var(--dark);
+      outline: none; transition: box-shadow 0.15s ease;
+    }
+    .lookup-input:focus { box-shadow: 3px 3px 0 var(--green); }
+    .lookup-btn {
+      padding: 10px 22px;
+      background: var(--dark); color: var(--mint);
+      border: 2px solid var(--dark); border-radius: 12px;
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 0.95rem; font-weight: 800;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .lookup-btn:hover { transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--green); }
+    .lookup-status {
+      display: none; padding: 10px 14px;
+      border-radius: 12px; margin-bottom: 0.85rem;
+      font-size: 0.9rem; border: 1px solid transparent;
     }
 
+    /* Footer */
+    footer {
+      text-align: center; padding: 56px 0 40px;
+      color: var(--mint); font-size: 0.92rem;
+      border-top: 1px solid rgba(208, 251, 203, 0.14);
+      margin-top: 32px;
+    }
+    footer a { color: var(--off); border-bottom: 1.5px solid rgba(249, 247, 246, 0.35); padding-bottom: 1px; text-decoration: none; }
+    footer a:hover { color: var(--green); border-bottom-color: var(--green); }
+
     @media (max-width: 640px) {
-      .container {
-        padding: 1rem;
-      }
-      .hero {
-        padding-top: 2rem;
-      }
-      .hero h1 {
-        font-size: 1.9rem;
-      }
-      .verify-card {
-        padding: 0.85rem;
-      }
-      .steps {
-        gap: 0.75rem;
-      }
-      .step {
-        text-align: left;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-      }
-      .step-number {
-        margin-bottom: 0.5rem;
-      }
+      .container { padding: 0 18px; }
+      .hero { padding: 18px 0 16px; }
+      .nav-actions { width: 100%; justify-content: flex-start; }
+      section { padding: 18px; }
     }
   </style>
 </head>
 <body>
   <div class="container">
 
+    <!-- TOP BAR -->
+    <nav class="topbar">
+      <a class="brand" href="/"><span class="logomark" aria-hidden="true"></span><span>Divine Identity</span></a>
+      <div class="nav-actions">
+        <a class="nav-link" href="#check">Look up</a>
+        <a class="nav-link" href="#how-to-verify">Get verified</a>
+        <a class="nav-link" href="https://divine.video">divine.video</a>
+      </div>
+    </nav>
+
     <!-- HERO -->
     <div class="hero">
-      <h1>Prove You Are Who You Say You Are</h1>
-      <p class="subtitle">Link your social media accounts to your <a href="https://divine.video">Divine</a> profile so people know it's really you. Like a verified badge &mdash; but one that you control, and anyone can check.</p>
+      <h1>Prove it's really you<span class="punct">.</span></h1>
+      <p class="subtitle">Link your social accounts to your <a href="https://divine.video">Divine</a> profile so people know it's actually you. Like a verified badge &mdash; but one you own, and anyone can check.</p>
       <div class="cta-row">
-        <a href="#how-to-verify" class="btn btn-primary">Get Verified</a>
-        <a href="#manage" class="btn btn-outline">Manage My Links</a>
-        <a href="#check" class="btn btn-outline">Look Up Someone</a>
+        <a href="#how-to-verify" class="btn btn-primary">Get verified</a>
+        <a href="#manage" class="btn btn-outline">Manage my links</a>
+        <a href="#check" class="btn btn-outline">Look up someone</a>
       </div>
     </div>
 
@@ -376,8 +472,8 @@ app.get('/', (c) => {
     </div>
 
     <!-- SUPPORTED PLATFORMS -->
-    <div style="text-align:center;margin:2rem 0 0.75rem;">
-      <h2 style="border:none;display:inline-block;padding:0;margin:0;font-size:1.1rem;">Works with the platforms you already use</h2>
+    <div style="text-align:center;margin:2.25rem 0 1rem;">
+      <h3 style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:0.85rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--mint);">Works with the platforms you already use</h3>
     </div>
     <div class="platform-grid">
       <div class="platform-pill">
@@ -465,7 +561,7 @@ app.get('/', (c) => {
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
             <button id="connect-nostr-btn" class="verify-btn verify-btn-primary" type="button">Login with Nostr</button>
             <button id="connect-keycast-btn" class="verify-btn" type="button">Use login.divine.video</button>
-            <a href="${divineLoginUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-outline" style="padding:0.52rem 0.85rem;border-radius:8px;font-size:0.9rem;">Open login.divine.video</a>
+            <a href="${divineLoginUrl}" target="_blank" rel="noopener noreferrer" class="verify-btn">Open login.divine.video</a>
           </div>
           <label for="verify-pubkey-input" class="field-label">Account (auto-filled after login; manual paste fallback)</label>
           <input id="verify-pubkey-input" class="field-input" type="text" placeholder="alice@divine.video or npub1...">
@@ -486,7 +582,7 @@ app.get('/', (c) => {
                 <textarea id="nostr-connect-uri-input" class="field-input" rows="3" readonly style="min-height:6.5rem;resize:vertical;"></textarea>
                 <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
                   <button id="copy-nostr-connect-btn" class="verify-btn" type="button">Copy URI</button>
-                  <a id="open-nostr-connect-link" class="btn btn-outline" href="#" rel="noopener noreferrer" style="padding:0.52rem 0.85rem;border-radius:8px;font-size:0.9rem;">Open signer app</a>
+                  <a id="open-nostr-connect-link" class="verify-btn" href="#" rel="noopener noreferrer">Open signer app</a>
                   <button id="cancel-nostr-connect-btn" class="verify-btn" type="button">Cancel</button>
                 </div>
                 <p class="field-help" style="margin-top:0.5rem;">Open this URI in your signer app, or copy it into a bunker / Nostr Connect client.</p>
@@ -540,33 +636,33 @@ app.get('/', (c) => {
     </section>
 
     <!-- MANAGE LINKED VERIFICATIONS -->
-    <section id="manage" style="border:2px solid #e2e8f0;">
+    <section id="manage" style="box-shadow: 6px 6px 0 var(--violet);">
       <h2>Manage verified links</h2>
       <p>View and remove your linked identity verifications. Requires a signer session.</p>
       <button id="load-links-btn" class="verify-btn verify-btn-primary" type="button" onclick="loadLinkedVerifications()">Load my links</button>
       <div id="manage-links-container" style="margin-top:1rem;"></div>
       <div id="manage-status" class="status-row"></div>
-      <div id="remove-confirm-dialog" style="display:none;margin-top:1rem;padding:1rem;background:#fff5f5;border:2px solid #fc8181;border-radius:8px;">
-        <h4 style="margin-bottom:0.5rem;">Remove this verification?</h4>
+      <div id="remove-confirm-dialog" style="display:none;margin-top:1rem;padding:16px;background:rgba(255,127,175,0.18);border:2px solid var(--dark);border-radius:16px;">
+        <h4 style="margin-bottom:0.5rem;color:var(--dark);">Remove this verification?</h4>
         <p>This unlinks <strong id="remove-confirm-claim"></strong> from your Nostr profile.</p>
         <p class="field-help">Relay updates may take a short moment.</p>
-        <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+        <div style="display:flex;gap:10px;margin-top:0.75rem;flex-wrap:wrap;">
           <button class="verify-btn" type="button" onclick="cancelRemove()">Cancel</button>
-          <button class="verify-btn" type="button" style="background:#e53e3e;color:white;" onclick="executeRemoveVerification()">Remove verification</button>
+          <button class="verify-btn" type="button" style="background:var(--pink);color:var(--dark);" onclick="executeRemoveVerification()">Remove verification</button>
         </div>
       </div>
     </section>
 
     <!-- CHECK TOOL -->
-    <section id="check" style="border:2px solid #4299e1;">
-      <h2>Look Up Someone</h2>
-      <p>Want to know if a profile is real? Enter their address (like alice@divine.video) or their public key to see which accounts they've verified.</p>
+    <section id="check" style="box-shadow: 6px 6px 0 var(--pink);">
+      <h2>Look up someone</h2>
+      <p>Want to know if a profile is real? Enter their Divine address (like <code>alice@divine.video</code>) or their public key to see which accounts they've verified.</p>
 
-      <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
-        <input id="lookup-input" type="text" placeholder="alice@divine.video or npub1..." style="flex:1;min-width:200px;padding:0.6rem 0.75rem;border:2px solid #e2e8f0;border-radius:8px;font-size:0.95rem;font-family:inherit;outline:none;transition:border-color 0.2s;" onfocus="this.style.borderColor='#4299e1'" onblur="this.style.borderColor='#e2e8f0'">
-        <button id="lookup-btn" onclick="doLookup()" style="padding:0.6rem 1.5rem;background:#4299e1;color:white;border:none;border-radius:8px;font-size:0.95rem;cursor:pointer;font-weight:600;transition:background 0.2s;" onmouseover="this.style.background='#3182ce'" onmouseout="this.style.background='#4299e1'">Check</button>
+      <div style="display:flex;gap:10px;margin-bottom:1rem;flex-wrap:wrap;">
+        <input id="lookup-input" type="text" class="lookup-input" placeholder="alice@divine.video or npub1...">
+        <button id="lookup-btn" class="lookup-btn" onclick="doLookup()">Check</button>
       </div>
-      <div id="lookup-status" style="display:none;padding:0.5rem 0.75rem;border-radius:6px;margin-bottom:0.75rem;font-size:0.85rem;"></div>
+      <div id="lookup-status" class="lookup-status"></div>
       <div id="lookup-results"></div>
     </section>
 
@@ -801,8 +897,10 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       if (!el) return;
       el.style.display = 'block';
       el.textContent = msg;
-      el.style.background = type === 'error' ? '#fed7d7' : type === 'loading' ? '#fefcbf' : '#c6f6d5';
-      el.style.color = type === 'error' ? '#c53030' : type === 'loading' ? '#975a16' : '#276749';
+      // brand-aligned status palette: ok=green, err=pink, loading=mint
+      el.style.background = type === 'error' ? 'rgba(255,127,175,0.18)' : type === 'loading' ? 'rgba(208,251,203,0.5)' : 'rgba(39,197,139,0.18)';
+      el.style.color = type === 'error' ? '#7a1133' : type === 'loading' ? '#07241B' : '#0a4f37';
+      el.style.borderColor = type === 'error' ? 'rgba(255,127,175,0.55)' : type === 'loading' ? 'rgba(7,36,27,0.18)' : 'rgba(39,197,139,0.45)';
     }
 
     function clearStatus(elId) {
@@ -1885,8 +1983,10 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       const el = document.getElementById('lookup-status');
       el.style.display = 'block';
       el.textContent = msg;
-      el.style.background = type === 'error' ? '#fed7d7' : type === 'loading' ? '#fefcbf' : '#c6f6d5';
-      el.style.color = type === 'error' ? '#c53030' : type === 'loading' ? '#975a16' : '#276749';
+      // brand-aligned status palette
+      el.style.background = type === 'error' ? 'rgba(255,127,175,0.18)' : type === 'loading' ? 'rgba(208,251,203,0.5)' : 'rgba(39,197,139,0.18)';
+      el.style.color = type === 'error' ? '#7a1133' : type === 'loading' ? '#07241B' : '#0a4f37';
+      el.style.borderColor = type === 'error' ? 'rgba(255,127,175,0.55)' : type === 'loading' ? 'rgba(7,36,27,0.18)' : 'rgba(39,197,139,0.45)';
     }
 
     function hideStatus() { clearStatus('lookup-status'); }
@@ -1894,15 +1994,15 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     function renderResults(results, pubkey) {
       const el = document.getElementById('lookup-results');
       if (!results || results.length === 0) {
-        el.innerHTML = '<p style="color:#718096;font-size:0.9rem;">No identity claims found on this profile.</p>';
+        el.innerHTML = '<p style="color:rgba(7,36,27,0.65);font-size:0.92rem;">No identity claims found on this profile.</p>';
         return;
       }
       let html = '<table><tr><th>Platform</th><th>Identity</th><th>Status</th><th>Details</th></tr>';
       for (const r of results) {
         const icon = r.verified ? '&#9989;' : '&#10060;';
-        const status = r.verified ? '<span style="color:#276749;font-weight:600;">Verified</span>' : '<span style="color:#c53030;">Not verified</span>';
+        const status = r.verified ? '<span style="color:#0a4f37;font-weight:700;">Verified</span>' : '<span style="color:#7a1133;font-weight:700;">Not verified</span>';
         const detail = r.error || (r.cached ? 'cached' : 'fresh check');
-        html += '<tr><td><code>' + esc(r.platform) + '</code></td><td>' + esc(r.identity) + '</td><td>' + icon + ' ' + status + '</td><td style="font-size:0.8rem;color:#718096;">' + esc(detail) + '</td></tr>';
+        html += '<tr><td><code>' + esc(r.platform) + '</code></td><td>' + esc(r.identity) + '</td><td>' + icon + ' ' + status + '</td><td style="font-size:0.82rem;color:rgba(7,36,27,0.6);">' + esc(detail) + '</td></tr>';
       }
       html += '</table>';
       el.innerHTML = html;
@@ -2133,7 +2233,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
-      headerRow.style.cssText = 'border-bottom:2px solid #e2e8f0;text-align:left;';
+      headerRow.style.cssText = 'border-bottom:2px solid rgba(7,36,27,0.2);text-align:left;';
       ['Platform', 'Identity', 'Proof', ''].forEach(text => {
         const th = document.createElement('th');
         th.style.padding = '0.5rem';
@@ -2152,7 +2252,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         const identity = sep > 0 ? claim.slice(sep + 1) : '';
 
         const row = document.createElement('tr');
-        row.style.cssText = 'border-bottom:1px solid #e2e8f0;';
+        row.style.cssText = 'border-bottom:1px solid rgba(7,36,27,0.12);';
 
         const tdPlatform = document.createElement('td');
         tdPlatform.style.padding = '0.5rem';
@@ -2374,7 +2474,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     </script>
 
     <footer>
-      <p>Part of the <a href="https://divine.video">Divine</a> ecosystem &middot; Powered by Cloudflare Workers</p>
+      <p>Part of <a href="https://divine.video">divine.video</a>. Open source. Own what you make.</p>
     </footer>
   </div>
 </body>

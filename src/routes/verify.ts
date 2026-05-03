@@ -365,127 +365,211 @@ function renderVerifyHtml(result: VerifyResult, platform: string, identity: stri
   <meta name="twitter:description" content="${esc(ogDescription)}">
   <!-- og:image is set dynamically via JS if avatar is found -->
 
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&display=swap">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-      line-height: 1.6; color: #333; background: #f8fafc;
-      min-height: 100vh;
+    :root {
+      --green: #27C58B;
+      --dark: #07241B;
+      --mint: #D0FBCB;
+      --off: #F9F7F6;
+      --yellow: #FFF140;
+      --pink: #FF7FAF;
+      color-scheme: dark;
     }
-    .container { max-width: 600px; margin: 0 auto; padding: 2rem 1rem; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: var(--dark); color: var(--off);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 17px; line-height: 1.55; min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3, h4 {
+      font-family: 'Bricolage Grotesque', 'Inter', sans-serif;
+      font-weight: 800; letter-spacing: -0.02em; line-height: 1.05;
+    }
+    .container { max-width: 640px; margin: 0 auto; padding: 24px clamp(20px, 4vw, 32px); }
+
+    /* Top brand bar */
+    .topbar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0 0 24px; gap: 16px; flex-wrap: wrap;
+    }
+    .brand {
+      display: inline-flex; align-items: center; gap: 12px;
+      color: var(--off); text-decoration: none;
+      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800; font-size: 1.15rem;
+    }
+    .logomark {
+      width: 24px; height: 24px; border-radius: 50%;
+      background: var(--green); border: 2px solid var(--off);
+      position: relative; display: inline-block;
+    }
+    .logomark::after {
+      content: ""; position: absolute; inset: 4px;
+      background: var(--dark); border-radius: 50%;
+    }
+    .topbar .home-link {
+      font-size: 0.88rem; color: var(--mint);
+      border-bottom: 1.5px solid rgba(208, 251, 203, 0.4); padding-bottom: 1px;
+      text-decoration: none;
+    }
+    .topbar .home-link:hover { color: var(--green); border-bottom-color: var(--green); }
 
     /* Profile header */
     .profile-header {
-      background: white; border-radius: 16px; padding: 1.5rem;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1rem;
-      display: flex; align-items: center; gap: 1rem;
+      background: var(--off); color: var(--dark);
+      border: 2px solid var(--dark); border-radius: 22px;
+      padding: 20px; margin-bottom: 14px;
+      box-shadow: 6px 6px 0 var(--green);
+      display: flex; align-items: center; gap: 16px;
     }
     .profile-header.loading { min-height: 80px; }
     .avatar {
       width: 64px; height: 64px; border-radius: 50%; object-fit: cover;
-      background: #e2e8f0; flex-shrink: 0;
+      background: var(--mint); border: 2px solid var(--dark); flex-shrink: 0;
     }
     .avatar-placeholder {
-      width: 64px; height: 64px; border-radius: 50%; background: #e2e8f0;
+      width: 64px; height: 64px; border-radius: 50%;
+      background: var(--mint); border: 2px solid var(--dark);
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-      color: #a0aec0; font-size: 1.5rem;
+      color: var(--dark); font-size: 1.5rem;
+      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800;
     }
     .profile-info { min-width: 0; }
-    .display-name { font-size: 1.25rem; font-weight: 700; color: #1a202c; }
-    .nip05 { font-size: 0.85rem; color: #718096; }
+    .display-name {
+      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800;
+      font-size: 1.3rem; color: var(--dark); line-height: 1.1;
+    }
+    .nip05 { font-size: 0.88rem; color: rgba(7, 36, 27, 0.7); margin-top: 2px; }
     .npub-display {
-      font-size: 0.75rem; color: #a0aec0; word-break: break-all;
-      font-family: 'SF Mono', Menlo, Consolas, monospace;
+      font-size: 0.74rem; color: rgba(7, 36, 27, 0.5); word-break: break-all;
+      font-family: 'SF Mono', Menlo, Consolas, monospace; margin-top: 4px;
     }
-    .profile-links { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+    .profile-links { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
     .profile-links a {
-      font-size: 0.8rem; color: #4299e1; text-decoration: none;
-      background: #ebf8ff; padding: 0.2rem 0.6rem; border-radius: 6px;
+      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700;
+      font-size: 0.78rem; color: var(--mint);
+      background: var(--dark); padding: 4px 10px; border-radius: 999px;
+      text-decoration: none; border: 1.5px solid var(--dark);
     }
-    .profile-links a:hover { background: #bee3f8; }
+    .profile-links a:hover { background: var(--green); color: var(--dark); border-color: var(--green); }
 
     /* Main verification card */
     .verify-card {
-      background: white; border-radius: 16px; overflow: hidden;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.08); margin-bottom: 1rem;
+      background: var(--off); color: var(--dark);
+      border: 2px solid var(--dark); border-radius: 22px; overflow: hidden;
+      margin-bottom: 14px;
+      box-shadow: 6px 6px 0 var(--green);
     }
+    .verify-card.failed { box-shadow: 6px 6px 0 var(--pink); }
     .status-bar {
-      padding: 1rem 1.5rem; display: flex; align-items: center; gap: 0.75rem;
-      font-size: 1.1rem; font-weight: 700;
+      padding: 16px 20px; display: flex; align-items: center; gap: 12px;
+      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800;
+      font-size: 1.1rem; line-height: 1.2;
+      border-bottom: 2px solid var(--dark);
     }
-    .status-bar.verified { background: #c6f6d5; color: #276749; }
-    .status-bar.failed { background: #fed7d7; color: #c53030; }
+    .status-bar.verified { background: var(--green); color: var(--dark); }
+    .status-bar.failed { background: var(--pink); color: var(--dark); }
     .status-icon { font-size: 1.4rem; }
-    .verify-body { padding: 1.5rem; }
+    .verify-body { padding: 20px; }
     .claim-row {
-      display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;
-      padding-bottom: 1rem; border-bottom: 1px solid #edf2f7;
+      display: flex; align-items: center; gap: 12px; margin-bottom: 14px;
+      padding-bottom: 14px; border-bottom: 1px solid rgba(7, 36, 27, 0.12);
     }
     .claim-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-    .platform-icon { color: #4a5568; flex-shrink: 0; display: flex; align-items: center; }
+    .platform-icon { color: var(--dark); flex-shrink: 0; display: flex; align-items: center; }
     .claim-details { flex: 1; min-width: 0; }
-    .claim-platform { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #718096; font-weight: 600; }
-    .claim-identity { font-size: 1rem; color: #1a202c; }
-    .claim-links { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
-    .claim-links a {
-      font-size: 0.75rem; color: #4299e1; text-decoration: none;
+    .claim-platform {
+      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700;
+      font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: rgba(7, 36, 27, 0.6);
     }
-    .claim-links a:hover { text-decoration: underline; }
-    .claim-status { flex-shrink: 0; font-size: 1.2rem; }
+    .claim-identity { font-size: 1rem; color: var(--dark); font-weight: 600; }
+    .claim-links { display: flex; gap: 8px; margin-top: 4px; }
+    .claim-links a {
+      font-size: 0.78rem; color: var(--dark);
+      border-bottom: 1.5px solid rgba(7, 36, 27, 0.4); padding-bottom: 1px;
+      text-decoration: none; font-weight: 600;
+    }
+    .claim-links a:hover { border-bottom-color: var(--green); }
+    .claim-status { flex-shrink: 0; font-size: 1.3rem; }
 
     .error-msg {
-      background: #fff5f5; border: 1px solid #fed7d7; border-radius: 8px;
-      padding: 0.75rem 1rem; color: #c53030; font-size: 0.9rem; margin-bottom: 1rem;
+      background: rgba(255, 127, 175, 0.18);
+      border: 1px solid rgba(255, 127, 175, 0.55); border-radius: 12px;
+      padding: 12px 16px; color: #7a1133;
+      font-size: 0.92rem; margin-bottom: 14px;
     }
     .meta {
-      display: flex; gap: 1.5rem; flex-wrap: wrap; padding-top: 1rem;
-      border-top: 1px solid #e2e8f0; font-size: 0.8rem; color: #a0aec0;
+      display: flex; gap: 20px; flex-wrap: wrap; padding-top: 14px;
+      border-top: 1px solid rgba(7, 36, 27, 0.12);
+      font-size: 0.78rem; color: rgba(7, 36, 27, 0.55);
     }
 
     /* Other identities */
     .other-identities {
-      background: white; border-radius: 16px; padding: 1.5rem;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1rem;
+      background: var(--off); color: var(--dark);
+      border: 2px solid var(--dark); border-radius: 22px;
+      padding: 20px; margin-bottom: 14px;
+      box-shadow: 6px 6px 0 var(--mint);
     }
     .section-title {
-      font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;
-      color: #718096; font-weight: 600; margin-bottom: 1rem;
+      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800;
+      font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: rgba(7, 36, 27, 0.65); margin-bottom: 14px;
     }
     .identity-item {
-      display: flex; align-items: center; gap: 0.75rem;
-      padding: 0.5rem 0; border-bottom: 1px solid #f7fafc;
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 0; border-bottom: 1px solid rgba(7, 36, 27, 0.08);
     }
     .identity-item:last-child { border-bottom: none; }
-    .identity-item .platform-icon { color: #4a5568; }
-    .identity-item .claim-identity { font-size: 0.9rem; }
-    .identity-item .claim-links a { font-size: 0.7rem; }
+    .identity-item .platform-icon { color: var(--dark); }
+    .identity-item .claim-identity { font-size: 0.95rem; }
+    .identity-item .claim-links a { font-size: 0.74rem; }
     .identity-loading {
-      color: #a0aec0; font-size: 0.85rem; padding: 0.5rem 0;
-      display: flex; align-items: center; gap: 0.5rem;
+      color: rgba(7, 36, 27, 0.55); font-size: 0.88rem; padding: 8px 0;
+      display: flex; align-items: center; gap: 8px;
     }
     .spinner {
-      width: 14px; height: 14px; border: 2px solid #e2e8f0;
-      border-top-color: #4299e1; border-radius: 50%;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(7, 36, 27, 0.15);
+      border-top-color: var(--green); border-radius: 50%;
       animation: spin 0.6s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Footer */
     .page-footer {
-      text-align: center; padding: 1.5rem 0; color: #a0aec0; font-size: 0.8rem;
+      text-align: center; padding: 28px 0 12px;
+      color: var(--mint); font-size: 0.86rem;
     }
-    .page-footer a { color: #4299e1; text-decoration: none; }
-    .page-footer a:hover { text-decoration: underline; }
-    .json-link { color: #a0aec0; font-size: 0.75rem; }
+    .page-footer a {
+      color: var(--off);
+      border-bottom: 1.5px solid rgba(249, 247, 246, 0.35); padding-bottom: 1px;
+      text-decoration: none;
+    }
+    .page-footer a:hover { color: var(--green); border-bottom-color: var(--green); }
+    .json-link {
+      color: var(--mint); opacity: 0.65; font-size: 0.78rem;
+      border-bottom-color: rgba(208, 251, 203, 0.3) !important;
+    }
   </style>
 </head>
 <body>
   <div class="container">
+    <!-- TOP BAR -->
+    <nav class="topbar">
+      <a class="brand" href="/"><span class="logomark" aria-hidden="true"></span><span>Divine Identity</span></a>
+      <a class="home-link" href="/">← Verify another</a>
+    </nav>
+
     <!-- Profile header (populated by JS) -->
     <div id="profile-header" class="profile-header loading" style="display:none;"></div>
 
     <!-- Main verification result -->
-    <div class="verify-card">
+    <div class="verify-card ${verified ? '' : 'failed'}">
       <div class="status-bar ${verified ? 'verified' : 'failed'}">
         <span class="status-icon">${verified ? '&#10004;' : '&#10008;'}</span>
         <span>${esc(identity)} ${verified ? 'is verified' : 'is not verified'} on ${esc(platformLabel)}</span>
@@ -675,7 +759,7 @@ function renderVerifyHtml(result: VerifyResult, platform: string, identity: stri
         var status = r.verified ? '&#9989;' : '&#10060;';
         var isCurrent = (r.platform === CURRENT_PLATFORM && r.identity === CURRENT_IDENTITY);
 
-        html += '<div class="identity-item"' + (isCurrent ? ' style="background:#f7fafc;border-radius:8px;padding:0.5rem 0.75rem;"' : '') + '>';
+        html += '<div class="identity-item"' + (isCurrent ? ' style="background:rgba(39,197,139,0.1);border-radius:12px;padding:8px 12px;"' : '') + '>';
         html += '<div class="platform-icon">' + icon + '</div>';
         html += '<div class="claim-details" style="flex:1;min-width:0;">';
         html += '<div class="claim-platform">' + esc(label) + '</div>';
