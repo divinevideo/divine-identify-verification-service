@@ -84,7 +84,7 @@ async function verifySingleClaim(
   const npub = hexToNpub(normalizedClaim.pubkey)
 
   // Perform verification
-  const verifier = getVerifier(normalizedClaim.platform, env.GITHUB_TOKEN, env.YOUTUBE_API_KEY)
+  const verifier = getVerifier(normalizedClaim.platform, env.GITHUB_TOKEN, env.YOUTUBE_API_KEY, env.DISCORD_BOT_TOKEN, env.DISCORD_VERIFY_CHANNEL_ID)
   try {
     const result = await verifier.verify(normalizedClaim.identity, normalizedClaim.proof, npub)
 

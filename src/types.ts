@@ -6,6 +6,10 @@ export type Bindings = {
   GITHUB_TOKEN?: string
   // YouTube Data API v3 key — set via wrangler secret put YOUTUBE_API_KEY
   YOUTUBE_API_KEY?: string
+  // Discord bot token — set via wrangler secret put DISCORD_BOT_TOKEN
+  DISCORD_BOT_TOKEN?: string
+  // Discord channel ID for verification messages (e.g. #verify channel in the Divine server)
+  DISCORD_VERIFY_CHANNEL_ID?: string
   // OAuth — set via wrangler secret
   TWITTER_CLIENT_ID?: string
   TWITTER_CLIENT_SECRET?: string

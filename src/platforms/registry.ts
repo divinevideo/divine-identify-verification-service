@@ -9,14 +9,14 @@ import { DiscordVerifier } from './discord'
 import { YouTubeVerifier } from './youtube'
 import { TikTokVerifier } from './tiktok'
 
-export function getVerifier(platform: Platform, githubToken?: string, youtubeApiKey?: string): PlatformVerifier {
+export function getVerifier(platform: Platform, githubToken?: string, youtubeApiKey?: string, discordBotToken?: string, discordVerifyChannelId?: string): PlatformVerifier {
   switch (platform) {
     case 'github': return new GitHubVerifier(githubToken)
     case 'twitter': return new TwitterVerifier()
     case 'mastodon': return new MastodonVerifier()
     case 'telegram': return new TelegramVerifier()
     case 'bluesky': return new BlueskyVerifier()
-    case 'discord': return new DiscordVerifier()
+    case 'discord': return new DiscordVerifier(discordBotToken, discordVerifyChannelId)
     case 'youtube': return new YouTubeVerifier(youtubeApiKey)
     case 'tiktok': return new TikTokVerifier()
     default: throw new Error(`Unknown platform: ${platform}`)

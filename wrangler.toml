@@ -3,11 +3,16 @@ main = "src/index.ts"
 compatibility_date = "2024-11-15"
 
 [vars]
+# Discord verification channel in the divine.video Discord server
+DISCORD_VERIFY_CHANNEL_ID = "1484771306179133582"
 # Optional: GitHub API token for higher rate limits
 # Set via wrangler secret put GITHUB_TOKEN
 #
 # YouTube Data API v3 key (for video description lookup):
 # wrangler secret put YOUTUBE_API_KEY
+#
+# Discord bot token (for message-based verification):
+# wrangler secret put DISCORD_BOT_TOKEN
 #
 # OAuth configuration (set via wrangler secret put):
 # TWITTER_CLIENT_ID - Twitter OAuth 2.0 client ID
