@@ -30,3 +30,17 @@ describe('verifier cors', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*')
   })
 })
+
+describe('landing HTML', () => {
+  it('includes Verified Links panel markers for session publish UX', async () => {
+    const response = await worker.fetch(new Request('https://verifier.example.test/', {
+      headers: { Accept: 'text/html' },
+    }), {} as never)
+
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    expect(html).toContain('id="verified-links-section"')
+    expect(html).toContain('id="verified-links-publish-status"')
+    expect(html).toContain('id="publish-all-btn"')
+  })
+})
