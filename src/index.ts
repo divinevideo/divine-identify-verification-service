@@ -384,6 +384,46 @@ app.get('/', (c) => {
     }
     .advanced-proof-inner { margin-top: 0.85rem; }
 
+    .verified-links-panel {
+      margin-top: 1rem;
+      padding: 16px 18px;
+      border: 2px solid var(--dark);
+      border-radius: 16px;
+      background: rgba(249, 247, 246, 0.92);
+      box-shadow: 4px 4px 0 rgba(7, 36, 27, 0.12);
+    }
+    .verified-links-panel h3 {
+      font-size: 1.1rem;
+      margin-bottom: 0.35rem;
+      color: var(--dark);
+    }
+    .verified-link-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(7, 36, 27, 0.12);
+      font-size: 0.92rem;
+      color: var(--dark);
+    }
+    .verified-link-row:last-child { border-bottom: none; }
+    .verified-link-row .vl-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .verified-link-row .vl-remove {
+      min-width: 44px;
+      padding-left: 14px;
+      padding-right: 14px;
+      font-size: 1.15rem;
+      line-height: 1;
+      font-weight: 800;
+    }
+
     /* Lookup section */
     .lookup-input {
       flex: 1; min-width: 200px;
@@ -608,6 +648,16 @@ app.get('/', (c) => {
           <button id="oauth-start-btn" class="verify-btn verify-btn-primary" type="button">Continue to secure sign-in</button>
           <div id="oauth-status" class="status-row"></div>
         </div>
+      </div>
+
+      <div id="verified-links-section" class="verified-links-panel" style="display:none;">
+        <h3>Your Verified Links</h3>
+        <p class="field-help" style="margin-bottom:0.75rem;">Verified in this browser session only (refresh clears the list). Publishing writes <code>i</code> tags into your signed Nostr identity event (kind 10011). <strong>Publish All</strong> updates every link below in one signature and one relay broadcast.</p>
+        <div id="verified-links-list"></div>
+        <div style="margin-top:0.85rem;">
+          <button type="button" id="publish-all-btn" class="verify-btn verify-btn-primary" disabled>Publish All to Nostr profile</button>
+        </div>
+        <div id="verified-links-publish-status" class="status-row"></div>
       </div>
 
       <details class="advanced-proof" id="advanced-proof">
@@ -867,6 +917,8 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     let activeSignerSource = null;
     let nostrToolsPromise = null;
     let nostrConnectAbortController = null;
+    /** Session-only successful verifications for batch publish (issue #3). */
+    let verifiedLinks = [];
 
     function npubToHex(npub) {
       const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
@@ -1533,6 +1585,15 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       button.textContent = isLoading ? loadingText : button.dataset.defaultText;
     }
 
+    function setButtonLoadingEl(button, isLoading, loadingText) {
+      if (!button) return;
+      if (!button.dataset.defaultText) {
+        button.dataset.defaultText = button.textContent || '';
+      }
+      button.disabled = isLoading;
+      button.textContent = isLoading ? loadingText : button.dataset.defaultText;
+    }
+
     function updateOAuthInputs() {
       const platform = document.getElementById('oauth-platform-select').value;
       const wrap = document.getElementById('oauth-bluesky-handle-wrap');
@@ -1752,6 +1813,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       try {
         clearStatus('verify-global-status');
         clearStatus('publish-status');
+        clearStatus('verified-links-publish-status');
         clearStatus('proof-status');
         setButtonLoading('proof-verify-btn', true, 'Checking...');
         setStatus('proof-status', 'Checking your account...', 'loading');
@@ -1788,6 +1850,11 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         } else if (data.verified) {
           const method = data.method ? ' via ' + data.method.replace('_', ' ') : '';
           setStatus('proof-status', 'Success. This account is verified' + method + '.', 'ok');
+          upsertVerifiedLink({
+            platform,
+            identity: normalized.identity,
+            proof: normalized.proof || 'oauth',
+          });
         } else {
           setStatus('proof-status', data.error || 'Not verified yet.', 'error');
         }
@@ -1856,82 +1923,144 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       });
     }
 
+    function claimKeyForLink(platform, identity) {
+      return String(platform || '') + ':' + String(identity || '');
+    }
+
+    function upsertVerifiedLink(entry) {
+      const key = claimKeyForLink(entry.platform, entry.identity).toLowerCase();
+      const idx = verifiedLinks.findIndex(
+        l => claimKeyForLink(l.platform, l.identity).toLowerCase() === key
+      );
+      if (idx >= 0) {
+        verifiedLinks[idx] = { platform: entry.platform, identity: entry.identity, proof: entry.proof };
+      } else {
+        verifiedLinks.push({ platform: entry.platform, identity: entry.identity, proof: entry.proof });
+      }
+      renderVerifiedLinksPanel();
+    }
+
+    function renderVerifiedLinksPanel() {
+      const section = document.getElementById('verified-links-section');
+      const list = document.getElementById('verified-links-list');
+      const publishAll = document.getElementById('publish-all-btn');
+      if (!section || !list) return;
+      if (verifiedLinks.length === 0) {
+        section.style.display = 'none';
+        list.innerHTML = '';
+        if (publishAll) {
+          publishAll.disabled = true;
+        }
+        return;
+      }
+      section.style.display = 'block';
+      if (publishAll) {
+        publishAll.disabled = false;
+      }
+      let html = '';
+      verifiedLinks.forEach((link, i) => {
+        html += '<div class="verified-link-row">';
+        html += '<span>&#9989; <code>' + esc(link.platform) + '</code>: ' + esc(link.identity) + '</span>';
+        html += '<span class="vl-actions">';
+        html += '<button type="button" class="verify-btn verify-btn-primary" data-vl-publish="' + i + '">Publish</button>';
+        html += '<button type="button" class="verify-btn vl-remove" data-vl-remove="' + i + '" aria-label="Remove from session">&times;</button>';
+        html += '</span></div>';
+      });
+      list.innerHTML = html;
+    }
+
+    async function buildAndPublishIdentityEvent(links, statusElId) {
+      const sid = statusElId || 'publish-status';
+      if (!links || links.length === 0) {
+        throw new Error('No verified links to publish.');
+      }
+
+      if (!activeSigner || typeof activeSigner.signEvent !== 'function' || typeof activeSigner.getPublicKey !== 'function') {
+        throw new Error('A signer session is required to publish. Connect a browser signer, login.divine.video, bunker, or Nostr Connect first.');
+      }
+
+      const activePubkey = await getActivePubkey();
+      const signerPubkey = String(await activeSigner.getPublicKey()).toLowerCase();
+      if (activePubkey !== signerPubkey) {
+        throw new Error('Signed-in key and selected account do not match.');
+      }
+      signerPubkeyHex = signerPubkey;
+      setAccountInputValue(signerPubkey);
+      updateSignerSummary();
+
+      for (const link of links) {
+        if (!link.identity) {
+          throw new Error('Each link must include a platform account name.');
+        }
+      }
+
+      setStatus(sid, 'Loading identity event...', 'loading');
+      let identityEvent = null;
+      for (const relay of PROFILE_RELAYS) {
+        try {
+          identityEvent = await fetchIdentityEvent(relay, signerPubkey);
+          if (identityEvent) break;
+        } catch {}
+      }
+      if (!identityEvent) {
+        for (const relay of PROFILE_RELAYS) {
+          try {
+            identityEvent = await fetchProfileLegacy(relay, signerPubkey);
+            if (identityEvent) break;
+          } catch {}
+        }
+      }
+
+      const tags = Array.isArray(identityEvent?.tags) ? identityEvent.tags.filter(Array.isArray) : [];
+      const iTags = tags.filter(tag => tag[0] === 'i');
+      // Mirrors mergeVerifiedLinksIntoITags() in verified-links-logic.ts — keep rules in sync.
+      let nextTags = iTags.slice();
+      for (const link of links) {
+        const claimKey = claimKeyForLink(link.platform, link.identity);
+        nextTags = nextTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey.toLowerCase()));
+        nextTags.push(['i', claimKey, link.proof]);
+      }
+
+      const unsignedEvent = {
+        kind: 10011,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: nextTags,
+        content: '',
+        pubkey: signerPubkey,
+      };
+
+      setStatus(sid, 'Requesting signature from your signer...', 'loading');
+      const signedEvent = await activeSigner.signEvent(unsignedEvent);
+      if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
+        throw new Error('Signer did not return a valid signed event.');
+      }
+      if (String(signedEvent.pubkey || '').toLowerCase() !== signerPubkey) {
+        throw new Error('Signer returned an event for a different pubkey.');
+      }
+
+      setStatus(sid, 'Publishing identity event to relays...', 'loading');
+      const relayResults = await Promise.all(PROFILE_RELAYS.map(relay => publishEventToRelay(relay, signedEvent)));
+      const successCount = relayResults.filter(r => r.ok).length;
+      if (successCount === 0) {
+        const firstError = relayResults[0] && relayResults[0].message ? relayResults[0].message : 'no relay accepted the event';
+        throw new Error('Publish failed: ' + firstError);
+      }
+
+      setStatus(sid, 'Published to ' + successCount + '/' + PROFILE_RELAYS.length + ' relays. Your Nostr profile link is now updated.', 'ok');
+    }
+
     async function publishIdentityTagToNostr() {
       clearStatus('verify-global-status');
       clearStatus('publish-status');
+      clearStatus('verified-links-publish-status');
       try {
         setButtonLoading('publish-kind0-btn', true, 'Publishing...');
         setStatus('publish-status', 'Checking signer and profile...', 'loading');
-
-        if (!activeSigner || typeof activeSigner.signEvent !== 'function' || typeof activeSigner.getPublicKey !== 'function') {
-          throw new Error('A signer session is required to publish. Connect a browser signer, login.divine.video, bunker, or Nostr Connect first.');
-        }
-
-        const activePubkey = await getActivePubkey();
-        const signerPubkey = String(await activeSigner.getPublicKey()).toLowerCase();
-        if (activePubkey !== signerPubkey) {
-          throw new Error('Signed-in key and selected account do not match.');
-        }
-        signerPubkeyHex = signerPubkey;
-        setAccountInputValue(signerPubkey);
-        updateSignerSummary();
-
         const link = currentProofContext();
         if (!link.identity) {
           throw new Error('Enter the platform account name first.');
         }
-
-        setStatus('publish-status', 'Loading identity event...', 'loading');
-        let identityEvent = null;
-        for (const relay of PROFILE_RELAYS) {
-          try {
-            identityEvent = await fetchIdentityEvent(relay, signerPubkey);
-            if (identityEvent) break;
-          } catch {}
-        }
-        // Fall back to kind 0 for pre-migration profiles
-        if (!identityEvent) {
-          for (const relay of PROFILE_RELAYS) {
-            try {
-              identityEvent = await fetchProfileLegacy(relay, signerPubkey);
-              if (identityEvent) break;
-            } catch {}
-          }
-        }
-
-        const tags = Array.isArray(identityEvent?.tags) ? identityEvent.tags.filter(Array.isArray) : [];
-        // Only carry forward i-tags (kind 10011 has no content or other tag types)
-        const iTags = tags.filter(tag => tag[0] === 'i');
-        const claimKey = link.platform + ':' + link.identity;
-        const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey.toLowerCase()));
-        nextTags.push(['i', claimKey, link.proof]);
-
-        const unsignedEvent = {
-          kind: 10011,
-          created_at: Math.floor(Date.now() / 1000),
-          tags: nextTags,
-          content: '',
-          pubkey: signerPubkey,
-        };
-
-        setStatus('publish-status', 'Requesting signature from your signer...', 'loading');
-        const signedEvent = await activeSigner.signEvent(unsignedEvent);
-        if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
-          throw new Error('Signer did not return a valid signed event.');
-        }
-        if (String(signedEvent.pubkey || '').toLowerCase() !== signerPubkey) {
-          throw new Error('Signer returned an event for a different pubkey.');
-        }
-
-        setStatus('publish-status', 'Publishing identity event to relays...', 'loading');
-        const relayResults = await Promise.all(PROFILE_RELAYS.map(relay => publishEventToRelay(relay, signedEvent)));
-        const successCount = relayResults.filter(r => r.ok).length;
-        if (successCount === 0) {
-          const firstError = relayResults[0] && relayResults[0].message ? relayResults[0].message : 'no relay accepted the event';
-          throw new Error('Publish failed: ' + firstError);
-        }
-
-        setStatus('publish-status', 'Published to ' + successCount + '/' + PROFILE_RELAYS.length + ' relays. Your Nostr profile link is now updated.', 'ok');
+        await buildAndPublishIdentityEvent([link], 'publish-status');
       } catch (e) {
         setStatus('publish-status', e.message || 'Could not publish to Nostr profile.', 'error');
       } finally {
@@ -1945,9 +2074,11 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       if (params.get('oauth_verified') === 'true') {
         const platform = params.get('platform') || 'account';
         const identity = params.get('identity') || '';
-        setStatus('verify-global-status', 'Success. Your ' + platform + ' account is now linked' + (identity ? ': ' + identity : '') + '. You can now publish this to your Nostr profile below.', 'ok');
+        setStatus('verify-global-status', 'Success. Your ' + platform + ' account is now linked' + (identity ? ': ' + identity : '') + '. Use Your Verified Links below to publish, or Advanced.', 'ok');
 
-        // Pre-fill the Advanced section so the Publish button works for this OAuth result
+        upsertVerifiedLink({ platform, identity, proof: 'oauth' });
+
+        // Pre-fill Advanced for backward compat (single Publish from Step 3)
         const proofPlatformEl = document.getElementById('proof-platform-select');
         const proofIdentityEl = document.getElementById('proof-identity-input');
         const proofProofEl = document.getElementById('proof-proof-input');
@@ -1955,12 +2086,13 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
           proofPlatformEl.value = platform;
           proofIdentityEl.value = identity;
           if (proofProofEl) proofProofEl.value = 'oauth';
-          // Open the Advanced section and scroll the publish button into view
           const advancedDetails = document.getElementById('advanced-proof');
           if (advancedDetails) {
-            advancedDetails.open = true;
-            const publishBtn = document.getElementById('publish-kind0-btn');
-            if (publishBtn) publishBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            advancedDetails.open = false;
+          }
+          const vlSection = document.getElementById('verified-links-section');
+          if (vlSection && verifiedLinks.length > 0) {
+            vlSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
         }
 
@@ -1991,6 +2123,12 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 
     function hideStatus() { clearStatus('lookup-status'); }
 
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s || '';
+      return d.innerHTML;
+    }
+
     function renderResults(results, pubkey) {
       const el = document.getElementById('lookup-results');
       if (!results || results.length === 0) {
@@ -2006,12 +2144,6 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       }
       html += '</table>';
       el.innerHTML = html;
-    }
-
-    function esc(s) {
-      const d = document.createElement('div');
-      d.textContent = s || '';
-      return d.innerHTML;
     }
 
     async function doLookup() {
@@ -2434,6 +2566,49 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     document.getElementById('oauth-start-btn').addEventListener('click', startOAuthVerification);
     document.getElementById('proof-verify-btn').addEventListener('click', verifySingleHere);
     document.getElementById('publish-kind0-btn').addEventListener('click', publishIdentityTagToNostr);
+    document.getElementById('publish-all-btn').addEventListener('click', async () => {
+      clearStatus('publish-status');
+      clearStatus('verified-links-publish-status');
+      clearStatus('verify-global-status');
+      if (verifiedLinks.length === 0) return;
+      try {
+        setButtonLoading('publish-all-btn', true, 'Publishing...');
+        setStatus('verified-links-publish-status', 'Checking signer and profile...', 'loading');
+        await buildAndPublishIdentityEvent(verifiedLinks.slice(), 'verified-links-publish-status');
+      } catch (e) {
+        setStatus('verified-links-publish-status', e.message || 'Could not publish to Nostr profile.', 'error');
+      } finally {
+        setButtonLoading('publish-all-btn', false, '');
+      }
+    });
+    document.getElementById('verified-links-section').addEventListener('click', async (e) => {
+      const removeBtn = e.target.closest('[data-vl-remove]');
+      const pubBtn = e.target.closest('[data-vl-publish]');
+      if (removeBtn) {
+        const i = parseInt(removeBtn.getAttribute('data-vl-remove'), 10);
+        if (!Number.isNaN(i) && verifiedLinks[i] !== undefined) {
+          verifiedLinks.splice(i, 1);
+          renderVerifiedLinksPanel();
+        }
+        return;
+      }
+      if (pubBtn) {
+        const i = parseInt(pubBtn.getAttribute('data-vl-publish'), 10);
+        if (Number.isNaN(i) || verifiedLinks[i] === undefined) return;
+        clearStatus('publish-status');
+        clearStatus('verified-links-publish-status');
+        clearStatus('verify-global-status');
+        try {
+          setButtonLoadingEl(pubBtn, true, 'Publishing...');
+          setStatus('verified-links-publish-status', 'Checking signer and profile...', 'loading');
+          await buildAndPublishIdentityEvent([verifiedLinks[i]], 'verified-links-publish-status');
+        } catch (err) {
+          setStatus('verified-links-publish-status', err.message || 'Could not publish to Nostr profile.', 'error');
+        } finally {
+          setButtonLoadingEl(pubBtn, false, '');
+        }
+      }
+    });
     document.getElementById('verify-pubkey-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') startOAuthVerification();
     });
