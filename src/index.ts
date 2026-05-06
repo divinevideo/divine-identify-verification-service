@@ -6,6 +6,7 @@ import platforms from './routes/platforms'
 import verify from './routes/verify'
 import nip05 from './routes/nip05'
 import auth from './routes/auth'
+import { EMBED_BRIDGE_SCRIPT } from './embed-bridge'
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -848,6 +849,13 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     </section>
 
     <script>
+    // Install a postMessage-based window.nostr (NIP-07) shim when this page
+    // is loaded inside an iframe of a trusted Divine origin. The host
+    // (divine.video) honors signEvent / getPublicKey / getRelays requests
+    // using whichever signer the user has attached to their Divine session,
+    // so the embedded verifyer flow does not require its own login.
+    ${EMBED_BRIDGE_SCRIPT}
+
     const API = '${origin}';
     const DIVINE_LOGIN_URL = '${divineLoginUrl}';
     const KEYCAST_BASE = 'https://login.divine.video';
@@ -2471,6 +2479,20 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     document.getElementById('lookup-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') doLookup();
     });
+
+    // When loaded inside a Divine-hosted iframe, the postMessage shim above
+    // installs window.nostr unconditionally, so trigger the standard signer
+    // connect flow without waiting for a button click.
+    if (window.__divineEmbedded) {
+      (async () => {
+        try {
+          await connectNostrSigner();
+        } catch (e) {
+          // Fall through silently — the user can still click the connect
+          // button if the auto-connect fails for any reason.
+        }
+      })();
+    }
     </script>
 
     <footer>
