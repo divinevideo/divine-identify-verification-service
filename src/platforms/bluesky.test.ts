@@ -120,4 +120,37 @@ describe('BlueskyVerifier', () => {
     expect(result.verified).toBe(false)
     expect(result.error).toContain('no Bluesky post proof')
   })
+
+  it('targets the public AppView for both identity-link and proof-post calls', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ records: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          thread: {
+            post: {
+              author: { handle: 'e2ctbutx6kya6si4if5ngjmm', did: 'did:plc:e2ctbutx6kya6si4if5ngjmm' },
+              record: { text: `Verifying my nostr key: ${npub}` },
+            },
+          },
+        }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await verifier.verify('did:plc:e2ctbutx6kya6si4if5ngjmm', '3molaaw2qhk25', npub)
+    expect(result.verified).toBe(true)
+    expect(result.method).toBe('proof_post')
+
+    const identityLinkUrl = fetchMock.mock.calls[0][0] as string
+    const proofPostUrl = fetchMock.mock.calls[1][0] as string
+    for (const u of [identityLinkUrl, proofPostUrl]) {
+      expect(u.startsWith('https://public.api.bsky.app/xrpc/')).toBe(true)
+      expect(u.startsWith('https://bsky.social/')).toBe(false)
+    }
+  })
 })

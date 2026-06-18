@@ -23,7 +23,7 @@ export class BlueskyVerifier implements PlatformVerifier {
 
     // Build AT URI from identity (DID or handle) and proof (rkey)
     const atUri = `at://${identity}/app.bsky.feed.post/${proof}`
-    const url = `https://bsky.social/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(atUri)}&depth=0`
+    const url = `https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(atUri)}&depth=0`
 
     const response = await fetch(url, {
       headers: {
@@ -81,7 +81,7 @@ export class BlueskyVerifier implements PlatformVerifier {
     identity: string,
     npub: string
   ): Promise<{ verified: boolean; method: 'identity_link'; provenance: { method: 'identity_link'; collection: string; at_uri?: string; evidence?: string[]; gateway?: { domain?: string; did?: string } } } | null> {
-    const url = `https://bsky.social/xrpc/com.atproto.repo.listRecords?repo=${encodeURIComponent(identity)}&collection=${encodeURIComponent(DIVINE_IDENTITY_LINK_COLLECTION)}&limit=100`
+    const url = `https://public.api.bsky.app/xrpc/com.atproto.repo.listRecords?repo=${encodeURIComponent(identity)}&collection=${encodeURIComponent(DIVINE_IDENTITY_LINK_COLLECTION)}&limit=100`
     const response = await fetch(url, {
       headers: {
         'Accept': 'application/json',
