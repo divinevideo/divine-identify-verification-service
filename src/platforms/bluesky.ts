@@ -1,5 +1,6 @@
 import type { PlatformVerifier } from './base'
 import { DIVINE_IDENTITY_LINK_COLLECTION, matchNostrIdentityLinkRecord } from '../identity-link'
+import { resolveAtprotoIdentityPds } from '../atproto'
 
 export class BlueskyVerifier implements PlatformVerifier {
   readonly name = 'bluesky'
@@ -81,7 +82,10 @@ export class BlueskyVerifier implements PlatformVerifier {
     identity: string,
     npub: string
   ): Promise<{ verified: boolean; method: 'identity_link'; provenance: { method: 'identity_link'; collection: string; at_uri?: string; evidence?: string[]; gateway?: { domain?: string; did?: string } } } | null> {
-    const url = `https://public.api.bsky.app/xrpc/com.atproto.repo.listRecords?repo=${encodeURIComponent(identity)}&collection=${encodeURIComponent(DIVINE_IDENTITY_LINK_COLLECTION)}&limit=100`
+    const repo = await resolveAtprotoIdentityPds(identity)
+    if (!repo) return null
+
+    const url = `${repo.pdsEndpoint}/xrpc/com.atproto.repo.listRecords?repo=${encodeURIComponent(repo.did)}&collection=${encodeURIComponent(DIVINE_IDENTITY_LINK_COLLECTION)}&limit=100`
     const response = await fetch(url, {
       headers: {
         'Accept': 'application/json',
