@@ -148,6 +148,28 @@ describe('embed bridge', () => {
       )
     })
 
+    it('installs for the Divine mobile Cloudflare Pages production hostname', () => {
+      const { window, evalBridge } = buildSandbox({
+        framed: true,
+        referrer: 'https://divine-mobile.pages.dev/edit-profile',
+      })
+      evalBridge()
+      expect(window.nostr).toBeDefined()
+      expect(window.__divineParentOrigin).toBe(
+        'https://divine-mobile.pages.dev',
+      )
+    })
+
+    it('does NOT install for unrelated Cloudflare Pages referrers', () => {
+      const { window, evalBridge } = buildSandbox({
+        framed: true,
+        referrer: 'https://random-project.pages.dev/edit-profile',
+      })
+      evalBridge()
+      expect(window.nostr).toBeUndefined()
+      expect(window.__divineEmbedded).toBeUndefined()
+    })
+
     it('installs for localhost referrer (dev)', () => {
       const { window, evalBridge } = buildSandbox({
         framed: true,
@@ -156,6 +178,22 @@ describe('embed bridge', () => {
       evalBridge()
       expect(window.nostr).toBeDefined()
       expect(window.__divineParentOrigin).toBe('http://localhost:5173')
+    })
+
+    it('fails closed when window.nostr is already non-configurable', () => {
+      const { window, evalBridge } = buildSandbox({
+        framed: true,
+        referrer: 'https://divine.video/edit-profile',
+      })
+      Object.defineProperty(window, 'nostr', {
+        value: { getPublicKey: 'not a function' },
+        configurable: false,
+      })
+
+      expect(() => evalBridge()).not.toThrow()
+      expect(window.__divineEmbedded).toBeUndefined()
+      expect(window.__divineParentOrigin).toBeUndefined()
+      expect(window.nostr).toEqual({ getPublicKey: 'not a function' })
     })
   })
 
@@ -305,9 +343,9 @@ describe('embed bridge', () => {
       expect(ALLOWED_PARENT_HOSTS.length).toBeGreaterThan(0)
     })
 
-    it('exports the divine.video and pages.dev suffixes', () => {
+    it('exports the divine.video and Divine mobile pages.dev suffixes', () => {
       expect(ALLOWED_PARENT_SUFFIXES).toContain('.divine.video')
-      expect(ALLOWED_PARENT_SUFFIXES).toContain('.pages.dev')
+      expect(ALLOWED_PARENT_SUFFIXES).toContain('.divine-mobile.pages.dev')
     })
   })
 })

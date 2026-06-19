@@ -1,6 +1,7 @@
 // Embedded-mode bridge installed when verifyer.divine.video is loaded inside
-// an iframe of a trusted Divine origin (divine.video, *.divine.video, *.pages.dev,
-// or localhost during dev). Routes window.nostr (NIP-07) calls to the parent
+// an iframe of a trusted Divine origin (divine.video, *.divine.video,
+// Divine mobile Cloudflare Pages previews, or localhost during dev). Routes
+// window.nostr (NIP-07) calls to the parent
 // frame over postMessage so the embedded verifyer flow uses the user's existing
 // Divine session — no second login.
 //
@@ -13,12 +14,13 @@
 export const ALLOWED_PARENT_HOSTS: readonly string[] = [
   'divine.video',
   'app.divine.video',
+  'divine-mobile.pages.dev',
   'localhost',
 ];
 
 export const ALLOWED_PARENT_SUFFIXES: readonly string[] = [
   '.divine.video',
-  '.pages.dev',
+  '.divine-mobile.pages.dev',
 ];
 
 // JavaScript source for the embed bridge IIFE. Inlined into the verifyer
@@ -42,8 +44,6 @@ export const EMBED_BRIDGE_SCRIPT = `
     return;
   }
   if (!parentOrigin) return;
-  window.__divineEmbedded = true;
-  window.__divineParentOrigin = parentOrigin;
   var nextRequestId = 0;
   var pending = new Map();
   window.addEventListener('message', function (event) {
@@ -72,14 +72,20 @@ export const EMBED_BRIDGE_SCRIPT = `
       }, 60000);
     });
   }
-  Object.defineProperty(window, 'nostr', {
-    value: {
-      getPublicKey: function () { return sendRequest('getPublicKey'); },
-      signEvent: function (event) { return sendRequest('signEvent', { event: event }); },
-      getRelays: function () { return sendRequest('getRelays'); },
-    },
-    configurable: true,
-    writable: true,
-  });
+  try {
+    Object.defineProperty(window, 'nostr', {
+      value: {
+        getPublicKey: function () { return sendRequest('getPublicKey'); },
+        signEvent: function (event) { return sendRequest('signEvent', { event: event }); },
+        getRelays: function () { return sendRequest('getRelays'); },
+      },
+      configurable: true,
+      writable: true,
+    });
+  } catch (e) {
+    return;
+  }
+  window.__divineEmbedded = true;
+  window.__divineParentOrigin = parentOrigin;
 })();
 `;
