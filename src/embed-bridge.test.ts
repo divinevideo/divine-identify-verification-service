@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ALLOWED_PARENT_HOSTS,
   ALLOWED_PARENT_SUFFIXES,
@@ -136,7 +136,7 @@ describe('embed bridge', () => {
       expect(window.__divineParentOrigin).toBe('https://staging.divine.video')
     })
 
-    it('installs for Cloudflare Pages preview referrer (*.pages.dev)', () => {
+    it('installs for Divine mobile Cloudflare Pages preview referrers', () => {
       const { window, evalBridge } = buildSandbox({
         framed: true,
         referrer: 'https://abcd1234.divine-mobile.pages.dev/edit-profile',
