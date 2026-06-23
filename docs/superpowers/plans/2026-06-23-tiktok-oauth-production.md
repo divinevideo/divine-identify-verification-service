@@ -21,7 +21,7 @@
 
 ---
 
-### Task 1: Add visible Privacy Policy + Terms links to the site footer
+### Task 1: Add visible Privacy Policy + Terms links to the site footer ✅ DONE (commit e38966e)
 
 TikTok review requires the Privacy Policy and Terms of Service to be visible on the site itself ("without menu navigation"), not just declared in app config. The current footer (`src/index.ts:2498`) links only to `divine.video`.
 
@@ -33,7 +33,7 @@ TikTok review requires the Privacy Policy and Terms of Service to be visible on 
 - Consumes: the default `worker.fetch(new Request('https://verifier.divine.video/'))` returns the landing HTML.
 - Produces: served HTML at `/` contains anchors to `https://divine.video/privacy` and `https://divine.video/terms`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // add to src/index.test.ts
@@ -51,12 +51,12 @@ describe('verifier footer', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/index.test.ts -t "privacy and terms"`
 Expected: FAIL — `html` does not contain the privacy/terms URLs.
 
-- [ ] **Step 3: Add the links to the footer**
+- [x] **Step 3: Add the links to the footer**
 
 ```html
 <footer>
@@ -65,17 +65,17 @@ Expected: FAIL — `html` does not contain the privacy/terms URLs.
 </footer>
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run src/index.test.ts -t "privacy and terms"`
 Expected: PASS
 
-- [ ] **Step 5: Full suite + typecheck**
+- [x] **Step 5: Full suite + typecheck**
 
 Run: `npx vitest run && npx tsc --noEmit`
 Expected: all green, no type errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/index.ts src/index.test.ts
