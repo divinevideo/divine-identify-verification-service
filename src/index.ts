@@ -2497,6 +2497,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 
     <footer>
       <p>Part of <a href="https://divine.video">divine.video</a>. Open source. Own what you make.</p>
+      <p><a href="https://divine.video/privacy">Privacy Policy</a> &middot; <a href="https://divine.video/terms">Terms of Service</a></p>
     </footer>
   </div>
 </body>
