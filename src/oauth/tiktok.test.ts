@@ -121,7 +121,9 @@ describe('handleTikTokCallback', () => {
   })
 
   it('fails when the token exchange is rejected', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ error: 'invalid_grant' }, false, 400))
+    // The handler returns at the !tokenResponse.ok check before reading the
+    // body, so the body here is irrelevant — only the non-ok status matters.
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({}, false, 400))
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()

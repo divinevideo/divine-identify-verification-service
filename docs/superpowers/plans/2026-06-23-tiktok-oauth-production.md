@@ -168,6 +168,7 @@ TikTok requires 1–5 videos (≤50 MB each) showing the complete end-to-end Log
   npx wrangler secret put TIKTOK_CLIENT_SECRET
   ```
   (Secrets are hot — no redeploy needed.)
+- [ ] **Step 2b (Matt):** Re-confirm the production TikTok app has **both** `user.info.basic` and `user.info.profile` enabled in its config. The scope-contract test guards the request we *send*, not what the portal *grants* — a production app missing `user.info.profile` would silently reintroduce the empty-username bug with no code signal.
 - [ ] **Step 3 (Claude):** Verify the live start endpoint now uses the production key (no `sbaw` prefix):
   ```bash
   curl -s -o /dev/null -D - "https://verifier.divine.video/auth/tiktok/start?pubkey=<64-hex>&return_url=https://verifier.divine.video/" | grep -i location
