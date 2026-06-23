@@ -138,8 +138,8 @@ TikTok requires 1–5 videos (≤50 MB each) showing the complete end-to-end Log
 
 **Files:** none in repo (assets live in the TikTok submission). Claude produces draft text.
 
-- [ ] **Step 1 (Claude):** Draft **scope justification** text: why `user.info.basic` (display name) and `user.info.profile` (username) are needed — to confirm the user controls the TikTok account they assert in their NIP-39 decentralized-identity record on Nostr.
-- [ ] **Step 2 (Claude):** Draft **reviewer instructions**: step-by-step from opening `verifier.divine.video`, logging in via login.divine.video (Matt's account is used for the recording), clicking connect-TikTok, authorizing, and the resulting verified link — including what data we request and that tokens are discarded.
+- [x] **Step 1 (Claude):** Draft **scope justification** text. Done — see `docs/tiktok-review-submission.md` §1.
+- [x] **Step 2 (Claude):** Draft **reviewer instructions**. Done — see `docs/tiktok-review-submission.md` §2. (Open item: decide reviewer access — throwaway test Divine account vs "see demo video.")
 - [ ] **Step 3 (Matt):** Record the screen capture of the full flow using his own account.
 - [ ] **Acceptance:** Video(s) under 50 MB each, domain in frame is `verifier.divine.video`, flow shown start to finish; reviewer-notes text finalized.
 
