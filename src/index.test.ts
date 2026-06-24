@@ -30,3 +30,16 @@ describe('verifier cors', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*')
   })
 })
+
+describe('verifier footer', () => {
+  it('exposes visible privacy and terms links (required for TikTok review)', async () => {
+    const response = await worker.fetch(
+      new Request('https://verifier.divine.video/'),
+      {} as never,
+    )
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    expect(html).toContain('https://divine.video/privacy')
+    expect(html).toContain('https://divine.video/terms')
+  })
+})

@@ -6,6 +6,13 @@ const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/'
 const TIKTOK_TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/'
 const TIKTOK_USER_URL = 'https://open.tiktokapis.com/v2/user/info/'
 
+// We need the user's @username to confirm account ownership. Per TikTok's
+// Login Kit, `username` is gated behind the `user.info.profile` scope;
+// `user.info.basic` alone only returns display_name/avatar, which would make
+// every verification fail. Both scopes must also be enabled for the app in the
+// TikTok developer portal. Scopes are sent comma-separated.
+const TIKTOK_SCOPE = 'user.info.basic,user.info.profile'
+
 export async function startTikTokOAuth(
   env: Bindings,
   pubkey: string,
@@ -35,7 +42,7 @@ export async function startTikTokOAuth(
   const params = new URLSearchParams({
     client_key: env.TIKTOK_CLIENT_KEY,
     response_type: 'code',
-    scope: 'user.info.basic',
+    scope: TIKTOK_SCOPE,
     redirect_uri: redirectUri,
     state: stateId,
     code_challenge: challenge,
@@ -111,6 +118,10 @@ export async function handleTikTokCallback(
   if (!identity) {
     return { success: false, returnUrl: state.returnUrl, error: 'TikTok did not return a username' }
   }
+
+  // We intentionally discard the access/refresh tokens: this is a one-shot
+  // ownership check, so there's nothing to re-fetch later. Not persisting
+  // tokens keeps the blast radius small if KV is ever exposed.
 
   // Store OAuth verification
   await storeOAuthVerification(env.CACHE_KV, {
