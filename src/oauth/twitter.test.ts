@@ -145,11 +145,13 @@ describe('handleTwitterCallback', () => {
     const result = await handleTwitterCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/state/i)
+    // Wrong-platform state must NOT be consumed (handler returns before deleteOAuthState).
     expect(env.CACHE_KV.put).not.toHaveBeenCalled()
+    expect(env.CACHE_KV.delete).not.toHaveBeenCalled()
   })
 
   it('fails when the token response has no access_token', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ token_type: 'bearer' }))
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ token_type: 'Bearer' }))
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
     const result = await handleTwitterCallback(env, 'auth-code', 'state123')
