@@ -217,3 +217,29 @@ describe('POST /auth/oauth/revoke', () => {
     expect(data.revoked).toBe(true)
   })
 })
+
+describe('GET /auth/:platform/start — return_url allowlist', () => {
+  const pubkey = 'aa'.repeat(32)
+
+  it('rejects a verifyer.divine.video return_url (retired spelling)', async () => {
+    const env = createTestEnv()
+    const res = await app.request(
+      `/auth/twitter/start?pubkey=${pubkey}&return_url=${encodeURIComponent('https://verifyer.divine.video/')}`,
+      {}, env,
+    )
+    expect(res.status).toBe(400)
+    const data = await res.json() as { error: string }
+    expect(data.error).toMatch(/return_url/i)
+  })
+
+  it('still allows the canonical verifier.divine.video return_url', async () => {
+    const env = createTestEnv()
+    const res = await app.request(
+      `/auth/twitter/start?pubkey=${pubkey}&return_url=${encodeURIComponent('https://verifier.divine.video/')}`,
+      {}, env,
+    )
+    // Passes the allowlist; only fails later because Twitter OAuth isn't configured in the test env.
+    expect(res.status).not.toBe(400)
+    expect(res.status).toBe(503)
+  })
+})

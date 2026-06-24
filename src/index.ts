@@ -853,7 +853,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     // is loaded inside an iframe of a trusted Divine origin. The host
     // (divine.video) honors signEvent / getPublicKey / getRelays requests
     // using whichever signer the user has attached to their Divine session,
-    // so the embedded verifyer flow does not require its own login.
+    // so the embedded verifier flow does not require its own login.
     ${EMBED_BRIDGE_SCRIPT}
 
     const API = '${origin}';
@@ -861,10 +861,10 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     const KEYCAST_BASE = 'https://login.divine.video';
     const KEYCAST_CLIENT_ID = 'Divine Identity Verification';
     const KEYCAST_SCOPE = 'policy:social';
-    const KEYCAST_SESSION_KEY = 'verifyer_keycast_session_v1';
-    const KEYCAST_PKCE_KEY = 'verifyer_keycast_pkce_v1';
-    const KEYCAST_STATE_KEY = 'verifyer_keycast_state_v1';
-    const KEYCAST_HASH_KEY = 'verifyer_keycast_hash_v1';
+    const KEYCAST_SESSION_KEY = 'verifier_keycast_session_v1';
+    const KEYCAST_PKCE_KEY = 'verifier_keycast_pkce_v1';
+    const KEYCAST_STATE_KEY = 'verifier_keycast_state_v1';
+    const KEYCAST_HASH_KEY = 'verifier_keycast_hash_v1';
     const NOSTR_TOOLS_NIP46_URL = 'https://esm.sh/nostr-tools@2.23.3/nip46?bundle';
     const NOSTR_TOOLS_PURE_URL = 'https://esm.sh/nostr-tools@2.23.3/pure?bundle';
     const PROFILE_RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
@@ -1238,7 +1238,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       const inputEl = document.getElementById('verify-pubkey-input');
       if (!inputEl) return;
       inputEl.value = value;
-      if (value) localStorage.setItem('verifyer_account_input', value);
+      if (value) localStorage.setItem('verifier_account_input', value);
     }
 
     function inferLoginQueryPubkey(params) {
@@ -2456,9 +2456,9 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     });
     document.getElementById('verify-pubkey-input').addEventListener('blur', () => {
       const value = document.getElementById('verify-pubkey-input').value.trim();
-      if (value) localStorage.setItem('verifyer_account_input', value);
+      if (value) localStorage.setItem('verifier_account_input', value);
     });
-    const savedAccountInput = localStorage.getItem('verifyer_account_input');
+    const savedAccountInput = localStorage.getItem('verifier_account_input');
     if (savedAccountInput) {
       document.getElementById('verify-pubkey-input').value = savedAccountInput;
     }

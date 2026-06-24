@@ -43,3 +43,15 @@ describe('verifier footer', () => {
     expect(html).toContain('https://divine.video/terms')
   })
 })
+
+describe('verifier storage keys (verifyer retired)', () => {
+  it('uses verifier_ localStorage keys and contains no verifyer spelling', async () => {
+    const response = await worker.fetch(
+      new Request('https://verifier.divine.video/'),
+      {} as never,
+    )
+    const html = await response.text()
+    expect(html).toContain('verifier_keycast_session_v1')
+    expect(html).not.toContain('verifyer')
+  })
+})

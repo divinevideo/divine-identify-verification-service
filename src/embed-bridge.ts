@@ -1,8 +1,8 @@
-// Embedded-mode bridge installed when verifyer.divine.video is loaded inside
+// Embedded-mode bridge installed when verifier.divine.video is loaded inside
 // an iframe of a trusted Divine origin (divine.video, *.divine.video,
 // Divine mobile Cloudflare Pages previews, or localhost during dev). Routes
 // window.nostr (NIP-07) calls to the parent
-// frame over postMessage so the embedded verifyer flow uses the user's existing
+// frame over postMessage so the embedded verifier flow uses the user's existing
 // Divine session — no second login.
 //
 // The host (divine-mobile Flutter web) listens for messages of shape:
@@ -23,7 +23,7 @@ export const ALLOWED_PARENT_SUFFIXES: readonly string[] = [
   '.divine-mobile.pages.dev',
 ];
 
-// JavaScript source for the embed bridge IIFE. Inlined into the verifyer
+// JavaScript source for the embed bridge IIFE. Inlined into the verifier
 // landing page <script> block so it runs before any signer detection logic.
 export const EMBED_BRIDGE_SCRIPT = `
 (function installDivineEmbedBridge() {
