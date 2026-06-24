@@ -156,4 +156,36 @@ describe('handleYouTubeCallback', () => {
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/token exchange/i)
   })
+
+  it('rejects state that was stored for a different platform', async () => {
+    // Guards against cross-platform OAuth state confusion (the state.platform check).
+    const env = envWithState({ platform: 'twitter' })
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/state/i)
+    expect(env.CACHE_KV.put).not.toHaveBeenCalled()
+  })
+
+  it('fails when the token response has no access_token', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ token_type: 'Bearer' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const env = envWithState()
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/access token/i)
+    // The channel request is never reached.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails when the channel fetch fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+      .mockResolvedValueOnce(jsonResponse({}, false, 500))
+    vi.stubGlobal('fetch', fetchMock)
+    const env = envWithState()
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/channel info/i)
+    expect(env.CACHE_KV.put).not.toHaveBeenCalled()
+  })
 })
