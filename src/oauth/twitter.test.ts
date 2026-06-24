@@ -83,20 +83,24 @@ describe('handleTwitterCallback', () => {
   it('exchanges the code and returns the username as identity', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
-      .mockResolvedValueOnce(jsonResponse({ data: { id: '123', username: 'creator' } }))
+      // Mixed-case username proves the stored KEY is lowercased while the stored
+      // PAYLOAD keeps the raw handle — if `.toLowerCase()` were dropped, the key
+      // assertion below would fail.
+      .mockResolvedValueOnce(jsonResponse({ data: { id: '123', username: 'CreatorX' } }))
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
     const result = await handleTwitterCallback(env, 'auth-code', 'state123')
 
     expect(result.success).toBe(true)
-    expect(result.identity).toBe('creator')
-    // Stores the verification keyed by platform:identity:pubkey with the right payload —
-    // a wrong/empty stored identity is exactly the regression class these tests guard.
+    expect(result.identity).toBe('CreatorX')
+    // Single-use OAuth state must be consumed (replay protection).
+    expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
+    // Stored key lowercases the identity; the stored payload keeps the raw handle.
     const [key, value] = env.CACHE_KV.put.mock.calls[0]
-    expect(key).toBe(`oauth_verified:twitter:creator:${PUBKEY}`)
+    expect(key).toBe(`oauth_verified:twitter:creatorx:${PUBKEY}`)
     expect(JSON.parse(value)).toMatchObject({
-      platform: 'twitter', identity: 'creator', pubkey: PUBKEY, verified: true, method: 'oauth',
+      platform: 'twitter', identity: 'CreatorX', pubkey: PUBKEY, verified: true, method: 'oauth',
     })
     // Reads identity from the /2/users/me endpoint.
     expect(fetchMock.mock.calls[1][0]).toBe('https://api.twitter.com/2/users/me')

@@ -82,20 +82,24 @@ describe('handleYouTubeCallback', () => {
   it('exchanges the code and returns the channel handle (customUrl) as identity', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
-      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'UC123', snippet: { customUrl: '@creator', title: 'Creator' } }] }))
+      // Mixed-case customUrl proves the stored KEY is lowercased while the stored
+      // PAYLOAD keeps the raw handle — if `.toLowerCase()` were dropped, the key
+      // assertion below would fail.
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'UC123', snippet: { customUrl: '@Creator', title: 'Creator' } }] }))
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
     const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
 
     expect(result.success).toBe(true)
-    expect(result.identity).toBe('@creator')
-    // Stores the verification keyed by platform:identity:pubkey with the right payload —
-    // a wrong/empty stored identity is exactly the regression class these tests guard.
+    expect(result.identity).toBe('@Creator')
+    // Single-use OAuth state must be consumed (replay protection).
+    expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
+    // Stored key lowercases the identity; the stored payload keeps the raw handle.
     const [key, value] = env.CACHE_KV.put.mock.calls[0]
     expect(key).toBe(`oauth_verified:youtube:@creator:${PUBKEY}`)
     expect(JSON.parse(value)).toMatchObject({
-      platform: 'youtube', identity: '@creator', pubkey: PUBKEY, verified: true, method: 'oauth',
+      platform: 'youtube', identity: '@Creator', pubkey: PUBKEY, verified: true, method: 'oauth',
     })
     // Reads the authenticated user's own channel.
     expect(fetchMock.mock.calls[1][0]).toContain('part=snippet&mine=true')
@@ -112,6 +116,12 @@ describe('handleYouTubeCallback', () => {
 
     expect(result.success).toBe(true)
     expect(result.identity).toBe('UC123')
+    // Pin the fallback branch's key construction too (UC123 -> uc123) and confirm
+    // state is consumed on this success path.
+    expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
+    const [key, value] = env.CACHE_KV.put.mock.calls[0]
+    expect(key).toBe(`oauth_verified:youtube:uc123:${PUBKEY}`)
+    expect(JSON.parse(value)).toMatchObject({ platform: 'youtube', identity: 'UC123', pubkey: PUBKEY })
   })
 
   it('fails when the account has no channel', async () => {
