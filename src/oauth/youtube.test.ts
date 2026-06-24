@@ -90,7 +90,13 @@ describe('handleYouTubeCallback', () => {
 
     expect(result.success).toBe(true)
     expect(result.identity).toBe('@creator')
-    expect(env.CACHE_KV.put).toHaveBeenCalled()
+    // Stores the verification keyed by platform:identity:pubkey with the right payload —
+    // a wrong/empty stored identity is exactly the regression class these tests guard.
+    const [key, value] = env.CACHE_KV.put.mock.calls[0]
+    expect(key).toBe(`oauth_verified:youtube:@creator:${PUBKEY}`)
+    expect(JSON.parse(value)).toMatchObject({
+      platform: 'youtube', identity: '@creator', pubkey: PUBKEY, verified: true, method: 'oauth',
+    })
     // Reads the authenticated user's own channel.
     expect(fetchMock.mock.calls[1][0]).toContain('part=snippet&mine=true')
   })

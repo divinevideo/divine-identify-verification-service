@@ -54,7 +54,7 @@ describe('startTwitterOAuth', () => {
 
     expect(resp.status).toBe(302)
     const scope = new URL(resp.headers.get('Location')!).searchParams.get('scope')
-    // /2/users/me only returns `username` when users.read is granted.
+    // /2/users/me requires tweet.read + users.read; `username` is a default field once granted.
     expect(scope).toBe('users.read tweet.read')
   })
 
@@ -91,7 +91,13 @@ describe('handleTwitterCallback', () => {
 
     expect(result.success).toBe(true)
     expect(result.identity).toBe('creator')
-    expect(env.CACHE_KV.put).toHaveBeenCalled()
+    // Stores the verification keyed by platform:identity:pubkey with the right payload —
+    // a wrong/empty stored identity is exactly the regression class these tests guard.
+    const [key, value] = env.CACHE_KV.put.mock.calls[0]
+    expect(key).toBe(`oauth_verified:twitter:creator:${PUBKEY}`)
+    expect(JSON.parse(value)).toMatchObject({
+      platform: 'twitter', identity: 'creator', pubkey: PUBKEY, verified: true, method: 'oauth',
+    })
     // Reads identity from the /2/users/me endpoint.
     expect(fetchMock.mock.calls[1][0]).toBe('https://api.twitter.com/2/users/me')
   })
