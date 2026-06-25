@@ -142,6 +142,7 @@ describe('handleTikTokCallback', () => {
     const result = await handleTikTokCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/invalid response.*token/i)
+    expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
     expect(env.CACHE_KV.put).not.toHaveBeenCalled()
   })
 
@@ -154,6 +155,7 @@ describe('handleTikTokCallback', () => {
     const result = await handleTikTokCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/invalid response.*user/i)
+    expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
     expect(env.CACHE_KV.put).not.toHaveBeenCalled()
   })
 

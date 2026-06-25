@@ -200,6 +200,7 @@ describe('handleYouTubeCallback', () => {
     const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/invalid response.*token/i)
+    expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
     expect(env.CACHE_KV.put).not.toHaveBeenCalled()
   })
 
@@ -212,6 +213,7 @@ describe('handleYouTubeCallback', () => {
     const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/invalid response.*channel/i)
+    expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
     expect(env.CACHE_KV.put).not.toHaveBeenCalled()
   })
 
