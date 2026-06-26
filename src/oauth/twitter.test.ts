@@ -172,4 +172,41 @@ describe('handleTwitterCallback', () => {
     expect(result.error).toMatch(/user info/i)
     expect(env.CACHE_KV.put).not.toHaveBeenCalled()
   })
+
+  it('fails when the token response is not valid JSON', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      { ok: true, status: 200, json: async () => { throw new Error('bad json') } } as unknown as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const env = envWithState()
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/invalid response.*token/i)
+    expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
+    expect(env.CACHE_KV.put).not.toHaveBeenCalled()
+  })
+
+  it('fails when the user-info response is not valid JSON', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new Error('bad json') } } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+    const env = envWithState()
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/invalid response.*user/i)
+    expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
+    expect(env.CACHE_KV.put).not.toHaveBeenCalled()
+  })
+
+  it('fails the callback when OAuth is not configured (missing client secret)', async () => {
+    const env = envWithState()
+    env.TWITTER_CLIENT_SECRET = undefined
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/not configured/i)
+    // State is consumed before the config check; no verification stored.
+    expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
+    expect(env.CACHE_KV.put).not.toHaveBeenCalled()
+  })
 })
