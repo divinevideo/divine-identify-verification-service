@@ -147,11 +147,14 @@ async function verifyNip98EventWithUpstream(
 const ALLOWED_RETURN_ORIGINS = new Set([
   'https://divine.video',
   'https://www.divine.video',
+  // Live verify frontend. Its return_url points back to itself, so the
+  // service's own origin must be trusted or every OAuth start 400s.
+  'https://verify.divine.video',
   'https://verifyer.divine.video',
   'https://verifier.divine.video',
 ])
 
-function isAllowedReturnUrl(url: string, oauthRedirectBase?: string): boolean {
+export function isAllowedReturnUrl(url: string, oauthRedirectBase?: string): boolean {
   try {
     const parsed = new URL(url)
     // Compare exact origin (scheme + host + port) to prevent subdomain tricks

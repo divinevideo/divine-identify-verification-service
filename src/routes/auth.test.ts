@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { Hono } from 'hono'
 import type { Bindings } from '../types'
-import auth from './auth'
+import auth, { isAllowedReturnUrl } from './auth'
 
 // Mount auth sub-app at /auth to match production routing
 const app = new Hono<{ Bindings: Bindings }>()
@@ -215,5 +215,34 @@ describe('POST /auth/oauth/revoke', () => {
     expect(res.status).toBe(200)
     const data = await res.json() as { revoked: boolean }
     expect(data.revoked).toBe(true)
+  })
+})
+
+describe('isAllowedReturnUrl', () => {
+  it('trusts the live verify.divine.video frontend (its own origin)', () => {
+    // Regression: the OAuth start flow return_url is verify.divine.video itself.
+    expect(isAllowedReturnUrl('https://verify.divine.video/#verify-here')).toBe(true)
+  })
+
+  it('keeps trusting the existing allow-listed origins', () => {
+    expect(isAllowedReturnUrl('https://verifier.divine.video/')).toBe(true)
+    expect(isAllowedReturnUrl('https://verifyer.divine.video/')).toBe(true)
+    expect(isAllowedReturnUrl('https://divine.video/')).toBe(true)
+  })
+
+  it('rejects untrusted origins (open-redirect guard still holds)', () => {
+    expect(isAllowedReturnUrl('https://evil.example.com/')).toBe(false)
+    // A trusted host as a subdomain label must not slip through.
+    expect(isAllowedReturnUrl('https://verify.divine.video.evil.com/')).toBe(false)
+  })
+
+  it('honours the configured OAUTH_REDIRECT_BASE origin', () => {
+    expect(
+      isAllowedReturnUrl('https://staging.divine.video/x', 'https://staging.divine.video'),
+    ).toBe(true)
+  })
+
+  it('returns false for malformed input', () => {
+    expect(isAllowedReturnUrl('not a url')).toBe(false)
   })
 })
