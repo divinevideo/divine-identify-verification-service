@@ -8,148 +8,26 @@ describe('DiscordVerifier', () => {
     vi.restoreAllMocks()
   })
 
-  describe('invite-based verification', () => {
+  // Invite-based verification is gone: it could not bind a Discord account to the
+  // claimed username. Refusal behaviour is covered in its own describe block below.
+  describe('invite proofs are rejected', () => {
     const verifier = new DiscordVerifier()
 
-    it('returns verified when npub found in guild name', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          code: 'AbCdEf',
-          expires_at: null,
-          guild: {
-            id: '123456789',
-            name: npub,
-            description: null,
-          },
-        }),
-      }))
+    it('rejects a raw invite code without calling Discord', async () => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
 
       const result = await verifier.verify('alice', 'AbCdEf', npub)
-      expect(result.verified).toBe(true)
-    })
 
-    it('returns verified when npub found in guild description', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          code: 'AbCdEf',
-          expires_at: null,
-          guild: {
-            id: '123456789',
-            name: 'My Proof Server',
-            description: `Verifying that I control the following Nostr public key: "${npub}"`,
-          },
-        }),
-      }))
-
-      const result = await verifier.verify('alice', 'AbCdEf', npub)
-      expect(result.verified).toBe(true)
-    })
-
-    it('returns not verified when npub not in name or description', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          code: 'AbCdEf',
-          expires_at: null,
-          guild: {
-            id: '123456789',
-            name: 'Just a regular server',
-            description: 'Nothing to see here',
-          },
-        }),
-      }))
-
-      const result = await verifier.verify('alice', 'AbCdEf', npub)
       expect(result.verified).toBe(false)
-      expect(result.error).toContain('npub not found')
+      expect(fetchMock).not.toHaveBeenCalled()
     })
 
-    it('returns error for 404 invite', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
-      }))
+    it('returns error for a proof that is neither a message nor an invite', async () => {
+      const result = await verifier.verify('alice', 'not a valid proof!!', npub)
 
-      const result = await verifier.verify('alice', 'badcode', npub)
-      expect(result.verified).toBe(false)
-      expect(result.error).toContain('not found or expired')
-    })
-
-    it('returns error when invite has no guild (group DM)', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          code: 'AbCdEf',
-          expires_at: null,
-        }),
-      }))
-
-      const result = await verifier.verify('alice', 'AbCdEf', npub)
-      expect(result.verified).toBe(false)
-      expect(result.error).toContain('does not point to a server')
-    })
-
-    it('returns error when invite has expired', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          code: 'AbCdEf',
-          expires_at: '2020-01-01T00:00:00.000Z',
-          guild: {
-            id: '123456789',
-            name: npub,
-            description: null,
-          },
-        }),
-      }))
-
-      const result = await verifier.verify('alice', 'AbCdEf', npub)
-      expect(result.verified).toBe(false)
-      expect(result.error).toContain('expired')
-    })
-
-    it('returns error for invalid invite code format', async () => {
-      const result = await verifier.verify('alice', 'bad<code>', npub)
       expect(result.verified).toBe(false)
       expect(result.error).toContain('Invalid proof format')
-    })
-
-    it('returns error on fetch failure', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('timeout')))
-
-      const result = await verifier.verify('alice', 'AbCdEf', npub)
-      expect(result.verified).toBe(false)
-      expect(result.error).toContain('Failed to fetch')
-    })
-
-    it('handles discord.gg invite URL as proof', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          code: 'AbCdEf',
-          expires_at: null,
-          guild: {
-            id: '123456789',
-            name: npub,
-            description: null,
-          },
-        }),
-      }))
-
-      const result = await verifier.verify('alice', 'https://discord.gg/AbCdEf', npub)
-      expect(result.verified).toBe(true)
-      expect(fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/invites/AbCdEf'),
-        expect.any(Object),
-      )
     })
   })
 
@@ -285,25 +163,15 @@ describe('DiscordVerifier', () => {
       expect(result.error).toContain('not configured')
     })
 
-    it('falls back to invite verification for non-numeric proof without bot token', async () => {
+    it('does not fall back to invite verification when no bot token is configured', async () => {
       const noBotVerifier = new DiscordVerifier()
-
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          code: 'AbCdEf',
-          expires_at: null,
-          guild: {
-            id: '123456789',
-            name: npub,
-            description: null,
-          },
-        }),
-      }))
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
 
       const result = await noBotVerifier.verify('alice', 'AbCdEf', npub)
-      expect(result.verified).toBe(true)
+
+      expect(result.verified).toBe(false)
+      expect(fetchMock).not.toHaveBeenCalled()
     })
 
     it('handles case-insensitive username matching', async () => {
@@ -325,5 +193,56 @@ describe('DiscordVerifier', () => {
       const result = await verifier.verify('alice', '99887766554433221', npub)
       expect(result.verified).toBe(true)
     })
+  })
+})
+
+// A Discord server invite cannot prove who owns a Discord account, and this path
+// never tried to: verifyInvite took the claimed username as `_identity` and ignored
+// it, checking only whether the npub appeared in the guild name or description. That
+// let anyone verify any Discord handle by creating a server carrying their own npub.
+// It is not fixable by checking the inviter — Discord's public invite endpoint returns
+// no `inviter` for permanent or vanity invites.
+describe('DiscordVerifier invite proofs cannot bind an account', () => {
+  const npub = 'npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg'
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function stubInvite(guild: { name: string; description: string | null }) {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ code: 'AbCdEf', expires_at: null, guild: { id: '1', ...guild } }),
+    }))
+  }
+
+  it('refuses a username claimed against a server the claimant merely named', async () => {
+    // The attacker's own server, their own npub, somebody else's Discord handle.
+    stubInvite({ name: 'totally legit', description: `my key: ${npub}` })
+
+    const result = await new DiscordVerifier().verify('jack', 'AbCdEf', npub)
+
+    expect(result.verified).toBe(false)
+    expect(result.error).toMatch(/message/i)
+  })
+
+  it('refuses even when the npub is the server name itself', async () => {
+    stubInvite({ name: npub, description: null })
+
+    const result = await new DiscordVerifier().verify('anyone', 'AbCdEf', npub)
+
+    expect(result.verified).toBe(false)
+  })
+
+  it('refuses a discord.gg URL and never spends an upstream request', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await new DiscordVerifier().verify('alice', 'https://discord.gg/AbCdEf', npub)
+
+    expect(result.verified).toBe(false)
+    expect(result.error).toContain('message link')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
