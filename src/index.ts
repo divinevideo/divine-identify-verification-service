@@ -546,7 +546,7 @@ app.get('/', (c) => {
       </div>
 
       <div class="note">
-        <strong>${noPostingPlatforms}</strong> For GitHub, Mastodon, Telegram, and Discord, use the advanced section to paste a post/invite link and verify it.
+        <strong>${noPostingPlatforms}</strong> For GitHub, Mastodon, Telegram, and Discord, use the advanced section to paste a post link and verify it.
       </div>
     </section>
 
@@ -718,7 +718,7 @@ app.get('/', (c) => {
         <tr>
           <td><code>discord</code></td>
           <td>Username</td>
-          <td>Invite code</td>
+          <td>Message link (needs <code>DISCORD_BOT_TOKEN</code>)</td>
           <td>No</td>
         </tr>
         ${ytTableRow}
@@ -1580,10 +1580,10 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         proofInput.placeholder = 'https://t.me/mychannel/123 or mychannel/123';
         helper.textContent = 'Telegram proof should point to a public message that contains your npub.';
       } else if (platform === 'discord') {
-        identityInput.placeholder = 'your server name';
-        proofLabel.textContent = 'Invite link or invite code';
-        proofInput.placeholder = 'https://discord.gg/abc123 or abc123';
-        helper.textContent = 'Use a non-expiring invite and include your npub in server name/description.';
+        identityInput.placeholder = 'your Discord username';
+        proofLabel.textContent = 'Message link';
+        proofInput.placeholder = 'https://discord.com/channels/.../.../...';
+        helper.textContent = 'Post a message containing your npub, then right-click it and Copy Message Link. A server invite cannot prove who owns an account.';
       } else if (platform === 'youtube') {
         identityInput.placeholder = 'UC... or @channelhandle';
         proofLabel.textContent = 'Video link or video ID';
@@ -1652,15 +1652,6 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         if (path[0] && path[1]) {
           const channel = path[0].replace(/^@/, '');
           return { identity: channel, proof: channel + '/' + path[1] };
-        }
-      }
-
-      if (platform === 'discord') {
-        if ((host === 'discord.gg' || host === 'www.discord.gg') && path[0]) {
-          return { proof: path[0] };
-        }
-        if ((host === 'discord.com' || host === 'www.discord.com') && path[0] === 'invite' && path[1]) {
-          return { proof: path[1] };
         }
       }
 

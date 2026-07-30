@@ -1,15 +1,5 @@
 import type { PlatformVerifier } from './base'
 
-interface DiscordInviteResponse {
-  guild?: {
-    id: string
-    name: string
-    description: string | null
-  }
-  code: string
-  expires_at: string | null
-}
-
 interface DiscordMessageResponse {
   id: string
   content: string
@@ -72,14 +62,22 @@ export class DiscordVerifier implements PlatformVerifier {
   ): Promise<{ verified: boolean; error?: string }> {
     const parsed = parseProof(proof, this.verifyChannelId)
     if (!parsed) {
-      return { verified: false, error: 'Invalid proof format — provide a Discord message link, message ID, or server invite code' }
+      return { verified: false, error: 'Invalid proof format — provide a Discord message link or message ID' }
     }
 
     if (parsed.kind === 'message_url' || parsed.kind === 'message_id') {
       return this.verifyMessage(identity, parsed, npub)
     }
 
-    return this.verifyInvite(identity, parsed.code, npub)
+    // A server invite cannot prove who owns a Discord account. The public invite
+    // endpoint returns no `inviter` for permanent or vanity invites, so an invite
+    // establishes only that somebody put an npub in a server's name or description
+    // — with no link to the claimed username. Accepting it let anyone claim any
+    // handle, so invites are refused outright.
+    return {
+      verified: false,
+      error: 'A server invite cannot prove who owns a Discord account. Post a message containing your npub and provide its message link instead.',
+    }
   }
 
   private async verifyMessage(
@@ -88,7 +86,7 @@ export class DiscordVerifier implements PlatformVerifier {
     npub: string,
   ): Promise<{ verified: boolean; error?: string }> {
     if (!this.botToken) {
-      return { verified: false, error: 'Discord message verification is not configured — use a server invite code instead' }
+      return { verified: false, error: 'Discord verification is not configured on this deployment yet.' }
     }
 
     const channelId = ('channelId' in parsed && parsed.channelId)
@@ -151,64 +149,5 @@ export class DiscordVerifier implements PlatformVerifier {
     }
 
     return { verified: true }
-  }
-
-  private async verifyInvite(
-    _identity: string,
-    code: string,
-    npub: string,
-  ): Promise<{ verified: boolean; error?: string }> {
-    const url = `https://discord.com/api/v10/invites/${encodeURIComponent(code)}`
-
-    let response: Response
-    try {
-      response = await fetch(url, {
-        headers: { 'Accept': 'application/json' },
-      })
-    } catch {
-      return { verified: false, error: 'Failed to fetch Discord invite' }
-    }
-
-    if (response.status === 404) {
-      return { verified: false, error: 'Invite not found or expired' }
-    }
-
-    if (!response.ok) {
-      return { verified: false, error: `Discord API error: ${response.status}` }
-    }
-
-    let data: DiscordInviteResponse
-    try {
-      data = await response.json() as DiscordInviteResponse
-    } catch {
-      return { verified: false, error: 'Invalid JSON response from Discord' }
-    }
-
-    if (!data.guild) {
-      return { verified: false, error: 'Invite does not point to a server' }
-    }
-
-    // Check if invite has expired
-    if (data.expires_at) {
-      const expiresAt = new Date(data.expires_at)
-      if (expiresAt < new Date()) {
-        return { verified: false, error: 'Invite has expired — create a permanent invite' }
-      }
-    }
-
-    // Search guild name and description for npub
-    const searchText = [
-      data.guild.name ?? '',
-      data.guild.description ?? '',
-    ].join(' ')
-
-    if (searchText.includes(npub)) {
-      return { verified: true }
-    }
-
-    return {
-      verified: false,
-      error: 'npub not found in server name or description',
-    }
   }
 }
