@@ -89,7 +89,56 @@ describe('TikTokVerifier', () => {
     expect(result.verified).toBe(true)
   })
 
-  it('returns error when author_unique_id is missing', async () => {
+  it('falls back to the documented author_url when author_unique_id is absent', async () => {
+    // author_unique_id is undocumented; author_url is documented. Verification
+    // must still work off author_url alone if TikTok drops the former.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        author_name: 'Display Name',
+        author_url: 'https://www.tiktok.com/@foo7323',
+        title: npub,
+      }),
+    }))
+
+    const result = await verifier.verify('foo7323', '7676181219524021535', npub)
+    expect(result.verified).toBe(true)
+  })
+
+  it('ignores an author_url on a non-TikTok host', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        author_name: 'Display Name',
+        author_url: 'https://evil.example/@foo7323',
+        title: npub,
+      }),
+    }))
+
+    const result = await verifier.verify('foo7323', '7676181219524021535', npub)
+    expect(result.verified).toBe(false)
+    expect(result.error).toContain('Unable to verify')
+  })
+
+  it('ignores an author_url that is not a bare @handle profile path', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        author_name: 'Display Name',
+        author_url: 'https://www.tiktok.com/@foo7323/video/7676181219524021535',
+        title: npub,
+      }),
+    }))
+
+    const result = await verifier.verify('foo7323', '7676181219524021535', npub)
+    expect(result.verified).toBe(false)
+    expect(result.error).toContain('Unable to verify')
+  })
+
+  it('returns error when neither author_unique_id nor a valid author_url is present', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
