@@ -1,7 +1,10 @@
 import type { PlatformVerifier } from './base'
 
 interface TikTokOEmbedResponse {
+  // Display name (nickname); not unique, so unsuitable for ownership checks.
   author_name?: string
+  // The @handle. Unique per account and what the video URL encodes.
+  author_unique_id?: string
   title?: string
 }
 
@@ -46,11 +49,14 @@ export class TikTokVerifier implements PlatformVerifier {
       return { verified: false, error: 'Invalid JSON response from TikTok oEmbed' }
     }
 
-    // Verify author matches identity (case-insensitive)
-    if (!data.author_name) {
+    // The claimed identity is the @handle parsed from the video URL, so match
+    // it against oEmbed's author_unique_id. author_name is the display name,
+    // which is neither unique nor tied to the handle and cannot prove
+    // ownership.
+    if (!data.author_unique_id) {
       return { verified: false, error: 'Unable to verify TikTok video author' }
     }
-    if (data.author_name.toLowerCase() !== identity.toLowerCase()) {
+    if (data.author_unique_id.toLowerCase() !== identity.toLowerCase()) {
       return { verified: false, error: 'Video author does not match claimed identity' }
     }
 

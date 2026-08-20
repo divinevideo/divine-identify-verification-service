@@ -15,6 +15,7 @@ describe('TikTokVerifier', () => {
       status: 200,
       json: async () => ({
         author_name: 'testuser',
+        author_unique_id: 'testuser',
         title: `My Nostr key: ${npub} #nostr`,
       }),
     }))
@@ -29,6 +30,7 @@ describe('TikTokVerifier', () => {
       status: 200,
       json: async () => ({
         author_name: 'testuser',
+        author_unique_id: 'testuser',
         title: 'Just a regular TikTok caption',
       }),
     }))
@@ -44,6 +46,7 @@ describe('TikTokVerifier', () => {
       status: 200,
       json: async () => ({
         author_name: 'otheruser',
+        author_unique_id: 'otheruser',
         title: npub,
       }),
     }))
@@ -53,18 +56,52 @@ describe('TikTokVerifier', () => {
     expect(result.error).toContain('does not match')
   })
 
-  it('matches author name case-insensitively', async () => {
+  it('matches author handle case-insensitively', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({
-        author_name: 'TestUser',
+        author_name: 'Display Name',
+        author_unique_id: 'TestUser',
         title: npub,
       }),
     }))
 
     const result = await verifier.verify('testuser', '7123456789012345678', npub)
     expect(result.verified).toBe(true)
+  })
+
+  it('verifies when display name differs from the handle', async () => {
+    // Regression: the claimed identity is the @handle, which oEmbed returns as
+    // author_unique_id. Matching author_name (the display name) rejected every
+    // account whose display name differs from its handle.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        author_name: 'foo',
+        author_unique_id: 'foo7323',
+        title: npub,
+      }),
+    }))
+
+    const result = await verifier.verify('foo7323', '7676181219524021535', npub)
+    expect(result.verified).toBe(true)
+  })
+
+  it('returns error when author_unique_id is missing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        author_name: 'testuser',
+        title: npub,
+      }),
+    }))
+
+    const result = await verifier.verify('testuser', '7123456789012345678', npub)
+    expect(result.verified).toBe(false)
+    expect(result.error).toContain('Unable to verify')
   })
 
   it('returns error for 404 video', async () => {
