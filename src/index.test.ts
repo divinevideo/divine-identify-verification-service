@@ -43,3 +43,32 @@ describe('verifier footer', () => {
     expect(html).toContain('https://divine.video/terms')
   })
 })
+
+describe('verifier tiktok oauth gating', () => {
+  async function homeHtml(): Promise<string> {
+    const response = await worker.fetch(
+      new Request('https://verifier.divine.video/'),
+      {} as never,
+    )
+    expect(response.status).toBe(200)
+    return response.text()
+  }
+
+  function sliceSelect(html: string, id: string): string {
+    const start = html.indexOf(`id="${id}"`)
+    expect(start).toBeGreaterThan(-1)
+    const end = html.indexOf('</select>', start)
+    expect(end).toBeGreaterThan(start)
+    return html.slice(start, end)
+  }
+
+  it('hides TikTok from the OAuth picker while its OAuth app is unapproved', async () => {
+    const oauthSelect = sliceSelect(await homeHtml(), 'oauth-platform-select')
+    expect(oauthSelect).not.toContain('value="tiktok"')
+  })
+
+  it('keeps TikTok in the proof-post picker', async () => {
+    const proofSelect = sliceSelect(await homeHtml(), 'proof-platform-select')
+    expect(proofSelect).toContain('value="tiktok"')
+  })
+})
