@@ -73,12 +73,15 @@ app.get('/', (c) => {
   const ytTableRow = hasYouTube ? '<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>Yes</td></tr>' : ''
   const ttTableRow = hasTikTok ? '<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video ID (numeric)</td><td>Yes</td></tr>' : ''
   const extraPlatformNames = (hasYouTube ? ', YouTube' : '') + (hasTikTok ? ', TikTok' : '')
+  // OAuth-context platform list: excludes TikTok while its OAuth app is
+  // hidden, so the sign-in copy never advertises a path the picker omits.
+  const oauthExtraPlatformNames = (hasYouTube ? ', YouTube' : '') + (hasTikTok && tiktokOAuthEnabled ? ', TikTok' : '')
   const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
   const ytOAuthInlineExample = hasYouTube ? `\nGET ${origin}/auth/youtube/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
-  const ttOAuthInlineExample = hasTikTok ? `\nGET ${origin}/auth/tiktok/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
+  const ttOAuthInlineExample = hasTikTok && tiktokOAuthEnabled ? `\nGET ${origin}/auth/tiktok/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
   const extraLookupPlatforms = (hasYouTube ? ",'youtube'" : '') + (hasTikTok ? ",'tiktok'" : '')
   const choosePlatforms = `Choose Twitter, GitHub, Bluesky, Mastodon, Telegram, Discord${extraPlatformNames}.`
-  const noPostingPlatforms = `No posting required for Twitter${extraPlatformNames}, and Bluesky.`
+  const noPostingPlatforms = `No posting required for Twitter${oauthExtraPlatformNames}, and Bluesky.`
   const oauthPlatformOptions = `<option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok && tiktokOAuthEnabled ? '<option value="tiktok">TikTok</option>' : ''}`
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
@@ -540,7 +543,7 @@ app.get('/', (c) => {
         <div class="step">
           <div class="step-number">3</div>
           <h4>Use Quick Connect</h4>
-          <p>For Twitter/X, Bluesky, YouTube, and TikTok, just sign in from this page. No posting required.</p>
+          <p>For Twitter/X, Bluesky${oauthExtraPlatformNames}, just sign in from this page. No posting required.</p>
         </div>
         <div class="step">
           <div class="step-number">4</div>
@@ -681,7 +684,7 @@ app.get('/', (c) => {
       <p>Two verification methods are supported:</p>
       <ul>
         <li><strong>Proof posts</strong> &mdash; User publishes a post containing their <code>npub</code> on the external platform. The service fetches the post and checks that the npub is present and the author matches.</li>
-        <li><strong>OAuth login</strong> (Twitter, Bluesky${extraPlatformNames}) &mdash; User authenticates directly. No proof post needed.</li>
+        <li><strong>OAuth login</strong> (Twitter, Bluesky${oauthExtraPlatformNames}) &mdash; User authenticates directly. No proof post needed.</li>
       </ul>
     </section>
 
@@ -815,7 +818,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     </section>
 
     <section id="oauth">
-      <h2>OAuth Verification (Twitter, Bluesky${extraPlatformNames})</h2>
+      <h2>OAuth Verification (Twitter, Bluesky${oauthExtraPlatformNames})</h2>
       <p>Users can verify by logging in instead of posting a proof.</p>
 
       <h3>Start OAuth</h3>
@@ -825,7 +828,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/twitter/status?pubkey=hex64&amp;identity=jack</pre>
 
-      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for Twitter, Bluesky${extraPlatformNames}.</div>
+      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for Twitter, Bluesky${oauthExtraPlatformNames}.</div>
     </section>
 
     <section id="other">

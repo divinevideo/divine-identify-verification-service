@@ -71,4 +71,14 @@ describe('verifier tiktok oauth gating', () => {
     const proofSelect = sliceSelect(await homeHtml(), 'proof-platform-select')
     expect(proofSelect).toContain('value="tiktok"')
   })
+
+  it('does not advertise TikTok in the no-posting sign-in instructions', async () => {
+    const html = await homeHtml()
+    const marker = 'just sign in from this page'
+    const idx = html.indexOf(marker)
+    expect(idx).toBeGreaterThan(-1)
+    const sentence = html.slice(html.lastIndexOf('>', idx) + 1, idx + marker.length)
+    expect(sentence).toContain('Twitter')
+    expect(sentence).not.toContain('TikTok')
+  })
 })
