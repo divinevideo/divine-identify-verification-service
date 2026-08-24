@@ -7,7 +7,8 @@ const platforms = new Hono<{ Bindings: Bindings }>()
 platforms.get('/', (c) => {
   return c.json({ platforms: getPlatformInfo({
     youtubeEnabled: !!c.env.YOUTUBE_API_KEY,
-    tiktokEnabled: true, // TikTok oEmbed is public
+    // TODO(#38): Enable after production OAuth credentials pass an end-to-end check.
+    tiktokEnabled: c.env.TIKTOK_OAUTH_ENABLED === 'true',
     discordEnabled: !!c.env.DISCORD_BOT_TOKEN,
   }) })
 })

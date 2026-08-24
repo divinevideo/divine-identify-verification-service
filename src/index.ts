@@ -58,13 +58,15 @@ app.get('/', (c) => {
     return c.json({ service: 'divine-identity-verification-service', version: '1.0.0' })
   }
 
-  const origin = new URL(c.req.url).origin
+  const requestUrl = new URL(c.req.url)
+  const origin = requestUrl.origin
   const hasYouTube = !!c.env.YOUTUBE_API_KEY
   const hasTikTok = true // TikTok oEmbed is public, no key needed for proof verification
-  // The TikTok OAuth app is not currently approved, so hide it from the
-  // OAuth picker while that is resolved. Proof-post verification stays
-  // available. Flip to true once OAuth is approved.
-  const tiktokOAuthEnabled = false
+  // TODO(#38): Enable the production UI after TikTok OAuth is approved.
+  // The query override keeps the submitted review instructions testable while
+  // ordinary users and older clients stay off the sandbox-only flow.
+  const tiktokOAuthEnabled = c.env.TIKTOK_OAUTH_ENABLED === 'true'
+    || requestUrl.searchParams.get('tiktok_oauth_review') === '1'
   const divineLoginUrl = `https://login.divine.video/login?return_url=${encodeURIComponent(`${origin}/#verify-here`)}`
 
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
@@ -76,6 +78,13 @@ app.get('/', (c) => {
   // OAuth-context platform list: excludes TikTok while its OAuth app is
   // hidden, so the sign-in copy never advertises a path the picker omits.
   const oauthExtraPlatformNames = (hasYouTube ? ', YouTube' : '') + (hasTikTok && tiktokOAuthEnabled ? ', TikTok' : '')
+  const quickConnectPlatformNames = ['Twitter/X', 'Bluesky']
+  if (hasYouTube) quickConnectPlatformNames.push('YouTube')
+  if (hasTikTok && tiktokOAuthEnabled) quickConnectPlatformNames.push('TikTok')
+  const quickConnectPlatformList = `${quickConnectPlatformNames.slice(0, -1).join(', ')}${quickConnectPlatformNames.length > 2 ? ',' : ''} and ${quickConnectPlatformNames[quickConnectPlatformNames.length - 1]}`
+  const tiktokOAuthHistoryNote = hasTikTok && !tiktokOAuthEnabled
+    ? ' Existing TikTok OAuth verifications remain recognized.'
+    : ''
   const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
   const ytOAuthInlineExample = hasYouTube ? `\nGET ${origin}/auth/youtube/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
   const ttOAuthInlineExample = hasTikTok && tiktokOAuthEnabled ? `\nGET ${origin}/auth/tiktok/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
@@ -543,7 +552,7 @@ app.get('/', (c) => {
         <div class="step">
           <div class="step-number">3</div>
           <h4>Use Quick Connect</h4>
-          <p>For Twitter/X, Bluesky${oauthExtraPlatformNames}, just sign in from this page. No posting required.</p>
+          <p>For ${quickConnectPlatformList}, just sign in from this page. No posting required.</p>
         </div>
         <div class="step">
           <div class="step-number">4</div>
@@ -828,7 +837,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/twitter/status?pubkey=hex64&amp;identity=jack</pre>
 
-      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for Twitter, Bluesky${oauthExtraPlatformNames}.</div>
+      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for Twitter, Bluesky${oauthExtraPlatformNames}.${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">

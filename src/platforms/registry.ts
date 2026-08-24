@@ -37,8 +37,6 @@ export function getPlatformInfo(opts?: { youtubeEnabled?: boolean; tiktokEnabled
   if (opts?.youtubeEnabled) {
     platforms.youtube = { label: 'YouTube', supported: true }
   }
-  if (opts?.tiktokEnabled) {
-    platforms.tiktok = { label: 'TikTok', supported: true }
-  }
+  platforms.tiktok = { label: 'TikTok', supported: !!opts?.tiktokEnabled }
   return platforms
 }

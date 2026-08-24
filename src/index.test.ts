@@ -45,10 +45,10 @@ describe('verifier footer', () => {
 })
 
 describe('verifier tiktok oauth gating', () => {
-  async function homeHtml(): Promise<string> {
+  async function homeHtml(url = 'https://verifier.divine.video/', env = {}): Promise<string> {
     const response = await worker.fetch(
-      new Request('https://verifier.divine.video/'),
-      {} as never,
+      new Request(url),
+      env as never,
     )
     expect(response.status).toBe(200)
     return response.text()
@@ -72,6 +72,14 @@ describe('verifier tiktok oauth gating', () => {
     expect(proofSelect).toContain('value="tiktok"')
   })
 
+  it('exposes TikTok OAuth for the app-review URL', async () => {
+    const oauthSelect = sliceSelect(
+      await homeHtml('https://verifier.divine.video/?tiktok_oauth_review=1'),
+      'oauth-platform-select',
+    )
+    expect(oauthSelect).toContain('value="tiktok"')
+  })
+
   it('does not advertise TikTok in the no-posting sign-in instructions', async () => {
     const html = await homeHtml()
     const marker = 'just sign in from this page'
@@ -90,5 +98,14 @@ describe('verifier tiktok oauth gating', () => {
     const row = html.slice(html.lastIndexOf('<tr>', idx), html.indexOf('</tr>', idx))
     expect(row).toContain('<td>No</td>')
     expect(row).not.toContain('<td>Yes</td>')
+  })
+
+  it('renders a grammatical Quick Connect list', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', { YOUTUBE_API_KEY: 'key' })
+    expect(html).toContain('For Twitter/X, Bluesky, and YouTube, just sign in')
+  })
+
+  it('documents recognition of existing TikTok OAuth verifications', async () => {
+    expect(await homeHtml()).toContain('Existing TikTok OAuth verifications remain recognized.')
   })
 })

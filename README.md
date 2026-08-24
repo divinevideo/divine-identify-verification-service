@@ -7,7 +7,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 ## Features
 
 - **Eight platforms** — GitHub, Twitter/X, Bluesky, Mastodon, Telegram, Discord, YouTube, and TikTok, verified through a single API.
-- **Two verification methods** — a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, YouTube, TikTok) that skips posting entirely. OAuth results are also used as a fallback during proof-post checks.
+- **Two verification methods** — a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. TikTok uses proof posts while its production OAuth app is pending; existing OAuth results remain valid as a fallback.
 - **Batch and single verification** — check up to 10 claims in one request, or verify a single claim over JSON or a shareable URL that returns HTML for browsers and JSON for API clients.
 - **NIP-05 verification** — confirm that a NIP-05 identifier resolves to a given pubkey.
 - **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and upstream platform errors for 5 minutes.
@@ -58,6 +58,7 @@ Configuration lives in `wrangler.toml`.
 **Vars:**
 
 - `DISCORD_VERIFY_CHANNEL_ID` — the Discord channel used for message-based Discord verification.
+- `TIKTOK_OAUTH_ENABLED` — set to `"true"` only after production OAuth credentials pass an end-to-end check; defaults to `"false"`.
 
 **Secrets** (set with `wrangler secret put …`, never committed):
 
