@@ -81,4 +81,14 @@ describe('verifier tiktok oauth gating', () => {
     expect(sentence).toContain('Twitter')
     expect(sentence).not.toContain('TikTok')
   })
+
+  it('does not advertise TikTok OAuth in the supported-platform table', async () => {
+    const html = await homeHtml()
+    const marker = '<code>tiktok</code>'
+    const idx = html.indexOf(marker)
+    expect(idx).toBeGreaterThan(-1)
+    const row = html.slice(html.lastIndexOf('<tr>', idx), html.indexOf('</tr>', idx))
+    expect(row).toContain('<td>No</td>')
+    expect(row).not.toContain('<td>Yes</td>')
+  })
 })
