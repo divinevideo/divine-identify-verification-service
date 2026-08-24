@@ -113,6 +113,16 @@ describe('verifier tiktok oauth gating', () => {
     expect(sliceSelect(html, 'oauth-platform-select')).toContain('value="tiktok"')
   })
 
+  it('does not set a reviewer cookie on ordinary landing requests', async () => {
+    const response = await worker.fetch(
+      new Request('https://verifier.divine.video/'),
+      {} as never,
+    )
+    expect(response.headers.get('set-cookie')).toBeNull()
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(response.headers.get('vary')).toBe('Cookie')
+  })
+
   it('does not advertise TikTok in the no-posting sign-in instructions', async () => {
     const html = await homeHtml()
     const marker = 'just sign in from this page'

@@ -106,6 +106,8 @@ app.get('/', (c) => {
   const oauthPlatformOptions = `<option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok && tiktokOAuthEnabled ? '<option value="tiktok">TikTok</option>' : ''}`
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
+  c.header('Cache-Control', 'private, no-store')
+  c.header('Vary', 'Cookie')
   return c.html(`<!DOCTYPE html>
 <html lang="en">
 <head>
