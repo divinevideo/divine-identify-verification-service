@@ -23,6 +23,7 @@ function handleFromAuthorUrl(authorUrl: string | undefined): string | null {
   } catch {
     return null
   }
+  if (url.protocol !== 'https:') return null
   const host = url.hostname.toLowerCase()
   if (host !== 'www.tiktok.com' && host !== 'tiktok.com') return null
   const segments = url.pathname.split('/').filter(Boolean)

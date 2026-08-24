@@ -122,6 +122,22 @@ describe('TikTokVerifier', () => {
     expect(result.error).toContain('Unable to verify')
   })
 
+  it('ignores a non-HTTPS author_url', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        author_name: 'Display Name',
+        author_url: 'http://www.tiktok.com/@foo7323',
+        title: npub,
+      }),
+    }))
+
+    const result = await verifier.verify('foo7323', '7676181219524021535', npub)
+    expect(result.verified).toBe(false)
+    expect(result.error).toContain('Unable to verify')
+  })
+
   it('ignores an author_url that is not a bare @handle profile path', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
