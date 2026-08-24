@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { getCookie, setCookie } from 'hono/cookie'
 import type { Bindings } from './types'
 import health from './routes/health'
 import platforms from './routes/platforms'
@@ -63,10 +64,21 @@ app.get('/', (c) => {
   const hasYouTube = !!c.env.YOUTUBE_API_KEY
   const hasTikTok = true // TikTok oEmbed is public, no key needed for proof verification
   // TODO(#38): Enable the production UI after TikTok OAuth is approved.
-  // The query override keeps the submitted review instructions testable while
-  // ordinary users and older clients stay off the sandbox-only flow.
+  // The review cookie survives OAuth redirects without changing their exact
+  // registered redirect URI, while ordinary users stay off the sandbox flow.
+  const tiktokOAuthReviewRequested = requestUrl.searchParams.get('tiktok_oauth_review') === '1'
+  if (tiktokOAuthReviewRequested) {
+    setCookie(c, 'tiktok_oauth_review', '1', {
+      httpOnly: true,
+      maxAge: 3600,
+      path: '/',
+      sameSite: 'Lax',
+      secure: requestUrl.protocol === 'https:',
+    })
+  }
   const tiktokOAuthEnabled = c.env.TIKTOK_OAUTH_ENABLED === 'true'
-    || requestUrl.searchParams.get('tiktok_oauth_review') === '1'
+    || tiktokOAuthReviewRequested
+    || getCookie(c, 'tiktok_oauth_review') === '1'
   const divineLoginUrl = `https://login.divine.video/login?return_url=${encodeURIComponent(`${origin}/#verify-here`)}`
 
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
@@ -1032,7 +1044,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     }
 
     function getKeycastRedirectUrl() {
-      return window.location.origin + window.location.pathname + window.location.search;
+      return window.location.origin + window.location.pathname;
     }
 
     function normalizeStoredKeycastSession(raw) {
@@ -1746,7 +1758,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 
         const params = new URLSearchParams({
           pubkey,
-          return_url: window.location.origin + window.location.pathname + window.location.search + '#verify-here',
+          return_url: window.location.origin + window.location.pathname + '#verify-here',
         });
         if (platform === 'bluesky') {
           const handle = document.getElementById('oauth-bluesky-handle-input').value.trim().replace(/^@/, '').toLowerCase();

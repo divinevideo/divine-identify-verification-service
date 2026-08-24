@@ -30,7 +30,7 @@ Paste into the review-notes / description field of the submission. The attached 
 Divine Verifier lets a person prove they own external social accounts (TikTok, plus GitHub, Bluesky, and others) and attach those proofs to their decentralized Divine / Nostr identity. For TikTok, the user signs in with TikTok Login Kit; we read their username and record a signed "verified link" on their profile so others can confirm the account is really theirs. We do not post to TikTok and we do not retain TikTok tokens.
 
 ### How to test the TikTok integration
-1. Open `https://verifier.divine.video/?tiktok_oauth_review=1` in a web browser. This review URL exposes TikTok Quick Connect while the public picker remains hidden from production users.
+1. Open `https://verifier.divine.video/?tiktok_oauth_review=1` in a web browser. This review URL enables TikTok Quick Connect for one hour so it remains available through the sign-in redirects, while the public picker stays hidden from production users.
 2. The verifier first requires a Divine (Nostr) sign-in so the verified link can be published to a profile. **[Matt: decide one — provide a throwaway test Divine account here, OR state "this prerequisite sign-in is shown in the attached demo video."]**
 3. Scroll to "Verify Here" and complete the Nostr sign-in.
 4. Choose **TikTok** and use **Quick Connect** (sign in with TikTok). No posting is required.

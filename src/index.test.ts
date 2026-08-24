@@ -45,9 +45,13 @@ describe('verifier footer', () => {
 })
 
 describe('verifier tiktok oauth gating', () => {
-  async function homeHtml(url = 'https://verifier.divine.video/', env = {}): Promise<string> {
+  async function homeHtml(
+    url = 'https://verifier.divine.video/',
+    env = {},
+    headers: HeadersInit = {},
+  ): Promise<string> {
     const response = await worker.fetch(
-      new Request(url),
+      new Request(url, { headers }),
       env as never,
     )
     expect(response.status).toBe(200)
@@ -88,10 +92,25 @@ describe('verifier tiktok oauth gating', () => {
     expect(oauthSelect).toContain('value="tiktok"')
   })
 
-  it('preserves the app-review query through sign-in redirects', async () => {
-    const html = await homeHtml('https://verifier.divine.video/?tiktok_oauth_review=1')
-    expect(html).toContain('window.location.pathname + window.location.search;')
-    expect(html).toContain("window.location.pathname + window.location.search + '#verify-here'")
+  it('preserves app-review access across redirect callbacks with a cookie', async () => {
+    const response = await worker.fetch(
+      new Request('https://verifier.divine.video/?tiktok_oauth_review=1'),
+      {} as never,
+    )
+    const setCookie = response.headers.get('set-cookie')
+    expect(setCookie).toContain('HttpOnly')
+    expect(setCookie).toContain('Max-Age=3600')
+    expect(setCookie).toContain('SameSite=Lax')
+    expect(setCookie).toContain('Secure')
+    const cookie = setCookie?.split(';', 1)[0]
+    expect(cookie).toBe('tiktok_oauth_review=1')
+
+    const html = await homeHtml(
+      'https://verifier.divine.video/',
+      {},
+      { Cookie: cookie as string },
+    )
+    expect(sliceSelect(html, 'oauth-platform-select')).toContain('value="tiktok"')
   })
 
   it('does not advertise TikTok in the no-posting sign-in instructions', async () => {
