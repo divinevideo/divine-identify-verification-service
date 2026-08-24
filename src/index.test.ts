@@ -80,6 +80,20 @@ describe('verifier tiktok oauth gating', () => {
     expect(oauthSelect).toContain('value="tiktok"')
   })
 
+  it('exposes TikTok OAuth when the production rollout flag is enabled', async () => {
+    const oauthSelect = sliceSelect(
+      await homeHtml('https://verifier.divine.video/', { TIKTOK_OAUTH_ENABLED: 'true' }),
+      'oauth-platform-select',
+    )
+    expect(oauthSelect).toContain('value="tiktok"')
+  })
+
+  it('preserves the app-review query through sign-in redirects', async () => {
+    const html = await homeHtml('https://verifier.divine.video/?tiktok_oauth_review=1')
+    expect(html).toContain('window.location.pathname + window.location.search;')
+    expect(html).toContain("window.location.pathname + window.location.search + '#verify-here'")
+  })
+
   it('does not advertise TikTok in the no-posting sign-in instructions', async () => {
     const html = await homeHtml()
     const marker = 'just sign in from this page'
@@ -107,5 +121,9 @@ describe('verifier tiktok oauth gating', () => {
 
   it('documents recognition of existing TikTok OAuth verifications', async () => {
     expect(await homeHtml()).toContain('Existing TikTok OAuth verifications remain recognized.')
+  })
+
+  it('documents why TikTok is unavailable through the platforms endpoint', async () => {
+    expect(await homeHtml()).toContain('TikTok reports unsupported while production OAuth rollout is gated')
   })
 })

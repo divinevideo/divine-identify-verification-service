@@ -844,7 +844,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       <h2>Other Endpoints</h2>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/platforms</code></h3>
-        <p>List supported platforms.</p>
+        <p>List platforms currently available to clients. TikTok reports unsupported while production OAuth rollout is gated; proof-post verification remains available directly.</p>
       </div>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/health</code></h3>
@@ -1032,7 +1032,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     }
 
     function getKeycastRedirectUrl() {
-      return window.location.origin + window.location.pathname;
+      return window.location.origin + window.location.pathname + window.location.search;
     }
 
     function normalizeStoredKeycastSession(raw) {
@@ -1746,7 +1746,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 
         const params = new URLSearchParams({
           pubkey,
-          return_url: window.location.origin + window.location.pathname + '#verify-here',
+          return_url: window.location.origin + window.location.pathname + window.location.search + '#verify-here',
         });
         if (platform === 'bluesky') {
           const handle = document.getElementById('oauth-bluesky-handle-input').value.trim().replace(/^@/, '').toLowerCase();
