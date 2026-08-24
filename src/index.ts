@@ -107,6 +107,7 @@ app.get('/', (c) => {
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
   c.header('Cache-Control', 'private, no-store')
+  // TODO(#38): Remove cookie variance when the OAuth reviewer override is retired.
   c.header('Vary', 'Cookie')
   return c.html(`<!DOCTYPE html>
 <html lang="en">
