@@ -43,3 +43,116 @@ describe('verifier footer', () => {
     expect(html).toContain('https://divine.video/terms')
   })
 })
+
+describe('verifier tiktok oauth gating', () => {
+  async function homeHtml(
+    url = 'https://verifier.divine.video/',
+    env = {},
+    headers: HeadersInit = {},
+  ): Promise<string> {
+    const response = await worker.fetch(
+      new Request(url, { headers }),
+      env as never,
+    )
+    expect(response.status).toBe(200)
+    return response.text()
+  }
+
+  function sliceSelect(html: string, id: string): string {
+    const start = html.indexOf(`id="${id}"`)
+    expect(start).toBeGreaterThan(-1)
+    const end = html.indexOf('</select>', start)
+    expect(end).toBeGreaterThan(start)
+    return html.slice(start, end)
+  }
+
+  it('hides TikTok from the OAuth picker while its OAuth app is unapproved', async () => {
+    const oauthSelect = sliceSelect(await homeHtml(), 'oauth-platform-select')
+    expect(oauthSelect).not.toContain('value="tiktok"')
+  })
+
+  it('keeps TikTok in the proof-post picker', async () => {
+    const proofSelect = sliceSelect(await homeHtml(), 'proof-platform-select')
+    expect(proofSelect).toContain('value="tiktok"')
+  })
+
+  it('exposes TikTok OAuth for the app-review URL', async () => {
+    const oauthSelect = sliceSelect(
+      await homeHtml('https://verifier.divine.video/?tiktok_oauth_review=1'),
+      'oauth-platform-select',
+    )
+    expect(oauthSelect).toContain('value="tiktok"')
+  })
+
+  it('exposes TikTok OAuth when the production rollout flag is enabled', async () => {
+    const oauthSelect = sliceSelect(
+      await homeHtml('https://verifier.divine.video/', { TIKTOK_OAUTH_ENABLED: 'true' }),
+      'oauth-platform-select',
+    )
+    expect(oauthSelect).toContain('value="tiktok"')
+  })
+
+  it('preserves app-review access across redirect callbacks with a cookie', async () => {
+    const response = await worker.fetch(
+      new Request('https://verifier.divine.video/?tiktok_oauth_review=1'),
+      {} as never,
+    )
+    const setCookie = response.headers.get('set-cookie')
+    expect(setCookie).toContain('HttpOnly')
+    expect(setCookie).toContain('Max-Age=3600')
+    expect(setCookie).toContain('SameSite=Lax')
+    expect(setCookie).toContain('Secure')
+    const cookie = setCookie?.split(';', 1)[0]
+    expect(cookie).toBe('tiktok_oauth_review=1')
+
+    const html = await homeHtml(
+      'https://verifier.divine.video/',
+      {},
+      { Cookie: cookie as string },
+    )
+    expect(sliceSelect(html, 'oauth-platform-select')).toContain('value="tiktok"')
+  })
+
+  it('does not set a reviewer cookie on ordinary landing requests', async () => {
+    const response = await worker.fetch(
+      new Request('https://verifier.divine.video/'),
+      {} as never,
+    )
+    expect(response.headers.get('set-cookie')).toBeNull()
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(response.headers.get('vary')).toBe('Cookie')
+  })
+
+  it('does not advertise TikTok in the no-posting sign-in instructions', async () => {
+    const html = await homeHtml()
+    const marker = 'just sign in from this page'
+    const idx = html.indexOf(marker)
+    expect(idx).toBeGreaterThan(-1)
+    const sentence = html.slice(html.lastIndexOf('>', idx) + 1, idx + marker.length)
+    expect(sentence).toContain('Twitter')
+    expect(sentence).not.toContain('TikTok')
+  })
+
+  it('does not advertise TikTok OAuth in the supported-platform table', async () => {
+    const html = await homeHtml()
+    const marker = '<code>tiktok</code>'
+    const idx = html.indexOf(marker)
+    expect(idx).toBeGreaterThan(-1)
+    const row = html.slice(html.lastIndexOf('<tr>', idx), html.indexOf('</tr>', idx))
+    expect(row).toContain('<td>No</td>')
+    expect(row).not.toContain('<td>Yes</td>')
+  })
+
+  it('renders a grammatical Quick Connect list', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', { YOUTUBE_API_KEY: 'key' })
+    expect(html).toContain('For Twitter/X, Bluesky, and YouTube, just sign in')
+  })
+
+  it('documents recognition of existing TikTok OAuth verifications', async () => {
+    expect(await homeHtml()).toContain('Existing TikTok OAuth verifications remain recognized.')
+  })
+
+  it('documents why TikTok is unavailable through the platforms endpoint', async () => {
+    expect(await homeHtml()).toContain('TikTok reports unsupported while production OAuth rollout is gated')
+  })
+})

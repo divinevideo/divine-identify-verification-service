@@ -28,6 +28,16 @@ describe('GET /platforms', () => {
     expect(body.platforms.discord).toMatchObject({ label: 'Discord', supported: true })
   })
 
+  it('reports TikTok unsupported until production OAuth is enabled', async () => {
+    const body = await fetchPlatforms({})
+    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
+  })
+
+  it('reports TikTok supported after production OAuth is enabled', async () => {
+    const body = await fetchPlatforms({ TIKTOK_OAUTH_ENABLED: 'true' })
+    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: true })
+  })
+
   it('keeps the unauthenticated proof-post platforms supported with no configuration', async () => {
     const body = await fetchPlatforms({})
     for (const key of ['github', 'twitter', 'mastodon', 'telegram', 'bluesky']) {

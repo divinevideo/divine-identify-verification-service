@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { getCookie, setCookie } from 'hono/cookie'
 import type { Bindings } from './types'
 import health from './routes/health'
 import platforms from './routes/platforms'
@@ -58,26 +59,56 @@ app.get('/', (c) => {
     return c.json({ service: 'divine-identity-verification-service', version: '1.0.0' })
   }
 
-  const origin = new URL(c.req.url).origin
+  const requestUrl = new URL(c.req.url)
+  const origin = requestUrl.origin
   const hasYouTube = !!c.env.YOUTUBE_API_KEY
   const hasTikTok = true // TikTok oEmbed is public, no key needed for proof verification
+  // TODO(#38): Enable the production UI after TikTok OAuth is approved.
+  // The review cookie survives OAuth redirects without changing their exact
+  // registered redirect URI, while ordinary users stay off the sandbox flow.
+  const tiktokOAuthReviewRequested = requestUrl.searchParams.get('tiktok_oauth_review') === '1'
+  if (tiktokOAuthReviewRequested) {
+    setCookie(c, 'tiktok_oauth_review', '1', {
+      httpOnly: true,
+      maxAge: 3600,
+      path: '/',
+      sameSite: 'Lax',
+      secure: requestUrl.protocol === 'https:',
+    })
+  }
+  const tiktokOAuthEnabled = c.env.TIKTOK_OAUTH_ENABLED === 'true'
+    || tiktokOAuthReviewRequested
+    || getCookie(c, 'tiktok_oauth_review') === '1'
   const divineLoginUrl = `https://login.divine.video/login?return_url=${encodeURIComponent(`${origin}/#verify-here`)}`
 
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
   const ytPill = hasYouTube ? '<div class="platform-pill"><svg viewBox="0 0 24 24" fill="#333"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg> YouTube</div>' : ''
   const ttPill = hasTikTok ? '<div class="platform-pill"><svg viewBox="0 0 24 24" fill="#333"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg> TikTok</div>' : ''
   const ytTableRow = hasYouTube ? '<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>Yes</td></tr>' : ''
-  const ttTableRow = hasTikTok ? '<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video ID (numeric)</td><td>Yes</td></tr>' : ''
+  const ttTableRow = hasTikTok ? `<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video ID (numeric)</td><td>${tiktokOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
   const extraPlatformNames = (hasYouTube ? ', YouTube' : '') + (hasTikTok ? ', TikTok' : '')
+  // OAuth-context platform list: excludes TikTok while its OAuth app is
+  // hidden, so the sign-in copy never advertises a path the picker omits.
+  const oauthExtraPlatformNames = (hasYouTube ? ', YouTube' : '') + (hasTikTok && tiktokOAuthEnabled ? ', TikTok' : '')
+  const quickConnectPlatformNames = ['Twitter/X', 'Bluesky']
+  if (hasYouTube) quickConnectPlatformNames.push('YouTube')
+  if (hasTikTok && tiktokOAuthEnabled) quickConnectPlatformNames.push('TikTok')
+  const quickConnectPlatformList = `${quickConnectPlatformNames.slice(0, -1).join(', ')}${quickConnectPlatformNames.length > 2 ? ',' : ''} and ${quickConnectPlatformNames[quickConnectPlatformNames.length - 1]}`
+  const tiktokOAuthHistoryNote = hasTikTok && !tiktokOAuthEnabled
+    ? ' Existing TikTok OAuth verifications remain recognized.'
+    : ''
   const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
   const ytOAuthInlineExample = hasYouTube ? `\nGET ${origin}/auth/youtube/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
-  const ttOAuthInlineExample = hasTikTok ? `\nGET ${origin}/auth/tiktok/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
+  const ttOAuthInlineExample = hasTikTok && tiktokOAuthEnabled ? `\nGET ${origin}/auth/tiktok/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
   const extraLookupPlatforms = (hasYouTube ? ",'youtube'" : '') + (hasTikTok ? ",'tiktok'" : '')
   const choosePlatforms = `Choose Twitter, GitHub, Bluesky, Mastodon, Telegram, Discord${extraPlatformNames}.`
-  const noPostingPlatforms = `No posting required for Twitter${extraPlatformNames}, and Bluesky.`
-  const oauthPlatformOptions = `<option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
+  const noPostingPlatforms = `No posting required for Twitter${oauthExtraPlatformNames}, and Bluesky.`
+  const oauthPlatformOptions = `<option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok && tiktokOAuthEnabled ? '<option value="tiktok">TikTok</option>' : ''}`
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
+  c.header('Cache-Control', 'private, no-store')
+  // TODO(#38): Remove cookie variance when the OAuth reviewer override is retired.
+  c.header('Vary', 'Cookie')
   return c.html(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -536,7 +567,7 @@ app.get('/', (c) => {
         <div class="step">
           <div class="step-number">3</div>
           <h4>Use Quick Connect</h4>
-          <p>For Twitter/X, Bluesky, YouTube, and TikTok, just sign in from this page. No posting required.</p>
+          <p>For ${quickConnectPlatformList}, just sign in from this page. No posting required.</p>
         </div>
         <div class="step">
           <div class="step-number">4</div>
@@ -677,7 +708,7 @@ app.get('/', (c) => {
       <p>Two verification methods are supported:</p>
       <ul>
         <li><strong>Proof posts</strong> &mdash; User publishes a post containing their <code>npub</code> on the external platform. The service fetches the post and checks that the npub is present and the author matches.</li>
-        <li><strong>OAuth login</strong> (Twitter, Bluesky${extraPlatformNames}) &mdash; User authenticates directly. No proof post needed.</li>
+        <li><strong>OAuth login</strong> (Twitter, Bluesky${oauthExtraPlatformNames}) &mdash; User authenticates directly. No proof post needed.</li>
       </ul>
     </section>
 
@@ -811,7 +842,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     </section>
 
     <section id="oauth">
-      <h2>OAuth Verification (Twitter, Bluesky${extraPlatformNames})</h2>
+      <h2>OAuth Verification (Twitter, Bluesky${oauthExtraPlatformNames})</h2>
       <p>Users can verify by logging in instead of posting a proof.</p>
 
       <h3>Start OAuth</h3>
@@ -821,14 +852,14 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/twitter/status?pubkey=hex64&amp;identity=jack</pre>
 
-      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for Twitter, Bluesky${extraPlatformNames}.</div>
+      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for Twitter, Bluesky${oauthExtraPlatformNames}.${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">
       <h2>Other Endpoints</h2>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/platforms</code></h3>
-        <p>List supported platforms.</p>
+        <p>List platforms currently available to clients. TikTok reports unsupported while production OAuth rollout is gated; proof-post verification remains available directly.</p>
       </div>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/health</code></h3>

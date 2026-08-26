@@ -17,6 +17,7 @@ export type Bindings = {
   GOOGLE_CLIENT_SECRET?: string
   TIKTOK_CLIENT_KEY?: string
   TIKTOK_CLIENT_SECRET?: string
+  TIKTOK_OAUTH_ENABLED?: string
   // Base URL for OAuth callbacks (e.g., https://verify.divine.video)
   OAUTH_REDIRECT_BASE?: string
 }
