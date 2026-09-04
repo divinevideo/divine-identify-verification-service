@@ -177,7 +177,11 @@ describe('DiscordVerifier', () => {
       expect(fetchMock).not.toHaveBeenCalled()
     })
 
-    it('handles case-insensitive username matching', async () => {
+    // Discord's unique usernames are always lowercase, so a response can no
+    // longer carry a mixed-case `username`; only the display name can. The
+    // casing that varies is whatever the user typed as their handle, which
+    // reaches the verifier untouched.
+    it('accepts the handle however the user capitalised it', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
@@ -186,14 +190,14 @@ describe('DiscordVerifier', () => {
           content: `Verify: ${npub}`,
           author: {
             id: '111222333',
-            username: 'Alice',
+            username: 'alice',
             global_name: 'Alice',
           },
           channel_id: channelId,
         }),
       }))
 
-      const result = await verifier.verify('alice', '99887766554433221', npub)
+      const result = await verifier.verify('Alice', '99887766554433221', npub)
       expect(result.verified).toBe(true)
     })
   })
