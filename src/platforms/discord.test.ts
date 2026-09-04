@@ -194,6 +194,95 @@ describe('DiscordVerifier', () => {
       expect(result.verified).toBe(true)
     })
   })
+
+  // Copy Message Link does not always spell the host `discord.com`: the Canary
+  // and PTB clients use their own subdomains, and links shared years ago still
+  // carry the legacy discordapp.com. All of them serve the same message.
+  describe('proof link parsing', () => {
+    const guildId = '9999999999999999'
+    const channelId = '1234567890123456'
+    const messageId = '99887766554433221'
+    const verifier = new DiscordVerifier('Bot.Token.Here', channelId)
+
+    function stubMessage() {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: messageId,
+            content: `verifying with ${npub}`,
+            author: { id: '111222333', username: 'alice', global_name: null },
+            channel_id: channelId,
+          }),
+        }),
+      )
+    }
+
+    const path = `/channels/${guildId}/${channelId}/${messageId}`
+
+    it.each([
+      ['canary client', `https://canary.discord.com${path}`],
+      ['ptb client', `https://ptb.discord.com${path}`],
+      ['legacy discordapp.com', `https://discordapp.com${path}`],
+      ['www.discordapp.com', `https://www.discordapp.com${path}`],
+      ['trailing slash', `https://discord.com${path}/`],
+      ['query string', `https://discord.com${path}?jump=1`],
+      ['fragment', `https://discord.com${path}#pinned`],
+      ['uppercase host', `https://Discord.com${path}`],
+      ['surrounding whitespace', `  https://discord.com${path}  `],
+    ])('verifies a message link from the %s', async (_label, proof) => {
+      stubMessage()
+
+      const result = await verifier.verify('alice', proof, npub)
+
+      expect(result.verified).toBe(true)
+    })
+
+    it('refuses a DM link, which no bot can read, without calling Discord', async () => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await verifier.verify(
+        'alice',
+        `https://discord.com/channels/@me/${channelId}/${messageId}`,
+        npub,
+      )
+
+      expect(result.verified).toBe(false)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('tells someone who copied the channel link what to copy instead', async () => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await verifier.verify(
+        'alice',
+        `https://discord.com/channels/${guildId}/${channelId}`,
+        npub,
+      )
+
+      expect(result.verified).toBe(false)
+      expect(result.error).toContain('Copy Message Link')
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('still refuses a host that only looks like Discord', async () => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await verifier.verify(
+        'alice',
+        `https://discord.com.evil.example${path}`,
+        npub,
+      )
+
+      expect(result.verified).toBe(false)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+  })
 })
 
 // A Discord server invite cannot prove who owns a Discord account, and this path

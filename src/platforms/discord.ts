@@ -14,33 +14,80 @@ interface DiscordMessageResponse {
 type ProofType =
   | { kind: 'message_url'; channelId: string; messageId: string }
   | { kind: 'message_id'; messageId: string }
+  | { kind: 'channel_url' }
   | { kind: 'invite'; code: string }
 
-function parseProof(proof: string, configuredChannelId?: string): ProofType | null {
-  // Discord message URL: https://discord.com/channels/{guild}/{channel}/{message}
-  const urlMatch = proof.match(
-    /^https?:\/\/(?:www\.)?discord\.com\/channels\/\d+\/(\d+)\/(\d+)$/
-  )
-  if (urlMatch) {
-    return { kind: 'message_url', channelId: urlMatch[1], messageId: urlMatch[2] }
+// Every host Discord's own clients hand a user on "Copy Message Link". The
+// Canary and PTB builds use their own subdomains, and links shared before the
+// rename still carry discordapp.com; all of them serve the same message.
+const MESSAGE_LINK_HOSTS = new Set([
+  'discord.com',
+  'www.discord.com',
+  'canary.discord.com',
+  'ptb.discord.com',
+  'discordapp.com',
+  'www.discordapp.com',
+  'canary.discordapp.com',
+  'ptb.discordapp.com',
+])
+
+// Parsed rather than matched with one anchored pattern: parsing normalises the
+// trailing slash, discards the query and fragment, and lower-cases the host —
+// each of which the previous regex treated as an unrecognisable proof.
+function parseDiscordUrl(proof: string): ProofType | null {
+  let url: URL
+  try {
+    url = new URL(proof)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+  if (!MESSAGE_LINK_HOSTS.has(url.hostname.toLowerCase())) return null
+
+  const segments = url.pathname.split('/').filter(Boolean)
+  if (segments[0] !== 'channels') return null
+
+  const isId = (segment: string) => /^\d+$/.test(segment)
+
+  if (segments.length === 4) {
+    const [, guildId, channelId, messageId] = segments
+    // A DM link spells the guild `@me`. The bot is not in that conversation, so
+    // the fetch could only 404 — refusing here can say why.
+    if (!isId(guildId) || !isId(channelId) || !isId(messageId)) return null
+    return { kind: 'message_url', channelId, messageId }
   }
 
+  // `channels/{guild}/{channel}` is the channel itself, which is the single
+  // easiest thing to copy by mistake, so it earns its own answer.
+  if (segments.length === 3 && isId(segments[1]) && isId(segments[2])) {
+    return { kind: 'channel_url' }
+  }
+
+  return null
+}
+
+function parseProof(proof: string, configuredChannelId?: string): ProofType | null {
+  const trimmed = proof.trim()
+
+  const fromUrl = parseDiscordUrl(trimmed)
+  if (fromUrl) return fromUrl
+
   // Pure numeric snowflake ID (17-20 digits) → message ID in configured channel
-  if (/^\d{17,20}$/.test(proof) && configuredChannelId) {
-    return { kind: 'message_id', messageId: proof }
+  if (/^\d{17,20}$/.test(trimmed) && configuredChannelId) {
+    return { kind: 'message_id', messageId: trimmed }
   }
 
   // Invite code (alphanumeric + hyphens) or invite URL
-  const inviteUrlMatch = proof.match(
-    /^https?:\/\/(?:www\.)?discord\.gg\/([a-zA-Z0-9-]+)$/
+  const inviteUrlMatch = trimmed.match(
+    /^https?:\/\/(?:www\.)?discord\.gg\/([a-zA-Z0-9-]+)\/?$/
   )
   if (inviteUrlMatch) {
     return { kind: 'invite', code: inviteUrlMatch[1] }
   }
 
   // Raw invite code
-  if (/^[a-zA-Z0-9-]+$/.test(proof)) {
-    return { kind: 'invite', code: proof }
+  if (/^[a-zA-Z0-9-]+$/.test(trimmed)) {
+    return { kind: 'invite', code: trimmed }
   }
 
   return null
@@ -63,6 +110,13 @@ export class DiscordVerifier implements PlatformVerifier {
     const parsed = parseProof(proof, this.verifyChannelId)
     if (!parsed) {
       return { verified: false, error: 'Invalid proof format — provide a Discord message link or message ID' }
+    }
+
+    if (parsed.kind === 'channel_url') {
+      return {
+        verified: false,
+        error: 'That is a link to the channel, not to your message. Open your message, choose Copy Message Link, and paste that instead.',
+      }
     }
 
     if (parsed.kind === 'message_url' || parsed.kind === 'message_id') {
