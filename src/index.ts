@@ -52,6 +52,24 @@ app.get('/api/health', (c) => {
   return c.json({ status: 'ok' })
 })
 
+// A 1x1 transparent PNG. App directories derive an entry's icon from
+// `${origin}/favicon.ico`, so a 404 here surfaced in clients as a failed image
+// load rather than as a missing icon. Serving something valid is cheaper than
+// teaching every client to tolerate the miss.
+const FAVICON_PNG = Uint8Array.from(
+  atob(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  ),
+  (character) => character.charCodeAt(0),
+)
+
+app.get('/favicon.ico', (c) =>
+  c.body(FAVICON_PNG, 200, {
+    'content-type': 'image/png',
+    'cache-control': 'public, max-age=86400',
+  }),
+)
+
 // Root — landing page
 app.get('/', (c) => {
   const accept = c.req.header('accept') || ''

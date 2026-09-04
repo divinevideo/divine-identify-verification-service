@@ -156,3 +156,20 @@ describe('verifier tiktok oauth gating', () => {
     expect(await homeHtml()).toContain('TikTok reports unsupported while production OAuth rollout is gated')
   })
 })
+
+describe('favicon', () => {
+  // App directories derive an entry's icon as `${origin}/favicon.ico`, so a 404
+  // here surfaced as a failed image load in clients rather than as a missing
+  // icon. Serving something valid is cheaper than teaching every client to
+  // tolerate the miss.
+  it('serves an image so directory listings do not 404 on the icon', async () => {
+    const response = await worker.fetch(
+      new Request('https://verifier.divine.video/favicon.ico'),
+      {} as never,
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('image/')
+    expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0)
+  })
+})
