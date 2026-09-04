@@ -109,7 +109,10 @@ describe('DiscordVerifier', () => {
 
       const result = await verifier.verify('alice', '99887766554433221', npub)
       expect(result.verified).toBe(false)
-      expect(result.error).toContain('posted by @bob')
+      // The refusal names the claimed handle, never the account that actually
+      // posted — resolving that is a lookup across every channel the bot reads.
+      expect(result.error).toContain('alice')
+      expect(result.error).not.toContain('bob')
     })
 
     it('returns error when message does not contain npub', async () => {
@@ -240,18 +243,76 @@ describe('DiscordVerifier', () => {
       expect(result.verified).toBe(true)
     })
 
-    it('refuses a DM link, which no bot can read, without calling Discord', async () => {
+    it('tells someone who linked a DM why it can never work', async () => {
       const fetchMock = vi.fn()
       vi.stubGlobal('fetch', fetchMock)
 
-      const result = await verifier.verify(
+      const message = await verifier.verify(
         'alice',
         `https://discord.com/channels/@me/${channelId}/${messageId}`,
         npub,
       )
 
-      expect(result.verified).toBe(false)
+      expect(message.verified).toBe(false)
+      expect(message.code).toBe('discord_dm_link')
       expect(fetchMock).not.toHaveBeenCalled()
+
+      // The DM channel on its own reaches the same answer, not the channel one.
+      const channel = await verifier.verify(
+        'alice',
+        `https://discord.com/channels/@me/${channelId}`,
+        npub,
+      )
+
+      expect(channel.code).toBe('discord_dm_link')
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('does not name the account that actually posted the message', async () => {
+      // Resolving the author is a lookup over every channel the bot can read,
+      // so the reason travels as a code and the message names only the handle
+      // the user typed themselves.
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: messageId,
+          content: `key ${npub}`,
+          author: { id: '1', username: 'someone-else', global_name: null },
+          channel_id: channelId,
+        }),
+      }))
+
+      const result = await verifier.verify('alice', messageId, npub)
+
+      expect(result.code).toBe('discord_author_mismatch')
+      expect(result.error).not.toContain('someone-else')
+      expect(result.error).toContain('alice')
+    })
+
+    it('codes an access refusal and an upstream failure apart', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        json: async () => ({ code: 50001 }),
+      }))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_bot_no_access',
+      )
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      }))
+      const upstream = await verifier.verify('alice', messageId, npub)
+      expect(upstream.code).toBe('discord_api_error')
+      expect(upstream.error).toContain('500')
+
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_api_error',
+      )
     })
 
     it('tells someone who copied the channel link what to copy instead', async () => {

@@ -15,6 +15,7 @@ type ProofType =
   | { kind: 'message_url'; channelId: string; messageId: string }
   | { kind: 'message_id'; messageId: string }
   | { kind: 'channel_url' }
+  | { kind: 'dm_link' }
   | { kind: 'invite'; code: string }
 
 /** Discord JSON error code for a channel the bot cannot see. */
@@ -52,10 +53,13 @@ function parseDiscordUrl(proof: string): ProofType | null {
 
   const isId = (segment: string) => /^\d+$/.test(segment)
 
+  // A DM or group-DM link spells the guild `@me`. No bot can read someone
+  // else's DMs, so this can never verify — and saying that is more use than
+  // reporting the link as malformed, which is what it looks like otherwise.
+  if (segments[1] === '@me') return { kind: 'dm_link' }
+
   if (segments.length === 4) {
     const [, guildId, channelId, messageId] = segments
-    // A DM link spells the guild `@me`. The bot is not in that conversation, so
-    // the fetch could only 404 — refusing here can say why.
     if (!isId(guildId) || !isId(channelId) || !isId(messageId)) return null
     return { kind: 'message_url', channelId, messageId }
   }
@@ -116,6 +120,14 @@ export class DiscordVerifier implements PlatformVerifier {
         verified: false,
         code: 'discord_invalid_proof_format',
         error: 'Invalid proof format — provide a Discord message link or message ID',
+      }
+    }
+
+    if (parsed.kind === 'dm_link') {
+      return {
+        verified: false,
+        code: 'discord_dm_link',
+        error: 'That is a direct message, which our bot cannot read. Post your npub in a server channel instead.',
       }
     }
 
@@ -244,7 +256,7 @@ export class DiscordVerifier implements PlatformVerifier {
       return {
         verified: false,
         code: 'discord_author_mismatch',
-        error: `Message was posted by @${data.author.username}, not @${identity}`,
+        error: `Message was not posted by @${identity}`,
       }
     }
 
