@@ -179,3 +179,46 @@ describe('favicon', () => {
     expect(bytes.byteLength).toBeGreaterThan(1000)
   })
 })
+
+describe('verifier proof-post form', () => {
+  // The landing page tidies what the user typed before it calls the API, and
+  // that code ships inline in the page. Lift the normaliser out of the served
+  // page and run it the way the browser would, rather than reading its text.
+  async function browserNormalizer(): Promise<
+    (platform: string, identity: string, proof: string) => { identity: string; proof: string }
+  > {
+    const response = await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    const start = html.indexOf('function tryMakeUrl(')
+    expect(start).toBeGreaterThan(-1)
+    const end = html.indexOf('async function startOAuthVerification(', start)
+    expect(end).toBeGreaterThan(start)
+    return new Function(`${html.slice(start, end)}\nreturn normalizeProofInputs;`)()
+  }
+
+  it('fills in the account and proof ID from a pasted gist link', async () => {
+    const normalize = await browserNormalizer()
+    expect(normalize('github', '', 'https://gist.github.com/octocat/abc123')).toEqual({
+      identity: 'octocat',
+      proof: 'abc123',
+    })
+  })
+
+  // The verifier is the only place a Discord message link is parsed. It needs
+  // the whole link, channel included, so the page must not shorten it to an ID
+  // or otherwise rewrite it on the way to the API.
+  const messageLink = (host: string) =>
+    `https://${host}/channels/1234567890123456789/2345678901234567890/3456789012345678901`
+
+  it.each([
+    messageLink('discord.com'),
+    messageLink('canary.discord.com'),
+    messageLink('ptb.discord.com'),
+    messageLink('discordapp.com'),
+    `${messageLink('discord.com')}?ref=copy`,
+  ])('hands %s to the verifier exactly as pasted', async (link) => {
+    const normalize = await browserNormalizer()
+    expect(normalize('discord', 'alice', `  ${link}  `)).toEqual({ identity: 'alice', proof: link })
+  })
+})
