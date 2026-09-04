@@ -29,6 +29,7 @@ async function verifySingleClaim(
       identity: normalizedClaim.identity,
       verified: cached.verified,
       error: cached.error,
+      code: cached.code,
       method: cached.method,
       provenance: cached.provenance,
       checked_at: cached.checked_at,
@@ -92,6 +93,7 @@ async function verifySingleClaim(
     const cacheResult: CachedResult = {
       verified: result.verified,
       error: result.error,
+      code: result.code,
       method: result.method,
       provenance: result.provenance,
       checked_at: now,
@@ -104,6 +106,7 @@ async function verifySingleClaim(
       identity: normalizedClaim.identity,
       verified: result.verified,
       error: result.error,
+      code: result.code,
       method: result.method,
       provenance: result.provenance,
       checked_at: now,

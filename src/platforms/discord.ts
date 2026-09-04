@@ -17,6 +17,9 @@ type ProofType =
   | { kind: 'channel_url' }
   | { kind: 'invite'; code: string }
 
+/** Discord JSON error code for a channel the bot cannot see. */
+const DISCORD_UNKNOWN_CHANNEL = 10003
+
 // Every host Discord's own clients hand a user on "Copy Message Link". The
 // Canary and PTB builds use their own subdomains, and links shared before the
 // rename still carry discordapp.com; all of them serve the same message.
@@ -106,15 +109,20 @@ export class DiscordVerifier implements PlatformVerifier {
     identity: string,
     proof: string,
     npub: string,
-  ): Promise<{ verified: boolean; error?: string }> {
+  ): Promise<{ verified: boolean; error?: string; code?: string }> {
     const parsed = parseProof(proof, this.verifyChannelId)
     if (!parsed) {
-      return { verified: false, error: 'Invalid proof format — provide a Discord message link or message ID' }
+      return {
+        verified: false,
+        code: 'discord_invalid_proof_format',
+        error: 'Invalid proof format — provide a Discord message link or message ID',
+      }
     }
 
     if (parsed.kind === 'channel_url') {
       return {
         verified: false,
+        code: 'discord_channel_link',
         error: 'That is a link to the channel, not to your message. Open your message, choose Copy Message Link, and paste that instead.',
       }
     }
@@ -130,6 +138,7 @@ export class DiscordVerifier implements PlatformVerifier {
     // handle, so invites are refused outright.
     return {
       verified: false,
+      code: 'discord_invite_refused',
       error: 'A server invite cannot prove who owns a Discord account. Post a message containing your npub and provide its message link instead.',
     }
   }
@@ -138,9 +147,13 @@ export class DiscordVerifier implements PlatformVerifier {
     identity: string,
     parsed: { kind: 'message_url' | 'message_id'; channelId?: string; messageId: string },
     npub: string,
-  ): Promise<{ verified: boolean; error?: string }> {
+  ): Promise<{ verified: boolean; error?: string; code?: string }> {
     if (!this.botToken) {
-      return { verified: false, error: 'Discord verification is not configured on this deployment yet.' }
+      return {
+        verified: false,
+        code: 'discord_not_configured',
+        error: 'Discord verification is not configured on this deployment yet.',
+      }
     }
 
     const channelId = ('channelId' in parsed && parsed.channelId)
@@ -148,7 +161,11 @@ export class DiscordVerifier implements PlatformVerifier {
       : this.verifyChannelId
 
     if (!channelId) {
-      return { verified: false, error: 'Could not determine Discord channel — use a full message URL' }
+      return {
+        verified: false,
+        code: 'discord_invalid_proof_format',
+        error: 'Could not determine Discord channel — use a full message URL',
+      }
     }
 
     const url = `https://discord.com/api/v10/channels/${channelId}/messages/${parsed.messageId}`
@@ -162,26 +179,62 @@ export class DiscordVerifier implements PlatformVerifier {
         },
       })
     } catch {
-      return { verified: false, error: 'Failed to fetch Discord message' }
-    }
-
-    if (response.status === 404) {
-      return { verified: false, error: 'Message not found — check the message link or ID' }
+      return {
+        verified: false,
+        code: 'discord_api_error',
+        error: 'Failed to fetch Discord message',
+      }
     }
 
     if (response.status === 403) {
-      return { verified: false, error: 'Bot does not have access to that channel' }
+      return {
+        verified: false,
+        code: 'discord_bot_no_access',
+        error: 'Bot does not have access to that channel',
+      }
+    }
+
+    // Discord answers 404 both for a message that is not there and for a channel
+    // the bot cannot see, and only the body tells them apart. That difference is
+    // the whole answer to "is the bot in the server?", so it is worth reading.
+    if (response.status === 404) {
+      let discordCode: number | undefined
+      try {
+        discordCode = ((await response.json()) as { code?: number }).code
+      } catch {
+        discordCode = undefined
+      }
+      if (discordCode === DISCORD_UNKNOWN_CHANNEL) {
+        return {
+          verified: false,
+          code: 'discord_bot_no_access',
+          error: 'Bot cannot see that channel — post where the bot has access',
+        }
+      }
+      return {
+        verified: false,
+        code: 'discord_message_not_found',
+        error: 'Message not found — check the message link or ID',
+      }
     }
 
     if (!response.ok) {
-      return { verified: false, error: `Discord API error: ${response.status}` }
+      return {
+        verified: false,
+        code: 'discord_api_error',
+        error: `Discord API error: ${response.status}`,
+      }
     }
 
     let data: DiscordMessageResponse
     try {
       data = await response.json() as DiscordMessageResponse
     } catch {
-      return { verified: false, error: 'Invalid JSON response from Discord' }
+      return {
+        verified: false,
+        code: 'discord_api_error',
+        error: 'Invalid JSON response from Discord',
+      }
     }
 
     // Check that message author matches claimed identity
@@ -190,7 +243,21 @@ export class DiscordVerifier implements PlatformVerifier {
     if (authorName !== claimedIdentity) {
       return {
         verified: false,
+        code: 'discord_author_mismatch',
         error: `Message was posted by @${data.author.username}, not @${identity}`,
+      }
+    }
+
+    // An existing message whose text arrives empty is the signature of a bot
+    // without the MESSAGE_CONTENT privileged intent, which Discord applies to
+    // the REST API too. Reporting that as a missing npub blames the user for
+    // our own misconfiguration, and sends them to re-post a message that was
+    // already correct.
+    if ((data.content ?? '').trim() === '') {
+      return {
+        verified: false,
+        code: 'discord_message_content_unavailable',
+        error: 'Could not read the message text — the bot may be missing the MESSAGE_CONTENT intent',
       }
     }
 
@@ -198,6 +265,7 @@ export class DiscordVerifier implements PlatformVerifier {
     if (!data.content.includes(npub)) {
       return {
         verified: false,
+        code: 'discord_npub_not_in_message',
         error: 'npub not found in message content',
       }
     }

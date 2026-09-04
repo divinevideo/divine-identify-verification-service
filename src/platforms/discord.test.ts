@@ -269,6 +269,111 @@ describe('DiscordVerifier', () => {
       expect(fetchMock).not.toHaveBeenCalled()
     })
 
+    it('codes every rejection so a client can localize it', async () => {
+      // A channel but no bot token: without the channel a bare snowflake falls
+      // through to the invite branch instead of ever reaching the token check.
+      const unconfigured = new DiscordVerifier(undefined, channelId)
+
+      expect((await verifier.verify('alice', 'not a proof!!', npub)).code).toBe(
+        'discord_invalid_proof_format',
+      )
+      expect(
+        (await verifier.verify('alice', `https://discord.com/channels/${guildId}/${channelId}`, npub))
+          .code,
+      ).toBe('discord_channel_link')
+      expect((await verifier.verify('alice', 'AbCdEf', npub)).code).toBe(
+        'discord_invite_refused',
+      )
+      expect((await unconfigured.verify('alice', messageId, npub)).code).toBe(
+        'discord_not_configured',
+      )
+    })
+
+    it('codes an author mismatch and a genuinely missing npub apart', async () => {
+      const message = (content: string, username: string) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: messageId,
+          content,
+          author: { id: '1', username, global_name: null },
+          channel_id: channelId,
+        }),
+      })
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(message(`key ${npub}`, 'bob')))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_author_mismatch',
+      )
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(message('no key here', 'alice')))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_npub_not_in_message',
+      )
+    })
+
+    // Discord answers 404 both for a message that is not there and for a channel
+    // the bot cannot see. Only the body separates them, and that difference is
+    // exactly what a stuck user needs to hear.
+    it('separates an unreadable channel from an absent message on a 404', async () => {
+      const notFound = (body: unknown) => ({
+        ok: false,
+        status: 404,
+        json: async () => body,
+      })
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(notFound({ code: 10003 })))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_bot_no_access',
+      )
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(notFound({ code: 10008 })))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_message_not_found',
+      )
+    })
+
+    it('falls back to message-not-found when the 404 body cannot be read', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          json: async () => {
+            throw new Error('no body')
+          },
+        }),
+      )
+
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_message_not_found',
+      )
+    })
+
+    // An existing message whose text comes back empty is the signature of a bot
+    // without the MESSAGE_CONTENT privileged intent. Reporting that as "your
+    // npub is missing" blames the user for our own misconfiguration.
+    it('does not blame the user when the message text comes back empty', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: messageId,
+            content: '   ',
+            author: { id: '1', username: 'alice', global_name: null },
+            channel_id: channelId,
+          }),
+        }),
+      )
+
+      const result = await verifier.verify('alice', messageId, npub)
+
+      expect(result.verified).toBe(false)
+      expect(result.code).toBe('discord_message_content_unavailable')
+    })
+
     it('still refuses a host that only looks like Discord', async () => {
       const fetchMock = vi.fn()
       vi.stubGlobal('fetch', fetchMock)

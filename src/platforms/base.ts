@@ -10,6 +10,14 @@ export interface PlatformVerifier {
   ): Promise<{
     verified: boolean
     error?: string
+    /**
+     * Stable machine-readable rejection reason, for clients that need to say
+     * something localized. `error` stays free-form English for triage.
+     *
+     * Optional so platforms can adopt it one at a time, and so a client that
+     * does not recognise a value can fall back to its own generic copy.
+     */
+    code?: string
     method?: VerificationMethod
     provenance?: VerificationProvenance
   }>

@@ -60,6 +60,8 @@ export interface VerifyResult {
   identity: string
   verified: boolean
   error?: string
+  /** Stable machine-readable rejection reason; see PlatformVerifier.verify. */
+  code?: string
   method?: VerificationMethod
   provenance?: VerificationProvenance
   checked_at: number
@@ -69,6 +71,8 @@ export interface VerifyResult {
 export interface CachedResult {
   verified: boolean
   error?: string
+  /** Stable machine-readable rejection reason; see PlatformVerifier.verify. */
+  code?: string
   method?: VerificationMethod
   provenance?: VerificationProvenance
   checked_at: number
