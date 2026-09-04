@@ -1755,13 +1755,6 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
       if (platform === 'bluesky') {
         identity = identity.replace(/^@/, '').toLowerCase();
       }
-      if (platform === 'discord') {
-        const maybeCodeUrl = tryMakeUrl(proof);
-        if (maybeCodeUrl) {
-          const parsed = parseProofUrl(platform, maybeCodeUrl);
-          if (parsed.proof) proof = parsed.proof;
-        }
-      }
 
       proof = proof.replace(/^\\/+/, '').replace(/\\/+$/, '');
       return { identity, proof };
