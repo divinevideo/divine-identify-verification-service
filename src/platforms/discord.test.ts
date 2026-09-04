@@ -109,7 +109,10 @@ describe('DiscordVerifier', () => {
 
       const result = await verifier.verify('alice', '99887766554433221', npub)
       expect(result.verified).toBe(false)
-      expect(result.error).toContain('posted by @bob')
+      // The refusal names the claimed handle, never the account that actually
+      // posted — resolving that is a lookup across every channel the bot reads.
+      expect(result.error).toContain('alice')
+      expect(result.error).not.toContain('bob')
     })
 
     it('returns error when message does not contain npub', async () => {
@@ -192,6 +195,258 @@ describe('DiscordVerifier', () => {
 
       const result = await verifier.verify('alice', '99887766554433221', npub)
       expect(result.verified).toBe(true)
+    })
+  })
+
+  // Copy Message Link does not always spell the host `discord.com`: the Canary
+  // and PTB clients use their own subdomains, and links shared years ago still
+  // carry the legacy discordapp.com. All of them serve the same message.
+  describe('proof link parsing', () => {
+    const guildId = '9999999999999999'
+    const channelId = '1234567890123456'
+    const messageId = '99887766554433221'
+    const verifier = new DiscordVerifier('Bot.Token.Here', channelId)
+
+    function stubMessage() {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: messageId,
+            content: `verifying with ${npub}`,
+            author: { id: '111222333', username: 'alice', global_name: null },
+            channel_id: channelId,
+          }),
+        }),
+      )
+    }
+
+    const path = `/channels/${guildId}/${channelId}/${messageId}`
+
+    it.each([
+      ['canary client', `https://canary.discord.com${path}`],
+      ['ptb client', `https://ptb.discord.com${path}`],
+      ['legacy discordapp.com', `https://discordapp.com${path}`],
+      ['www.discordapp.com', `https://www.discordapp.com${path}`],
+      ['trailing slash', `https://discord.com${path}/`],
+      ['query string', `https://discord.com${path}?jump=1`],
+      ['fragment', `https://discord.com${path}#pinned`],
+      ['uppercase host', `https://Discord.com${path}`],
+      ['surrounding whitespace', `  https://discord.com${path}  `],
+    ])('verifies a message link from the %s', async (_label, proof) => {
+      stubMessage()
+
+      const result = await verifier.verify('alice', proof, npub)
+
+      expect(result.verified).toBe(true)
+    })
+
+    it('tells someone who linked a DM why it can never work', async () => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+
+      const message = await verifier.verify(
+        'alice',
+        `https://discord.com/channels/@me/${channelId}/${messageId}`,
+        npub,
+      )
+
+      expect(message.verified).toBe(false)
+      expect(message.code).toBe('discord_dm_link')
+      expect(fetchMock).not.toHaveBeenCalled()
+
+      // The DM channel on its own reaches the same answer, not the channel one.
+      const channel = await verifier.verify(
+        'alice',
+        `https://discord.com/channels/@me/${channelId}`,
+        npub,
+      )
+
+      expect(channel.code).toBe('discord_dm_link')
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('does not name the account that actually posted the message', async () => {
+      // Resolving the author is a lookup over every channel the bot can read,
+      // so the reason travels as a code and the message names only the handle
+      // the user typed themselves.
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: messageId,
+          content: `key ${npub}`,
+          author: { id: '1', username: 'someone-else', global_name: null },
+          channel_id: channelId,
+        }),
+      }))
+
+      const result = await verifier.verify('alice', messageId, npub)
+
+      expect(result.code).toBe('discord_author_mismatch')
+      expect(result.error).not.toContain('someone-else')
+      expect(result.error).toContain('alice')
+    })
+
+    it('codes an access refusal and an upstream failure apart', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        json: async () => ({ code: 50001 }),
+      }))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_bot_no_access',
+      )
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      }))
+      const upstream = await verifier.verify('alice', messageId, npub)
+      expect(upstream.code).toBe('discord_api_error')
+      expect(upstream.error).toContain('500')
+
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_api_error',
+      )
+    })
+
+    it('tells someone who copied the channel link what to copy instead', async () => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await verifier.verify(
+        'alice',
+        `https://discord.com/channels/${guildId}/${channelId}`,
+        npub,
+      )
+
+      expect(result.verified).toBe(false)
+      expect(result.error).toContain('Copy Message Link')
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('codes every rejection so a client can localize it', async () => {
+      // A channel but no bot token: without the channel a bare snowflake falls
+      // through to the invite branch instead of ever reaching the token check.
+      const unconfigured = new DiscordVerifier(undefined, channelId)
+
+      expect((await verifier.verify('alice', 'not a proof!!', npub)).code).toBe(
+        'discord_invalid_proof_format',
+      )
+      expect(
+        (await verifier.verify('alice', `https://discord.com/channels/${guildId}/${channelId}`, npub))
+          .code,
+      ).toBe('discord_channel_link')
+      expect((await verifier.verify('alice', 'AbCdEf', npub)).code).toBe(
+        'discord_invite_refused',
+      )
+      expect((await unconfigured.verify('alice', messageId, npub)).code).toBe(
+        'discord_not_configured',
+      )
+    })
+
+    it('codes an author mismatch and a genuinely missing npub apart', async () => {
+      const message = (content: string, username: string) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: messageId,
+          content,
+          author: { id: '1', username, global_name: null },
+          channel_id: channelId,
+        }),
+      })
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(message(`key ${npub}`, 'bob')))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_author_mismatch',
+      )
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(message('no key here', 'alice')))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_npub_not_in_message',
+      )
+    })
+
+    // Discord answers 404 both for a message that is not there and for a channel
+    // the bot cannot see. Only the body separates them, and that difference is
+    // exactly what a stuck user needs to hear.
+    it('separates an unreadable channel from an absent message on a 404', async () => {
+      const notFound = (body: unknown) => ({
+        ok: false,
+        status: 404,
+        json: async () => body,
+      })
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(notFound({ code: 10003 })))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_bot_no_access',
+      )
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(notFound({ code: 10008 })))
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_message_not_found',
+      )
+    })
+
+    it('falls back to message-not-found when the 404 body cannot be read', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          json: async () => {
+            throw new Error('no body')
+          },
+        }),
+      )
+
+      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
+        'discord_message_not_found',
+      )
+    })
+
+    // An existing message whose text comes back empty is the signature of a bot
+    // without the MESSAGE_CONTENT privileged intent. Reporting that as "your
+    // npub is missing" blames the user for our own misconfiguration.
+    it('does not blame the user when the message text comes back empty', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: messageId,
+            content: '   ',
+            author: { id: '1', username: 'alice', global_name: null },
+            channel_id: channelId,
+          }),
+        }),
+      )
+
+      const result = await verifier.verify('alice', messageId, npub)
+
+      expect(result.verified).toBe(false)
+      expect(result.code).toBe('discord_message_content_unavailable')
+    })
+
+    it('still refuses a host that only looks like Discord', async () => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await verifier.verify(
+        'alice',
+        `https://discord.com.evil.example${path}`,
+        npub,
+      )
+
+      expect(result.verified).toBe(false)
+      expect(fetchMock).not.toHaveBeenCalled()
     })
   })
 })
