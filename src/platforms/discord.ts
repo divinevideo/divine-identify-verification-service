@@ -1,4 +1,5 @@
 import type { PlatformVerifier } from './base'
+import type { VerificationCode } from '../types'
 
 interface DiscordMessageResponse {
   id: string
@@ -113,7 +114,7 @@ export class DiscordVerifier implements PlatformVerifier {
     identity: string,
     proof: string,
     npub: string,
-  ): Promise<{ verified: boolean; error?: string; code?: string }> {
+  ): Promise<{ verified: boolean; error?: string; code?: VerificationCode }> {
     const parsed = parseProof(proof, this.verifyChannelId)
     if (!parsed) {
       return {
@@ -159,7 +160,7 @@ export class DiscordVerifier implements PlatformVerifier {
     identity: string,
     parsed: { kind: 'message_url' | 'message_id'; channelId?: string; messageId: string },
     npub: string,
-  ): Promise<{ verified: boolean; error?: string; code?: string }> {
+  ): Promise<{ verified: boolean; error?: string; code?: VerificationCode }> {
     if (!this.botToken) {
       return {
         verified: false,

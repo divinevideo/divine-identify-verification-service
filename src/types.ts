@@ -48,6 +48,19 @@ export interface OAuthVerification {
 
 export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord' | 'youtube' | 'tiktok'
 
+export type VerificationCode =
+  | 'discord_invalid_proof_format'
+  | 'discord_dm_link'
+  | 'discord_channel_link'
+  | 'discord_invite_refused'
+  | 'discord_not_configured'
+  | 'discord_bot_no_access'
+  | 'discord_message_not_found'
+  | 'discord_api_error'
+  | 'discord_author_mismatch'
+  | 'discord_message_content_unavailable'
+  | 'discord_npub_not_in_message'
+
 export interface VerifyClaim {
   pubkey: string
   platform: Platform
@@ -61,7 +74,7 @@ export interface VerifyResult {
   verified: boolean
   error?: string
   /** Stable machine-readable rejection reason; see PlatformVerifier.verify. */
-  code?: string
+  code?: VerificationCode
   method?: VerificationMethod
   provenance?: VerificationProvenance
   checked_at: number
@@ -72,7 +85,7 @@ export interface CachedResult {
   verified: boolean
   error?: string
   /** Stable machine-readable rejection reason; see PlatformVerifier.verify. */
-  code?: string
+  code?: VerificationCode
   method?: VerificationMethod
   provenance?: VerificationProvenance
   checked_at: number

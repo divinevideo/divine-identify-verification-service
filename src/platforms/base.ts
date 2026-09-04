@@ -1,4 +1,5 @@
 import type { VerificationMethod, VerificationProvenance } from '../identity-link'
+import type { VerificationCode } from '../types'
 
 export interface PlatformVerifier {
   readonly name: string
@@ -17,7 +18,7 @@ export interface PlatformVerifier {
      * Optional so platforms can adopt it one at a time, and so a client that
      * does not recognise a value can fall back to its own generic copy.
      */
-    code?: string
+    code?: VerificationCode
     method?: VerificationMethod
     provenance?: VerificationProvenance
   }>
