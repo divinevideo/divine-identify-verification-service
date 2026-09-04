@@ -23,7 +23,7 @@ export function getVerifier(platform: Platform, githubToken?: string, youtubeApi
   }
 }
 
-export function getPlatformInfo(opts?: { youtubeEnabled?: boolean; tiktokOAuthEnabled?: boolean; discordEnabled?: boolean }): Record<string, PlatformInfo> {
+export function getPlatformInfo(opts?: { youtubeEnabled?: boolean; tiktokOAuthEnabled?: boolean; tiktokCredentialsConfigured?: boolean; discordEnabled?: boolean }): Record<string, PlatformInfo> {
   const platforms: Record<string, PlatformInfo> = {
     github: { label: 'GitHub', supported: true },
     twitter: { label: 'Twitter / X', supported: true },
@@ -37,6 +37,11 @@ export function getPlatformInfo(opts?: { youtubeEnabled?: boolean; tiktokOAuthEn
   if (opts?.youtubeEnabled) {
     platforms.youtube = { label: 'YouTube', supported: true }
   }
-  platforms.tiktok = { label: 'TikTok', supported: !!opts?.tiktokOAuthEnabled }
+  // TikTok is advertised only when the operator has confirmed production OAuth is live
+  // (TIKTOK_OAUTH_ENABLED) AND the client credentials the flow needs are actually present.
+  // A sandbox key is indistinguishable from a production key by inspection, so the explicit
+  // flag is the only reliable "production is live" signal; requiring the credentials too
+  // keeps supported from advertising a flow that would 503 for lack of a key/secret.
+  platforms.tiktok = { label: 'TikTok', supported: !!opts?.tiktokOAuthEnabled && !!opts?.tiktokCredentialsConfigured }
   return platforms
 }

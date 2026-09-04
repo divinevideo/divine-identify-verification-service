@@ -33,9 +33,29 @@ describe('GET /platforms', () => {
     expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
   })
 
-  it('reports TikTok supported after production OAuth is enabled', async () => {
-    const body = await fetchPlatforms({ TIKTOK_OAUTH_ENABLED: 'true' })
+  it('reports TikTok supported once production OAuth is enabled and credentials are configured', async () => {
+    const body = await fetchPlatforms({
+      TIKTOK_OAUTH_ENABLED: 'true',
+      TIKTOK_CLIENT_KEY: 'prod-key',
+      TIKTOK_CLIENT_SECRET: 'prod-secret',
+    })
     expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: true })
+  })
+
+  it('keeps TikTok unsupported when enabled but the client credentials are missing', async () => {
+    // A sandbox key is indistinguishable from a production one by inspection, so the
+    // enable flag is the operator's production signal, but supported must not advertise
+    // a flow that would 503 for lack of a key/secret.
+    const body = await fetchPlatforms({ TIKTOK_OAUTH_ENABLED: 'true' })
+    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
+  })
+
+  it('keeps TikTok unsupported when credentials are present but production OAuth is not enabled', async () => {
+    const body = await fetchPlatforms({
+      TIKTOK_CLIENT_KEY: 'sandbox-key',
+      TIKTOK_CLIENT_SECRET: 'sandbox-secret',
+    })
+    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
   })
 
   it('keeps the unauthenticated proof-post platforms supported with no configuration', async () => {
