@@ -156,3 +156,26 @@ describe('verifier tiktok oauth gating', () => {
     expect(await homeHtml()).toContain('TikTok reports unsupported while production OAuth rollout is gated')
   })
 })
+
+describe('favicon', () => {
+  // App directories derive an entry's icon as `${origin}/favicon.ico`, so a 404
+  // here surfaced as a failed image load in clients rather than as a missing
+  // icon. The directory renders the fetched image directly, so it must be the
+  // real Divine mark: a transparent pixel would stop the 404 but leave the tile
+  // blank.
+  it('serves the Divine icon so the directory tile is not blank', async () => {
+    const response = await worker.fetch(
+      new Request('https://verifier.divine.video/favicon.ico'),
+      {} as never,
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('image/png')
+
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    // PNG signature, and larger than a 1x1 placeholder pixel would ever be, so
+    // the test fails if the icon regresses to a blank stand-in.
+    expect(Array.from(bytes.slice(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+    expect(bytes.byteLength).toBeGreaterThan(1000)
+  })
+})
