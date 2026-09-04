@@ -177,7 +177,13 @@ describe('DiscordVerifier', () => {
       expect(fetchMock).not.toHaveBeenCalled()
     })
 
-    it('handles case-insensitive username matching', async () => {
+    // Migrated user accounts have lowercase usernames, while legacy and bot
+    // accounts can still use mixed case. The claimed handle reaches the
+    // verifier exactly as the user typed it.
+    it.each([
+      ['a capitalised handle for a migrated account', 'alice', 'Alice'],
+      ['a lowercase handle for a legacy or bot account', 'Alice', 'alice'],
+    ])('accepts %s', async (_scenario, username, identity) => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
@@ -186,14 +192,14 @@ describe('DiscordVerifier', () => {
           content: `Verify: ${npub}`,
           author: {
             id: '111222333',
-            username: 'Alice',
+            username,
             global_name: 'Alice',
           },
           channel_id: channelId,
         }),
       }))
 
-      const result = await verifier.verify('alice', '99887766554433221', npub)
+      const result = await verifier.verify(identity, '99887766554433221', npub)
       expect(result.verified).toBe(true)
     })
   })
