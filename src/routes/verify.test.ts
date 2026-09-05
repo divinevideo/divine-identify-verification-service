@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { proofUrl, renderVerifyHtml } from './verify'
+import { MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import type { VerifyResult } from '../types'
 
 const FAKE_RESULT: VerifyResult = {
@@ -23,6 +24,10 @@ describe('proofUrl', () => {
 
   it('omits the link for an unrecognized Discord proof shape', () => {
     expect(proofUrl('discord', 'alice', 'not-a-link')).toBeNull()
+  })
+
+  it('upgrades an HTTP Discord proof link before rendering it', () => {
+    expect(proofUrl('discord', 'alice', DISCORD_MESSAGE_LINK.replace('https:', 'http:'))).toBe(DISCORD_MESSAGE_LINK)
   })
 
   it('leaves other platforms unchanged', () => {
@@ -69,7 +74,7 @@ describe('renderVerifyHtml — embedded client-side proof link (other verified i
       'https://verifier.divine.video/verify/discord/alice/x',
       'https://verifier.divine.video',
     )
-    const start = html.indexOf('function proofUrl(')
+    const start = html.indexOf('var DISCORD_MESSAGE_LINK_HOSTS = ')
     expect(start).toBeGreaterThan(-1)
     const end = html.indexOf('function platformIconHtml(', start)
     expect(end).toBeGreaterThan(start)
@@ -85,6 +90,19 @@ describe('renderVerifyHtml — embedded client-side proof link (other verified i
   it('also omits the link for a bare snowflake', () => {
     const fn = embeddedProofUrl()
     expect(fn('discord', 'alice', '3456789012345678901')).toBeNull()
+  })
+
+  it('uses the server allowlist for every Discord client host', () => {
+    const fn = embeddedProofUrl()
+    for (const host of MESSAGE_LINK_HOSTS) {
+      const link = DISCORD_MESSAGE_LINK.replace('discord.com', host)
+      expect(fn('discord', 'alice', link)).toBe(link)
+    }
+  })
+
+  it('upgrades an HTTP Discord proof link before rendering it', () => {
+    const fn = embeddedProofUrl()
+    expect(fn('discord', 'alice', DISCORD_MESSAGE_LINK.replace('https:', 'http:'))).toBe(DISCORD_MESSAGE_LINK)
   })
 
   it('leaves other platforms unchanged', () => {

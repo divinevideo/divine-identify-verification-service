@@ -25,7 +25,7 @@ const DISCORD_UNKNOWN_CHANNEL = 10003
 // Every host Discord's own clients hand a user on "Copy Message Link". The
 // Canary and PTB builds use their own subdomains, and links shared before the
 // rename still carry discordapp.com; all of them serve the same message.
-const MESSAGE_LINK_HOSTS = new Set([
+export const MESSAGE_LINK_HOSTS: readonly string[] = [
   'discord.com',
   'www.discord.com',
   'canary.discord.com',
@@ -34,7 +34,7 @@ const MESSAGE_LINK_HOSTS = new Set([
   'www.discordapp.com',
   'canary.discordapp.com',
   'ptb.discordapp.com',
-])
+]
 
 // Parsed rather than matched with one anchored pattern: parsing normalises the
 // trailing slash, discards the query and fragment, and lower-cases the host —
@@ -47,7 +47,7 @@ function parseDiscordUrl(proof: string): ProofType | null {
     return null
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
-  if (!MESSAGE_LINK_HOSTS.has(url.hostname.toLowerCase())) return null
+  if (!MESSAGE_LINK_HOSTS.includes(url.hostname.toLowerCase())) return null
 
   const segments = url.pathname.split('/').filter(Boolean)
   if (segments[0] !== 'channels') return null

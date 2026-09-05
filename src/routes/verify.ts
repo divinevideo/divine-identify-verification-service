@@ -5,7 +5,7 @@ import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { getVerifier } from '../platforms/registry'
-import { isDiscordMessageLink } from '../platforms/discord'
+import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import { getOAuthVerification } from '../oauth/state'
 
 const verify = new Hono<{ Bindings: Bindings }>()
@@ -314,7 +314,12 @@ export function proofUrl(platform: string, identity: string, proof: string): str
     // Unlike the other platforms, a Discord proof is already the full post
     // link (or, for a preconfigured-channel submission, a bare snowflake with
     // no guild ID to build a link from) — never a short code to wrap.
-    case 'discord': return isDiscordMessageLink(proof) ? proof : null
+    case 'discord': {
+      if (!isDiscordMessageLink(proof)) return null
+      const url = new URL(proof.trim())
+      url.protocol = 'https:'
+      return url.toString()
+    }
     case 'youtube': return `https://www.youtube.com/watch?v=${proof}`
     case 'tiktok': return `https://www.tiktok.com/@${identity}/video/${proof}`
     default: return null
@@ -619,6 +624,7 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
     var API = '${esc(apiOrigin)}';
     var RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
     var PLATFORM_LABELS = ${JSON.stringify(PLATFORM_LABELS)};
+    var DISCORD_MESSAGE_LINK_HOSTS = ${JSON.stringify(MESSAGE_LINK_HOSTS)};
 
     function esc(s) {
       var d = document.createElement('div');
@@ -633,7 +639,12 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
         case 'bluesky': return 'https://bsky.app/profile/' + identity + '/post/' + proof;
         case 'mastodon': return 'https://' + identity.split('/')[0] + '/statuses/' + proof;
         case 'telegram': return 'https://t.me/' + proof;
-        case 'discord': return isDiscordMessageLink(proof) ? proof : null;
+        case 'discord': {
+          if (!isDiscordMessageLink(proof)) return null;
+          var url = new URL(proof.trim());
+          url.protocol = 'https:';
+          return url.toString();
+        }
         case 'youtube': return 'https://www.youtube.com/watch?v=' + proof;
         case 'tiktok': return 'https://www.tiktok.com/@' + identity + '/video/' + proof;
         default: return null;
@@ -644,11 +655,10 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
     // proof is already the full post link (or a bare snowflake with no guild
     // ID to build one from), never a short code this page can wrap itself.
     function isDiscordMessageLink(proof) {
-      var hosts = ['discord.com', 'www.discord.com', 'canary.discord.com', 'ptb.discord.com', 'discordapp.com', 'www.discordapp.com', 'canary.discordapp.com', 'ptb.discordapp.com'];
       try {
         var u = new URL(proof);
         if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
-        if (hosts.indexOf(u.hostname.toLowerCase()) === -1) return false;
+        if (DISCORD_MESSAGE_LINK_HOSTS.indexOf(u.hostname.toLowerCase()) === -1) return false;
         var segs = u.pathname.split('/').filter(Boolean);
         return segs.length === 4 && segs[0] === 'channels' && /^\\d+$/.test(segs[1]) && /^\\d+$/.test(segs[2]) && /^\\d+$/.test(segs[3]);
       } catch (e) {
