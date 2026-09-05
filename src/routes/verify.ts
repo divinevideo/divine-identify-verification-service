@@ -5,6 +5,7 @@ import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { getVerifier } from '../platforms/registry'
+import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import { getOAuthVerification } from '../oauth/state'
 
 const verify = new Hono<{ Bindings: Bindings }>()
@@ -300,7 +301,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   nip05: 'NIP-05',
 }
 
-function proofUrl(platform: string, identity: string, proof: string): string | null {
+export function proofUrl(platform: string, identity: string, proof: string): string | null {
   switch (platform) {
     case 'github': return `https://gist.github.com/${identity}/${proof}`
     case 'twitter': return `https://x.com/${identity}/status/${proof}`
@@ -310,7 +311,15 @@ function proofUrl(platform: string, identity: string, proof: string): string | n
       return `https://${instance}/statuses/${proof}`
     }
     case 'telegram': return `https://t.me/${proof}`
-    case 'discord': return `https://discord.gg/${proof}`
+    // Unlike the other platforms, a Discord proof is already the full post
+    // link (or, for a preconfigured-channel submission, a bare snowflake with
+    // no guild ID to build a link from) — never a short code to wrap.
+    case 'discord': {
+      if (!isDiscordMessageLink(proof)) return null
+      const url = new URL(proof.trim())
+      url.protocol = 'https:'
+      return url.toString()
+    }
     case 'youtube': return `https://www.youtube.com/watch?v=${proof}`
     case 'tiktok': return `https://www.tiktok.com/@${identity}/video/${proof}`
     default: return null
@@ -336,7 +345,7 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
-function renderVerifyHtml(result: VerifyResult, platform: string, identity: string, proof: string, pubkey: string, npub: string, requestUrl: string, apiOrigin: string): string {
+export function renderVerifyHtml(result: VerifyResult, platform: string, identity: string, proof: string, pubkey: string, npub: string, requestUrl: string, apiOrigin: string): string {
   const verified = result.verified
   const platformLabel = PLATFORM_LABELS[platform] || platform
   const statusText = verified ? 'Verified' : 'Not Verified'
@@ -615,6 +624,7 @@ function renderVerifyHtml(result: VerifyResult, platform: string, identity: stri
     var API = '${esc(apiOrigin)}';
     var RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
     var PLATFORM_LABELS = ${JSON.stringify(PLATFORM_LABELS)};
+    var DISCORD_MESSAGE_LINK_HOSTS = ${JSON.stringify(MESSAGE_LINK_HOSTS)};
 
     function esc(s) {
       var d = document.createElement('div');
@@ -629,10 +639,30 @@ function renderVerifyHtml(result: VerifyResult, platform: string, identity: stri
         case 'bluesky': return 'https://bsky.app/profile/' + identity + '/post/' + proof;
         case 'mastodon': return 'https://' + identity.split('/')[0] + '/statuses/' + proof;
         case 'telegram': return 'https://t.me/' + proof;
-        case 'discord': return 'https://discord.gg/' + proof;
+        case 'discord': {
+          if (!isDiscordMessageLink(proof)) return null;
+          var url = new URL(proof.trim());
+          url.protocol = 'https:';
+          return url.toString();
+        }
         case 'youtube': return 'https://www.youtube.com/watch?v=' + proof;
         case 'tiktok': return 'https://www.tiktok.com/@' + identity + '/video/' + proof;
         default: return null;
+      }
+    }
+
+    // Mirrors src/platforms/discord.ts's isDiscordMessageLink — a Discord
+    // proof is already the full post link (or a bare snowflake with no guild
+    // ID to build one from), never a short code this page can wrap itself.
+    function isDiscordMessageLink(proof) {
+      try {
+        var u = new URL(proof);
+        if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+        if (DISCORD_MESSAGE_LINK_HOSTS.indexOf(u.hostname.toLowerCase()) === -1) return false;
+        var segs = u.pathname.split('/').filter(Boolean);
+        return segs.length === 4 && segs[0] === 'channels' && /^\\d+$/.test(segs[1]) && /^\\d+$/.test(segs[2]) && /^\\d+$/.test(segs[3]);
+      } catch (e) {
+        return false;
       }
     }
 
