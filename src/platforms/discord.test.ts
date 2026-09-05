@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { DiscordVerifier } from './discord'
+import { DiscordVerifier, isDiscordMessageLink } from './discord'
 
 describe('DiscordVerifier', () => {
   const npub = 'npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg'
@@ -505,5 +505,44 @@ describe('DiscordVerifier invite proofs cannot bind an account', () => {
     expect(result.verified).toBe(false)
     expect(result.error).toContain('message link')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+// The verify-result page shows a "View proof post" link built from whatever
+// counts as a platform's `proof`. Discord's proof used to be a short invite
+// code, so the page could always build a link by hand; now it is the message
+// link itself, so this decides whether that link can be shown as-is.
+describe('isDiscordMessageLink', () => {
+  const messageLink = 'https://discord.com/channels/1234567890123456789/2345678901234567890/3456789012345678901'
+
+  it('accepts the message link a Discord client actually produces', () => {
+    expect(isDiscordMessageLink(messageLink)).toBe(true)
+  })
+
+  it('accepts the same link from Canary, PTB, and the pre-rename host', () => {
+    expect(isDiscordMessageLink(messageLink.replace('discord.com', 'canary.discord.com'))).toBe(true)
+    expect(isDiscordMessageLink(messageLink.replace('discord.com', 'ptb.discord.com'))).toBe(true)
+    expect(isDiscordMessageLink(messageLink.replace('discord.com', 'discordapp.com'))).toBe(true)
+  })
+
+  it('rejects a bare snowflake, since there is no guild ID to build a link from', () => {
+    expect(isDiscordMessageLink('3456789012345678901')).toBe(false)
+  })
+
+  it('rejects a DM link', () => {
+    expect(isDiscordMessageLink('https://discord.com/channels/@me/2345678901234567890/3456789012345678901')).toBe(false)
+  })
+
+  it('rejects a channel link', () => {
+    expect(isDiscordMessageLink('https://discord.com/channels/1234567890123456789/2345678901234567890')).toBe(false)
+  })
+
+  it('rejects an invite code or invite URL', () => {
+    expect(isDiscordMessageLink('AbCdEf')).toBe(false)
+    expect(isDiscordMessageLink('https://discord.gg/AbCdEf')).toBe(false)
+  })
+
+  it('rejects a look-alike host', () => {
+    expect(isDiscordMessageLink(messageLink.replace('discord.com', 'discord.com.evil.example'))).toBe(false)
   })
 })

@@ -74,6 +74,15 @@ function parseDiscordUrl(proof: string): ProofType | null {
   return null
 }
 
+// Whether `proof` is itself a full Discord message link. The verify-result
+// page uses this to decide whether it can show `proof` directly as the
+// "View proof post" link — the only Discord proof shape with a full URL to
+// show. A bare snowflake (verified against a preconfigured channel) has no
+// guild ID to build one from, and this service is never configured with one.
+export function isDiscordMessageLink(proof: string): boolean {
+  return parseDiscordUrl(proof.trim())?.kind === 'message_url'
+}
+
 function parseProof(proof: string, configuredChannelId?: string): ProofType | null {
   const trimmed = proof.trim()
 
