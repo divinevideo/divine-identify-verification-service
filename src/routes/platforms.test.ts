@@ -45,8 +45,8 @@ describe('GET /platforms', () => {
 
   it('keeps TikTok unsupported when enabled but the client credentials are missing', async () => {
     // A sandbox key is indistinguishable from a production one by inspection, so the
-    // enable flag is the operator's production signal, but supported must not advertise
-    // a flow that would 503 for lack of a key/secret.
+    // enable flag is the operator's production signal. The full OAuth flow still needs
+    // both credentials and a redirect base before it can be advertised.
     const body = await fetchPlatforms({ TIKTOK_OAUTH_ENABLED: 'true' })
     expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
   })

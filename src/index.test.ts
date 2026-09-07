@@ -45,6 +45,12 @@ describe('verifier footer', () => {
 })
 
 describe('verifier tiktok oauth gating', () => {
+  const tiktokOAuthConfig = {
+    TIKTOK_CLIENT_KEY: 'test-client-key',
+    TIKTOK_CLIENT_SECRET: 'test-client-secret',
+    OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
+  }
+
   async function homeHtml(
     url = 'https://verifier.divine.video/',
     env = {},
@@ -78,7 +84,7 @@ describe('verifier tiktok oauth gating', () => {
 
   it('exposes TikTok OAuth for the app-review URL', async () => {
     const oauthSelect = sliceSelect(
-      await homeHtml('https://verifier.divine.video/?tiktok_oauth_review=1'),
+      await homeHtml('https://verifier.divine.video/?tiktok_oauth_review=1', tiktokOAuthConfig),
       'oauth-platform-select',
     )
     expect(oauthSelect).toContain('value="tiktok"')
@@ -86,16 +92,27 @@ describe('verifier tiktok oauth gating', () => {
 
   it('exposes TikTok OAuth when the production rollout flag is enabled', async () => {
     const oauthSelect = sliceSelect(
-      await homeHtml('https://verifier.divine.video/', { TIKTOK_OAUTH_ENABLED: 'true' }),
+      await homeHtml('https://verifier.divine.video/', {
+        ...tiktokOAuthConfig,
+        TIKTOK_OAUTH_ENABLED: 'true',
+      }),
       'oauth-platform-select',
     )
     expect(oauthSelect).toContain('value="tiktok"')
   })
 
+  it('keeps TikTok hidden when rollout is enabled without complete OAuth configuration', async () => {
+    const oauthSelect = sliceSelect(
+      await homeHtml('https://verifier.divine.video/', { TIKTOK_OAUTH_ENABLED: 'true' }),
+      'oauth-platform-select',
+    )
+    expect(oauthSelect).not.toContain('value="tiktok"')
+  })
+
   it('preserves app-review access across redirect callbacks with a cookie', async () => {
     const response = await worker.fetch(
       new Request('https://verifier.divine.video/?tiktok_oauth_review=1'),
-      {} as never,
+      tiktokOAuthConfig as never,
     )
     const setCookie = response.headers.get('set-cookie')
     expect(setCookie).toContain('HttpOnly')
@@ -107,7 +124,7 @@ describe('verifier tiktok oauth gating', () => {
 
     const html = await homeHtml(
       'https://verifier.divine.video/',
-      {},
+      tiktokOAuthConfig,
       { Cookie: cookie as string },
     )
     expect(sliceSelect(html, 'oauth-platform-select')).toContain('value="tiktok"')

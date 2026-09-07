@@ -13,6 +13,16 @@ const TIKTOK_USER_URL = 'https://open.tiktokapis.com/v2/user/info/'
 // TikTok developer portal. Scopes are sent comma-separated.
 const TIKTOK_SCOPE = 'user.info.basic,user.info.profile'
 
+// The enable flag is the operator's assertion that the configured TikTok app is
+// approved for production. Reviewers may bypass that assertion for the sandbox
+// flow, but both paths still need everything required to complete OAuth.
+export function isTikTokOAuthUsable(env: Bindings, allowSandbox = false): boolean {
+  const flowConfigured = !!env.TIKTOK_CLIENT_KEY
+    && !!env.TIKTOK_CLIENT_SECRET
+    && !!env.OAUTH_REDIRECT_BASE
+  return flowConfigured && (env.TIKTOK_OAUTH_ENABLED === 'true' || allowSandbox)
+}
+
 export async function startTikTokOAuth(
   env: Bindings,
   pubkey: string,

@@ -8,6 +8,7 @@ import verify from './routes/verify'
 import nip05 from './routes/nip05'
 import auth from './routes/auth'
 import { EMBED_BRIDGE_SCRIPT } from './embed-bridge'
+import { isTikTokOAuthUsable } from './oauth/tiktok'
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -81,7 +82,7 @@ app.get('/', (c) => {
   const origin = requestUrl.origin
   const hasYouTube = !!c.env.YOUTUBE_API_KEY
   const hasTikTok = true // TikTok oEmbed is public, no key needed for proof verification
-  // TODO(#38): Enable the production UI after TikTok OAuth is approved.
+  // TODO(#39): Enable the production UI after TikTok OAuth is approved.
   // The review cookie survives OAuth redirects without changing their exact
   // registered redirect URI, while ordinary users stay off the sandbox flow.
   const tiktokOAuthReviewRequested = requestUrl.searchParams.get('tiktok_oauth_review') === '1'
@@ -94,9 +95,9 @@ app.get('/', (c) => {
       secure: requestUrl.protocol === 'https:',
     })
   }
-  const tiktokOAuthEnabled = c.env.TIKTOK_OAUTH_ENABLED === 'true'
-    || tiktokOAuthReviewRequested
+  const tiktokOAuthReviewEnabled = tiktokOAuthReviewRequested
     || getCookie(c, 'tiktok_oauth_review') === '1'
+  const tiktokOAuthEnabled = isTikTokOAuthUsable(c.env, tiktokOAuthReviewEnabled)
   const divineLoginUrl = `https://login.divine.video/login?return_url=${encodeURIComponent(`${origin}/#verify-here`)}`
 
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
@@ -125,7 +126,7 @@ app.get('/', (c) => {
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
   c.header('Cache-Control', 'private, no-store')
-  // TODO(#38): Remove cookie variance when the OAuth reviewer override is retired.
+  // TODO(#39): Remove cookie variance when the OAuth reviewer override is retired.
   c.header('Vary', 'Cookie')
   return c.html(`<!DOCTYPE html>
 <html lang="en">
