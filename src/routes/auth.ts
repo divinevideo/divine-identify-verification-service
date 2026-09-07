@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { getCookie } from 'hono/cookie'
 import type { Bindings, OAuthPlatform } from '../types'
 import { isValidHexPubkey, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
@@ -6,7 +7,7 @@ import { getOAuthVerification, deleteOAuthVerification } from '../oauth/state'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
-import { startTikTokOAuth, handleTikTokCallback } from '../oauth/tiktok'
+import { startTikTokOAuth, handleTikTokCallback, isTikTokOAuthUsable } from '../oauth/tiktok'
 
 const auth = new Hono<{ Bindings: Bindings }>()
 const DIVINE_LOGIN_BASE = 'https://login.divine.video'
@@ -262,8 +263,13 @@ auth.get('/:platform/start', async (c) => {
     case 'youtube':
       return startYouTubeOAuth(c.env, normalizedPubkey, returnUrl)
 
-    case 'tiktok':
+    case 'tiktok': {
+      const allowSandbox = getCookie(c, 'tiktok_oauth_review') === '1'
+      if (!isTikTokOAuthUsable(c.env, allowSandbox)) {
+        return c.json({ error: 'TikTok OAuth not configured' }, 503)
+      }
       return startTikTokOAuth(c.env, normalizedPubkey, returnUrl)
+    }
 
     default:
       return c.json({ error: 'OAuth not supported for this platform. Supported: twitter, bluesky, youtube, tiktok' }, 400)

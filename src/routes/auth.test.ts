@@ -246,3 +246,38 @@ describe('isAllowedReturnUrl', () => {
     expect(isAllowedReturnUrl('not a url')).toBe(false)
   })
 })
+
+describe('GET /auth/tiktok/start', () => {
+  const pubkey = 'aa'.repeat(32)
+  const configured = {
+    TIKTOK_CLIENT_KEY: 'sandbox-key',
+    TIKTOK_CLIENT_SECRET: 'sandbox-secret',
+    OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
+  }
+
+  function startUrl(): string {
+    return `/auth/tiktok/start?pubkey=${pubkey}&return_url=https://verifier.divine.video/`
+  }
+
+  it('returns 503 when production OAuth is not enabled', async () => {
+    const env = { ...createTestEnv(), ...configured }
+    const res = await app.request(startUrl(), {}, env)
+    expect(res.status).toBe(503)
+  })
+
+  it('starts OAuth once production OAuth is enabled and the flow is configured', async () => {
+    const env = { ...createTestEnv(), ...configured, TIKTOK_OAUTH_ENABLED: 'true' }
+    const res = await app.request(startUrl(), {}, env)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toContain('tiktok.com')
+  })
+
+  it('starts OAuth for sandbox reviewers who carry the review cookie', async () => {
+    const env = { ...createTestEnv(), ...configured }
+    const res = await app.request(startUrl(), {
+      headers: { Cookie: 'tiktok_oauth_review=1' },
+    }, env)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toContain('tiktok.com')
+  })
+})
