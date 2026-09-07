@@ -63,9 +63,13 @@ describe('GET /platforms', () => {
   })
 
   it('keeps TikTok unsupported when credentials are present but production OAuth is not enabled', async () => {
+    // The flow is otherwise fully configured (key + secret + redirect base) so this
+    // isolates the TIKTOK_OAUTH_ENABLED clause: supported must be false purely because
+    // the enable flag is absent, which guards the primary "hide it" gate.
     const body = await fetchPlatforms({
       TIKTOK_CLIENT_KEY: 'sandbox-key',
       TIKTOK_CLIENT_SECRET: 'sandbox-secret',
+      OAUTH_REDIRECT_BASE: 'https://verify.example',
     })
     expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
   })
