@@ -136,6 +136,30 @@ async function verifySingleClaim(
   }
 }
 
+type InvalidClaimResult = {
+  platform: string
+  identity: string
+  verified: false
+  error: string
+  checked_at: number
+  cached: false
+}
+type BatchResult = VerifyResult | InvalidClaimResult
+
+// Clients read platform and identity as strings to match results to their
+// claims, so echo them when present and fall back to '' otherwise.
+function invalidClaimResult(claim: unknown, error: string, checkedAt: number): InvalidClaimResult {
+  const fields = claim && typeof claim === 'object' ? claim as Record<string, unknown> : {}
+  return {
+    platform: typeof fields.platform === 'string' ? fields.platform : '',
+    identity: typeof fields.identity === 'string' ? fields.identity : '',
+    verified: false,
+    error,
+    checked_at: checkedAt,
+    cached: false,
+  }
+}
+
 // POST /verify — batch verification
 verify.post('/', async (c) => {
   const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
@@ -146,14 +170,14 @@ verify.post('/', async (c) => {
     return c.json({ error: 'Rate limit exceeded' }, 429)
   }
 
-  let body: { claims?: VerifyClaim[] }
+  let body: { claims?: unknown[] } | null
   try {
     body = await c.req.json()
   } catch {
     return c.json({ error: 'Invalid JSON body' }, 400)
   }
 
-  if (!body.claims || !Array.isArray(body.claims)) {
+  if (!body || !Array.isArray(body.claims)) {
     return c.json({ error: 'Missing or invalid "claims" array' }, 400)
   }
 
@@ -165,19 +189,16 @@ verify.post('/', async (c) => {
     return c.json({ error: `Maximum ${MAX_BATCH_SIZE} claims per request` }, 400)
   }
 
-  // Validate all claims
-  const errors: { index: number; error: string }[] = []
-  for (let i = 0; i < body.claims.length; i++) {
-    const err = validateClaim(body.claims[i], i)
-    if (err) errors.push(err)
-  }
-  if (errors.length > 0) {
-    return c.json({ error: 'Validation failed', details: errors }, 400)
-  }
-
-  // Verify all claims concurrently
-  const results = await Promise.all(
-    body.claims.map(claim => verifySingleClaim(claim, c.env, clientIp))
+  // Each claim is judged on its own: one malformed signed tag must not hide the
+  // results of the valid claims beside it (#35). Invalid claims become
+  // verified:false results in place, and never reach rate limits or platforms.
+  const now = Math.floor(Date.now() / 1000)
+  const results: BatchResult[] = await Promise.all(
+    body.claims.map((claim, index) => {
+      const invalid = validateClaim(claim, index)
+      if (invalid) return invalidClaimResult(claim, invalid.error, now)
+      return verifySingleClaim(claim as VerifyClaim, c.env, clientIp)
+    })
   )
 
   return c.json({ results })

@@ -820,7 +820,7 @@ Content-Type: application/json
 
     <section id="batch-verify">
       <h2>POST /verify &mdash; Batch Verification</h2>
-      <p>Verify up to 10 claims in a single request.</p>
+      <p>Verify up to 10 claims in a single request. Results come back in the same order as the claims. A malformed claim, or one for an unsupported platform, comes back in its place as <code>"verified": false</code> with an <code>error</code>; it does not affect the other claims. The whole request is rejected with 400 only when the body itself is malformed, the claims list is empty, or it has more than 10 claims.</p>
 
       <h4>Request</h4>
       <pre>POST ${origin}/verify

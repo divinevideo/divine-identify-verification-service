@@ -1,4 +1,6 @@
 import type { Platform, VerifyClaim } from '../types'
+import { cacheKey } from './cache'
+import { oauthVerificationKey } from '../oauth/state'
 
 const VALID_PLATFORMS: Platform[] = ['github', 'twitter', 'mastodon', 'telegram', 'bluesky', 'discord', 'youtube', 'tiktok']
 
@@ -59,22 +61,51 @@ export interface ValidationError {
   error: string
 }
 
-export function validateClaim(claim: VerifyClaim, index: number): ValidationError | null {
-  if (!claim.pubkey || !isValidHexPubkey(claim.pubkey)) {
+// Workers KV rejects keys over 512 bytes (developers.cloudflare.com/kv/platform/limits).
+// A claim whose cache key would exceed that can never be looked up, and the failed
+// lookup takes the whole batch down with it. The sign-in record key is only looked up
+// for sign-in platforms, but it is checked for all: no real handle comes close.
+const KV_MAX_KEY_BYTES = 512
+
+function fitsStorageKeys(platform: string, identity: string, proof: string, pubkey: string): boolean {
+  const normalizedPubkey = normalizePubkey(pubkey)
+  const keys = [
+    cacheKey(platform, identity, proof, normalizedPubkey),
+    oauthVerificationKey(platform, identity, normalizedPubkey),
+  ]
+  const encoder = new TextEncoder()
+  return keys.every(key => encoder.encode(key).length <= KV_MAX_KEY_BYTES)
+}
+
+export function validateClaim(claim: unknown, index: number): ValidationError | null {
+  if (!claim || typeof claim !== 'object') {
+    return { index, error: 'Invalid claim: expected an object with platform, identity, proof and pubkey' }
+  }
+  const c = claim as Partial<VerifyClaim>
+  if (!c.pubkey || !isValidHexPubkey(c.pubkey)) {
     return { index, error: 'Invalid pubkey: must be 64-character hex' }
   }
-  if (!claim.platform || !isValidPlatform(claim.platform)) {
+  if (!c.platform || !isValidPlatform(c.platform)) {
     return { index, error: `Invalid platform: must be one of ${VALID_PLATFORMS.join(', ')}` }
   }
-  if (!claim.identity || !isValidIdentity(claim.identity)) {
+  if (!c.identity || !isValidIdentity(c.identity)) {
     return { index, error: 'Invalid identity' }
   }
   // Bluesky can verify via OAuth + identity-link records without a proof post ID.
-  if (claim.platform === 'bluesky' && (!claim.proof || claim.proof.trim() === '')) {
-    return null
-  }
-  if (!claim.proof || !isValidProof(claim.proof)) {
+  // A truthy non-string proof is not "empty"; it falls through to isValidProof and is rejected.
+  const blueskyWithoutProof = c.platform === 'bluesky'
+    && (!c.proof || (typeof c.proof === 'string' && c.proof.trim() === ''))
+  if (!blueskyWithoutProof && (!c.proof || !isValidProof(c.proof))) {
     return { index, error: 'Invalid proof' }
+  }
+  const proof = typeof c.proof === 'string' ? c.proof : ''
+  // An unpaired UTF-16 surrogate can't be encoded into a storage key: local Workers KV
+  // rejects such keys outright, which would also take the whole batch down.
+  if (/\p{Cs}/u.test(c.identity) || /\p{Cs}/u.test(proof)) {
+    return { index, error: 'Invalid claim: identity or proof contains malformed text' }
+  }
+  if (!fitsStorageKeys(c.platform, c.identity, proof, c.pubkey)) {
+    return { index, error: 'Invalid claim: identity and proof are too long' }
   }
   return null
 }
