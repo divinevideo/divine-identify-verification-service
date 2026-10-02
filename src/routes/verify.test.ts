@@ -110,3 +110,58 @@ describe('renderVerifyHtml — embedded client-side proof link (other verified i
     expect(fn('github', 'octocat', 'abc123')).toBe('https://gist.github.com/octocat/abc123')
   })
 })
+
+describe('TikTok proof links', () => {
+  const ID = '7123456789012345678'
+  const CANONICAL = `https://www.tiktok.com/@alice/video/${ID}`
+
+  function embeddedProofUrl(): (platform: string, identity: string, proof: string) => string | null {
+    const html = renderVerifyHtml(
+      FAKE_RESULT, 'tiktok', 'alice', ID, 'a'.repeat(64),
+      'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+      'https://verifier.divine.video/verify/tiktok/alice/x', 'https://verifier.divine.video',
+    )
+    const start = html.indexOf('var DISCORD_MESSAGE_LINK_HOSTS = ')
+    const end = html.indexOf('function platformIconHtml(', start)
+    expect(end).toBeGreaterThan(start)
+    return new Function(`${html.slice(start, end)}\nreturn proofUrl;`)()
+  }
+
+  it.each([
+    ['a video number', ID, CANONICAL],
+    ['a full video link', `https://www.tiktok.com/@alice/video/${ID}?_r=1`, CANONICAL],
+    ['a mobile video link', `https://m.tiktok.com/@alice/video/${ID}`, CANONICAL],
+    ['a photo post link', `https://www.tiktok.com/@alice/photo/${ID}?_r=1`, `https://www.tiktok.com/@alice/photo/${ID}`],
+    ['a share link', 'https://vm.tiktok.com/ZMabc123/', null],
+    ['a profile link', 'https://www.tiktok.com/@alice', null],
+    ['a link elsewhere', `https://example.com/@alice/video/${ID}`, null],
+    ['a link with a number that is too long', `https://www.tiktok.com/@alice/video/${'1'.repeat(26)}`, null],
+    ['a number that is too long', '1'.repeat(26), null],
+    ['something that is not a number', 'abc', null],
+    ['a video path on a share-link host', `https://vm.tiktok.com/@alice/video/${ID}`, null],
+    ['a TikTok link inside another site\'s link', `https://example.com/?u=https://www.tiktok.com/@alice/video/${ID}`, null],
+    ['a video link with an uppercase path', `https://www.tiktok.com/@alice/VIDEO/${ID}`, CANONICAL],
+  ])('links %s correctly, on the server and in the page', (_label, proof, expected) => {
+    expect(proofUrl('tiktok', 'alice', proof)).toBe(expected)
+    expect(embeddedProofUrl()('tiktok', 'alice', proof)).toBe(expected)
+  })
+})
+
+describe('TikTok proof link on the verification-link page', () => {
+  it('links the post number the verifier resolved when the proof is a share link', () => {
+    const html = renderVerifyHtml(
+      { platform: 'tiktok', identity: 'alice', verified: true, canonical_proof: '7123456789012345678', checked_at: 1700000000, cached: false },
+      'tiktok', 'alice', 'https://vm.tiktok.com/ZMabc123/', 'a'.repeat(64),
+      'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+      'https://verifier.divine.video/verify/tiktok/alice/x', 'https://verifier.divine.video',
+    )
+    expect(html).toContain('href="https://www.tiktok.com/@alice/video/7123456789012345678"')
+  })
+
+  it('uses the resolved post number for other linked accounts too', () => {
+    const html = renderVerifyHtml(FAKE_RESULT, 'discord', 'alice', DISCORD_MESSAGE_LINK, 'a'.repeat(64),
+      'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+      'https://verifier.divine.video/verify/discord/alice/x', 'https://verifier.divine.video')
+    expect(html).toContain('proofUrl(claims[k].platform, claims[k].identity, data.results[k].canonical_proof || claims[k].proof)')
+  })
+})

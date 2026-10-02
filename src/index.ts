@@ -114,7 +114,7 @@ app.get('/', (c) => {
   const ytPill = hasYouTube ? '<div class="platform-pill"><svg viewBox="0 0 24 24" fill="#333"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg> YouTube</div>' : ''
   const ttPill = hasTikTok ? '<div class="platform-pill"><svg viewBox="0 0 24 24" fill="#333"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg> TikTok</div>' : ''
   const ytTableRow = hasYouTube ? '<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>Yes</td></tr>' : ''
-  const ttTableRow = hasTikTok ? `<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video ID (numeric)</td><td>${tiktokOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
+  const ttTableRow = hasTikTok ? `<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video link, share link, or post number</td><td>${tiktokOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
   const extraPlatformNames = (hasYouTube ? ', YouTube' : '') + (hasTikTok ? ', TikTok' : '')
   // Sign-in platforms, in picker order. Leaves out Twitter and TikTok while
   // their sign-in is unavailable. The picker and every list of sign-in
@@ -838,6 +838,7 @@ Content-Type: application/json
         <tr><td><code>verified</code></td><td>boolean</td><td><code>true</code> if proof post contains the npub and the author matches</td></tr>
         <tr><td><code>error</code></td><td>string?</td><td>Error message (only when <code>verified</code> is <code>false</code>)</td></tr>
         <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable rejection reason. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.</td></tr>
+        <tr><td><code>canonical_proof</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the proof was resolved to a simpler stable form (TikTok: the post number for a link or share link). Publish this instead of the proof you sent.</td></tr>
         <tr><td><code>checked_at</code></td><td>number</td><td>Unix timestamp (seconds)</td></tr>
         <tr><td><code>cached</code></td><td>boolean</td><td><code>true</code> if served from cache</td></tr>
       </table>
@@ -1668,9 +1669,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         helper.textContent = 'We verify your npub inside the video description.';
       } else if (platform === 'tiktok') {
         identityInput.placeholder = 'username';
-        proofLabel.textContent = 'Video link or video ID';
-        proofInput.placeholder = 'https://www.tiktok.com/@user/video/123... or numeric ID';
-        helper.textContent = 'Paste a TikTok video URL and we will extract the ID.';
+        proofLabel.textContent = 'Post link or post number';
+        proofInput.placeholder = 'Video link, share link, or post number';
+        helper.textContent = 'Paste a TikTok video or photo link, a share link, or the post number.';
       } else {
         identityInput.placeholder = 'Account identity';
         proofLabel.textContent = 'Post link or proof ID';
@@ -1855,8 +1856,15 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         if (!resp.ok || data.error) {
           setStatus('proof-status', data.error || 'Not verified yet.', 'error');
         } else if (data.verified) {
+          // Publish the stable form the verifier resolved (for example a
+          // TikTok share link becomes its post number), not the pasted link,
+          // unless the person changed the proof while the check ran.
+          const proofInput = document.getElementById('proof-proof-input');
+          const usePostNumber = typeof data.canonical_proof === 'string' && data.canonical_proof
+            && proofInput.value === normalized.proof;
+          if (usePostNumber) proofInput.value = data.canonical_proof;
           const method = data.method ? ' via ' + data.method.replace('_', ' ') : '';
-          setStatus('proof-status', 'Success. This account is verified' + method + '.', 'ok');
+          setStatus('proof-status', 'Success. This account is verified' + method + '.' + (usePostNumber ? ' Publishing will use the post number.' : ''), 'ok');
         } else {
           setStatus('proof-status', data.error || 'Not verified yet.', 'error');
         }

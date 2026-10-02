@@ -310,6 +310,25 @@ describe('verifier twitter oauth gating', () => {
   })
 })
 
+describe('TikTok in the API docs', () => {
+  it('lists the proof forms the verifier accepts', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    expect(html).toContain('<td><code>tiktok</code></td><td>Username (without @)</td><td>Video link, share link, or post number</td>')
+  })
+
+  it('tells people the TikTok proof can be a share link', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    expect(html).toContain("proofLabel.textContent = 'Post link or post number';")
+    expect(html).toContain("proofInput.placeholder = 'Video link, share link, or post number';")
+    expect(html).toContain("helper.textContent = 'Paste a TikTok video or photo link, a share link, or the post number.';")
+  })
+
+  it('documents canonical_proof in the response fields', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    expect(html).toContain('<tr><td><code>canonical_proof</code></td><td>string?</td>')
+  })
+})
+
 describe('favicon', () => {
   // App directories derive an entry's icon as `${origin}/favicon.ico`, so a 404
   // here surfaced as a failed image load in clients rather than as a missing
