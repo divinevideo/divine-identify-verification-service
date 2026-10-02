@@ -474,7 +474,9 @@ describe('isAllowedReturnUrl', () => {
 
   it('accepts only web addresses on localhost during local development', () => {
     expect(isAllowedReturnUrl('https://localhost:5173/x', 'http://localhost:8787')).toBe(true)
-    expect(isAllowedReturnUrl('file://localhost/x', 'http://localhost:8787')).toBe(false)
+    // file://localhost/x would parse with an empty hostname and never reach the
+    // protocol check, so use an address that does.
+    expect(isAllowedReturnUrl('file://127.0.0.1/x', 'http://localhost:8787')).toBe(false)
     expect(isAllowedReturnUrl('ws://localhost:5173/x', 'http://localhost:8787')).toBe(false)
     expect(isAllowedReturnUrl('ftp://localhost/x', 'http://localhost:8787')).toBe(false)
   })

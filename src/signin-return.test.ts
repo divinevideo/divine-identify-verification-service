@@ -29,8 +29,8 @@ async function loadReturnHandler() {
     new Function(...deps, `${source}\nreturn { handleOAuthCallbackMessage, rememberPendingSignIn, newSignInNonce };`)(...deps.map(d => env[d]))
 }
 
-function harness(opts: { search: string, pending?: unknown, statusResponse?: unknown, statusFails?: boolean, statusOk?: boolean, stored?: Record<string, string> }) {
-  const store = new Map<string, string>(Object.entries(opts.stored ?? {}))
+function harness(opts: { search: string, pending?: unknown, statusResponse?: unknown, statusFails?: boolean, statusOk?: boolean, stored?: Record<string, string>, store?: Map<string, string> }) {
+  const store = opts.store ?? new Map<string, string>(Object.entries(opts.stored ?? {}))
   if (opts.pending !== undefined) store.set(PENDING_KEY, JSON.stringify(opts.pending))
   const statuses: Array<[string, string, string]> = []
   const fetched: string[] = []
@@ -296,7 +296,8 @@ describe('sign-in return on the verifier page', () => {
 
   it.each([
     ['missing', ''],
-    ['different', 'x'.repeat(32)],
+    // Well formed, so it gets past the format check and is looked up.
+    ['different', 'f'.repeat(32)],
   ])('does not show success when the one-time code in the return address is %s', async (_label, code) => {
     const load = await loadReturnHandler()
     const search = `?signin=${code}&oauth_verified=true&platform=twitter&identity=jack`
@@ -343,11 +344,13 @@ describe('sign-in return on the verifier page', () => {
 
   it('finds a sign-in started in another tab of the same browser', async () => {
     const load = await loadReturnHandler()
-    // The return opens in a fresh tab: only the shared store knows about the sign-in.
-    const h = harness({ search: returned(), stored: { [PENDING_KEY]: JSON.stringify(freshPending()) }, statusResponse: { verified: true, identity: 'jack' } })
-    await load(h.env).handleOAuthCallbackMessage()
-    expect(h.statuses[h.statuses.length - 1][2]).toBe('ok')
-    expect(h.store.has(PENDING_KEY)).toBe(false)
+    // Each tab runs its own copy of the page script; only localStorage is shared.
+    const startTab = harness({ search: '' })
+    expect(load(startTab.env).rememberPendingSignIn('twitter', PUBKEY, NONCE)).toBe(true)
+    const returnTab = harness({ search: returned(), store: startTab.store, statusResponse: { verified: true, identity: 'jack' } })
+    await load(returnTab.env).handleOAuthCallbackMessage()
+    expect(returnTab.statuses[returnTab.statuses.length - 1][2]).toBe('ok')
+    expect(startTab.store.has(PENDING_KEY)).toBe(false)
   })
 
   it('uses only the sign-in whose one-time code came back', async () => {
