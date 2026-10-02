@@ -34,15 +34,10 @@ app.route('/auth', auth)
 
 // Alias: POST /api/verify → single claim verification (divine-web compatibility)
 app.post('/api/verify', async (c) => {
-  const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
   // Rewrite as a subrequest to /verify/single
   const url = new URL(c.req.url)
   url.pathname = '/verify/single'
-  const newReq = new Request(url.toString(), {
-    method: 'POST',
-    headers: c.req.raw.headers,
-    body: c.req.raw.body,
-  })
+  const newReq = new Request(url.toString(), c.req.raw)
   return app.fetch(newReq, c.env)
 })
 // HEAD /api/health — divine-web health check
