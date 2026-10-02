@@ -2135,6 +2135,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       const proofProofEl = document.getElementById('proof-proof-input');
       if (proofPlatformEl && proofIdentityEl) {
         proofPlatformEl.value = pending.platform;
+        // Setting the value does not fire 'change', so update the labels here.
+        updateProofInputs();
         proofIdentityEl.value = linkedIdentity;
         if (proofProofEl) proofProofEl.value = 'oauth';
         // Open the Advanced section and scroll the publish button into view

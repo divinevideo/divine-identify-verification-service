@@ -28,7 +28,7 @@ function scriptBetween(html: string, from: string, to: string): string {
 // browser, so the test exercises the shipped script rather than a copy of it.
 async function loadReturnHandler() {
   const source = scriptBetween(await pageHtml(), 'const PENDING_SIGN_IN_KEY', 'function showStatus(msg, type)')
-  const deps = ['window', 'localStorage', 'fetch', 'API', 'setStatus', 'document']
+  const deps = ['window', 'localStorage', 'fetch', 'API', 'setStatus', 'document', 'updateProofInputs']
   return (env: Record<string, unknown>) =>
     new Function(...deps, `${source}\nreturn { handleOAuthCallbackMessage, rememberPendingSignIn, newSignInNonce };`)(...deps.map(d => env[d]))
 }
@@ -113,6 +113,8 @@ function harness(opts: { search: string, pending?: unknown, statusResponse?: unk
   const fetched: string[] = []
   // Every address the page rewrote itself to.
   const replaced: string[] = []
+  // The proof platform each time the page updated the proof form's labels.
+  const labelUpdates: string[] = []
   const fields: Record<string, { value: string, open?: boolean, scrollIntoView?: () => void }> = {
     'proof-platform-select': { value: '' },
     'proof-identity-input': { value: '' },
@@ -138,8 +140,9 @@ function harness(opts: { search: string, pending?: unknown, statusResponse?: unk
     },
     setStatus: (id: string, msg: string, type: string) => { statuses.push([id, msg, type]) },
     document: { getElementById: (id: string) => fields[id] ?? null },
+    updateProofInputs: () => { labelUpdates.push(fields['proof-platform-select'].value) },
   }
-  return { env, statuses, fetched, fields, store, location, replaced }
+  return { env, statuses, fetched, fields, store, location, replaced, labelUpdates }
 }
 
 const freshPending = (platform = 'twitter') => ({ platform, pubkey: PUBKEY, nonce: NONCE, startedAt: Date.now() })
@@ -432,6 +435,13 @@ describe('sign-in return on the verifier page', () => {
     const h = harness({ search: `?signin=${NONCE}&oauth_verified=true&platform=twitter&identity=JACK`, pending: freshPending(), statusResponse: { verified: true, identity: 'jack' } })
     await load(h.env).handleOAuthCallbackMessage()
     expect(h.fields['proof-identity-input'].value).toBe('jack')
+  })
+
+  it('updates the Publish form labels for the platform it fills in', async () => {
+    const load = await loadReturnHandler()
+    const h = harness({ search: returned(), pending: freshPending(), statusResponse: { verified: true, identity: 'jack' } })
+    await load(h.env).handleOAuthCallbackMessage()
+    expect(h.labelUpdates).toEqual(['twitter'])
   })
 
   it('does not show success when the confirmation request is answered with an error status', async () => {
