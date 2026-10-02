@@ -1,8 +1,9 @@
 import { Hono } from 'hono'
 import { getCookie } from 'hono/cookie'
 import type { Bindings, OAuthPlatform } from '../types'
-import { isValidHexPubkey, normalizePubkey } from '../utils/validation'
+import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
+import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
 import { getOAuthVerification, deleteOAuthVerification } from '../oauth/state'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
@@ -10,18 +11,10 @@ import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
 import { startTikTokOAuth, handleTikTokCallback, isTikTokOAuthUsable } from '../oauth/tiktok'
 
 const auth = new Hono<{ Bindings: Bindings }>()
-const DIVINE_LOGIN_BASE = 'https://login.divine.video'
-const NIP98_MAX_AGE_SECONDS = 120
+// NIP-98 suggests 60s; login.divine.video enforced 60s when it did this check.
+const NIP98_MAX_AGE_SECONDS = 60
 
-type Nip98Event = {
-  id: string
-  pubkey: string
-  sig: string
-  kind: number
-  tags: string[][]
-  created_at: number
-  content?: unknown
-}
+type Nip98Event = SignedNostrEvent
 
 function getFirstTagValue(tags: string[][], tagName: string): string | null {
   for (const tag of tags) {
@@ -47,21 +40,21 @@ function parseAndValidateNip98Event(
   if (typeof event.id !== 'string' || typeof event.pubkey !== 'string' || typeof event.sig !== 'string') {
     return { error: 'Invalid event: id/pubkey/sig are required', status: 400 }
   }
-  if (!isValidHexPubkey(event.pubkey)) {
-    return { error: 'Invalid event pubkey', status: 400 }
-  }
   if (event.kind !== 27235) {
     return { error: 'Invalid event kind: expected 27235 (NIP-98)', status: 400 }
   }
   if (!Array.isArray(event.tags) || event.tags.some((tag) => !Array.isArray(tag))) {
     return { error: 'Invalid event tags', status: 400 }
   }
-  if (typeof event.created_at !== 'number' || !Number.isFinite(event.created_at)) {
+  if (typeof event.created_at !== 'number' || !Number.isInteger(event.created_at)) {
     return { error: 'Invalid event created_at', status: 400 }
+  }
+  if (typeof event.content !== 'string') {
+    return { error: 'Invalid event content', status: 400 }
   }
 
   const now = Math.floor(Date.now() / 1000)
-  if (Math.abs(now - Math.floor(event.created_at)) > NIP98_MAX_AGE_SECONDS) {
+  if (Math.abs(now - event.created_at) > NIP98_MAX_AGE_SECONDS) {
     return { error: 'NIP-98 event is too old or too far in the future', status: 401 }
   }
 
@@ -82,66 +75,39 @@ function parseAndValidateNip98Event(
       sig: event.sig,
       kind: event.kind,
       tags: event.tags as string[][],
-      created_at: Math.floor(event.created_at),
+      created_at: event.created_at,
       content: event.content,
     },
   }
 }
 
-async function verifyNip98EventWithUpstream(
+// Verifies a NIP-98 event in full, here. NIP-98 binds an event to the exact URL
+// it is sent to, so it cannot be checked by forwarding it to another service:
+// that service sees its own URL, not this one.
+async function verifyNip98Event(
   rawEvent: unknown,
   expectedUrl: string,
   expectedMethod: string,
-): Promise<
-  | { ok: true; event: Nip98Event; upstreamPubkey: string }
-  | { ok: false; error: string; status: number; upstreamStatus?: number }
-> {
+): Promise<{ ok: true; event: Nip98Event } | { ok: false; error: string; status: 400 | 401 }> {
   const parsed = parseAndValidateNip98Event(rawEvent, expectedUrl, expectedMethod)
   if ('error' in parsed) {
     return { ok: false, error: parsed.error, status: parsed.status }
   }
 
-  const loginUrl = `${DIVINE_LOGIN_BASE}/api/auth/login`
-  const encodedEvent = btoa(JSON.stringify(parsed.event))
-
-  let upstreamResp: Response
-  try {
-    upstreamResp = await fetch(loginUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Nostr ${encodedEvent}`,
-        'Content-Type': 'application/json',
-        // login.divine.video currently whitelists divine.video origin for this endpoint.
-        'Origin': 'https://divine.video',
-      },
-      body: '{}',
-    })
-  } catch {
-    return { ok: false, error: 'Failed to reach login.divine.video', status: 502 }
-  }
-
-  let upstreamData: { pubkey?: string; error?: string } = {}
-  try {
-    upstreamData = await upstreamResp.json() as typeof upstreamData
-  } catch {
-    // Keep empty object fallback.
-  }
-
-  if (!upstreamResp.ok) {
+  const signature = await verifyEventSignature(parsed.event)
+  if (!signature.ok) {
     return {
       ok: false,
-      error: upstreamData.error || 'Nostr login failed at login.divine.video',
-      status: 502,
-      upstreamStatus: upstreamResp.status,
+      error: signature.reason === 'id'
+        ? 'NIP-98 event id does not match its contents'
+        : signature.reason === 'format'
+          ? 'Invalid event: id, pubkey and sig must be lowercase hex'
+          : 'NIP-98 event signature is invalid',
+      status: signature.reason === 'format' ? 400 : 401,
     }
   }
 
-  const upstreamPubkey = typeof upstreamData.pubkey === 'string' ? upstreamData.pubkey : parsed.event.pubkey
-  if (!isValidHexPubkey(upstreamPubkey)) {
-    return { ok: false, error: 'Invalid pubkey returned by login provider', status: 502 }
-  }
-
-  return { ok: true, event: parsed.event, upstreamPubkey: normalizePubkey(upstreamPubkey) }
+  return { ok: true, event: parsed.event }
 }
 
 // Allowed origins for OAuth return_url (prevent open redirect)
@@ -192,8 +158,8 @@ auth.get('/bluesky/client-metadata.json', (c) => {
   return c.json(blueskyClientMetadata(baseUrl))
 })
 
-// Nostr login via login.divine.video (NIP-98 signed event passthrough)
-// POST /auth/nostr/login { event: { ...nostr event... } }
+// Nostr login: proves the caller holds the key for `pubkey`.
+// POST /auth/nostr/login { event: NIP-98 event whose u tag is this endpoint's URL }
 auth.post('/nostr/login', async (c) => {
   const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
   const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
@@ -208,19 +174,19 @@ auth.post('/nostr/login', async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400)
   }
 
-  const loginUrl = `${DIVINE_LOGIN_BASE}/api/auth/login`
-  const verification = await verifyNip98EventWithUpstream(body.event, loginUrl, 'POST')
+  if (!body || typeof body !== 'object') {
+    return c.json({ error: 'Invalid JSON body' }, 400)
+  }
+
+  const loginUrl = new URL(c.req.url).toString()
+  const verification = await verifyNip98Event(body.event, loginUrl, 'POST')
   if (!verification.ok) {
-    const payload = verification.upstreamStatus
-      ? { error: verification.error, upstream_status: verification.upstreamStatus }
-      : { error: verification.error }
-    return c.json(payload, verification.status as 400 | 401 | 502)
+    return c.json({ error: verification.error }, verification.status)
   }
 
   return c.json({
     authenticated: true,
-    pubkey: verification.upstreamPubkey,
-    provider: 'login.divine.video',
+    pubkey: verification.event.pubkey,
     method: 'nostr_nip98',
   })
 })
@@ -436,9 +402,17 @@ auth.post('/oauth/revoke', async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400)
   }
 
+  if (!body || typeof body !== 'object') {
+    return c.json({ error: 'Invalid JSON body' }, 400)
+  }
+
   const { platform, identity, pubkey, event } = body
   if (!platform || !identity || !pubkey || !event) {
     return c.json({ error: 'Missing required fields: platform, identity, pubkey, event' }, 400)
+  }
+  // Checked before any signature work: deleting the record lowercases identity.
+  if (!isValidIdentity(identity)) {
+    return c.json({ error: 'Invalid identity' }, 400)
   }
   if (!OAUTH_PLATFORMS.has(platform)) {
     return c.json({ error: `OAuth revoke only supported for: ${[...OAUTH_PLATFORMS].join(', ')}` }, 400)
@@ -447,27 +421,19 @@ auth.post('/oauth/revoke', async (c) => {
     return c.json({ error: 'Invalid pubkey (64-char hex required)' }, 400)
   }
   const normalizedBodyPubkey = normalizePubkey(pubkey)
-  if (typeof event?.pubkey === 'string' && normalizePubkey(event.pubkey) !== normalizedBodyPubkey) {
-    return c.json({ error: 'Pubkey mismatch: body pubkey does not match event pubkey' }, 401)
-  }
   const revokeUrl = new URL(c.req.url).toString()
-  const verification = await verifyNip98EventWithUpstream(event, revokeUrl, 'POST')
+  const verification = await verifyNip98Event(event, revokeUrl, 'POST')
   if (!verification.ok) {
-    const payload = verification.upstreamStatus
-      ? { error: verification.error, upstream_status: verification.upstreamStatus }
-      : { error: verification.error }
-    return c.json(payload, verification.status as 400 | 401 | 502)
+    return c.json({ error: verification.error }, verification.status)
   }
 
-  if (normalizedBodyPubkey !== normalizePubkey(verification.event.pubkey)) {
+  const signerPubkey = verification.event.pubkey
+  if (normalizedBodyPubkey !== signerPubkey) {
     return c.json({ error: 'Pubkey mismatch: body pubkey does not match event pubkey' }, 401)
   }
-  if (normalizedBodyPubkey !== verification.upstreamPubkey) {
-    return c.json({ error: 'Pubkey mismatch: verified pubkey does not match request pubkey' }, 401)
-  }
 
-  // Delete OAuth verification from KV
-  await deleteOAuthVerification(c.env.CACHE_KV, platform, identity, normalizedBodyPubkey)
+  // Delete only the signer's own OAuth verification.
+  await deleteOAuthVerification(c.env.CACHE_KV, platform, identity, signerPubkey)
 
   return c.json({ revoked: true, platform, identity })
 })

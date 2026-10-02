@@ -31,6 +31,26 @@ describe('verifier cors', () => {
   })
 })
 
+describe('verifier browser-signer login', () => {
+  it('signs the login event for the verifier\'s own login endpoint, not login.divine.video', async () => {
+    const response = await worker.fetch(
+      new Request('https://verifier.divine.video/'),
+      {} as never,
+    )
+    const html = await response.text()
+    const start = html.indexOf('async function connectBrowserSigner()')
+    expect(start).toBeGreaterThan(-1)
+    const body = html.slice(start, html.indexOf('async function startKeycastLogin()', start))
+    // NIP-98: the u tag must equal the URL the event is sent to, which is the
+    // verifier's own endpoint, not login.divine.video's.
+    expect(body).toContain("const loginUrl = API + '/auth/nostr/login';")
+    expect(body).not.toContain('/api/auth/login')
+    // The URL that is signed and the URL that is requested must be the same value.
+    expect(body).toContain("['u', loginUrl]")
+    expect(body).toContain('fetch(loginUrl')
+  })
+})
+
 describe('verifier footer', () => {
   it('exposes visible privacy and terms links (required for TikTok review)', async () => {
     const response = await worker.fetch(

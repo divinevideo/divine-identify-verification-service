@@ -12,6 +12,7 @@
   },
   "type": "commonjs",
   "dependencies": {
+    "@noble/curves": "2.4.0",
     "@scure/base": "^2.0.0",
     "hono": "^4.10.6"
   },

@@ -1324,7 +1324,8 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 
     async function connectBrowserSigner() {
       const browserSigner = createBrowserSigner();
-      const loginUrl = KEYCAST_BASE + '/api/auth/login';
+      // NIP-98: sign for the exact URL the event is sent to.
+      const loginUrl = API + '/auth/nostr/login';
       const unsignedEvent = {
         kind: 27235,
         content: '',
@@ -1341,8 +1342,8 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
         throw new Error('Signer did not return a valid login event.');
       }
 
-      setStatus('verify-login-status', 'Verifying login with login.divine.video...', 'loading');
-      const resp = await fetch(API + '/auth/nostr/login', {
+      setStatus('verify-login-status', 'Checking your signature...', 'loading');
+      const resp = await fetch(loginUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ event: signedEvent }),
