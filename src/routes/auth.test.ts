@@ -483,9 +483,14 @@ describe('isAllowedReturnUrl', () => {
 describe('GET /auth/:platform/start return address', () => {
   it('turns away a localhost return address in production', async () => {
     const env = { ...createTestEnv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' }
+    // A Bluesky start looks the handle up upstream, so if this check ever
+    // lets the address through, fail here instead of calling bsky.social.
+    const upstream = vi.fn(() => { throw new Error('a turned-away sign-in must not contact the provider') })
+    vi.stubGlobal('fetch', upstream)
     const res = await app.request(`/auth/bluesky/start?pubkey=${'a'.repeat(64)}&handle=alice.bsky.social&return_url=${encodeURIComponent('http://localhost:5173/x')}`, {}, env)
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'Invalid return_url: must be a trusted origin' })
+    expect(upstream).not.toHaveBeenCalled()
   })
 })
 
