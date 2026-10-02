@@ -262,6 +262,32 @@ describe('verifier twitter oauth gating', () => {
     expect(html).toContain('For Twitter, GitHub, Mastodon, Telegram, and Discord, use the advanced section')
   })
 
+  it('tells people in the sign-in card which platforms use a post link instead', async () => {
+    const card = (html: string) => {
+      const start = html.indexOf('Quick Connect (no posting)')
+      expect(start).toBeGreaterThan(-1)
+      const end = html.indexOf('id="oauth-start-btn"', start)
+      expect(end).toBeGreaterThan(start)
+      return html.slice(start, end)
+    }
+    expect(card(await homeHtml())).toContain('For Twitter, GitHub, Mastodon, Telegram, Discord, and TikTok, use Step 3 below to paste a post link instead.')
+    expect(card(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig))).toContain('For GitHub, Mastodon, Telegram, Discord, and TikTok, use Step 3 below to paste a post link instead.')
+  })
+
+  it('reads the post-link hint before the picker and ties it to the picker for screen readers', async () => {
+    const html = await homeHtml()
+    const hint = html.indexOf('id="oauth-platform-help"')
+    expect(hint).toBeGreaterThan(-1)
+    expect(hint).toBeLessThan(html.indexOf('<label for="oauth-platform-select"'))
+    expect(html).toContain('<select id="oauth-platform-select" class="field-select" aria-describedby="oauth-platform-help">')
+  })
+
+  it('describes Step 3 as the path for platforms without Quick Connect', async () => {
+    const html = await homeHtml()
+    expect(html).toContain('Use this for platforms without Quick Connect, or if you would rather not sign in.')
+    expect(html).not.toContain('Use this only if you do not want Quick Connect.')
+  })
+
   it('marks Twitter sign-in as unavailable in the supported-platform table', async () => {
     expect(platformTableRow(await homeHtml(), 'twitter')).toContain('<td>No</td>')
     expect(platformTableRow(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig), 'twitter')).toContain('<td>Yes</td>')

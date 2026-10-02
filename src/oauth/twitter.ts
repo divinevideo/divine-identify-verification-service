@@ -9,7 +9,8 @@ const TWITTER_USER_URL = 'https://api.twitter.com/2/users/me'
 // Sign-in only works end to end when every credential is set: the start step
 // needs the client ID and redirect base, and the callback's token exchange
 // also needs the client secret. The page uses this to decide whether to offer
-// Twitter sign-in at all.
+// Twitter sign-in at all, and the start step uses it so nobody is sent to
+// Twitter for a sign-in that cannot finish.
 export function isTwitterOAuthUsable(env: Bindings): boolean {
   return !!env.TWITTER_CLIENT_ID && !!env.TWITTER_CLIENT_SECRET && !!env.OAUTH_REDIRECT_BASE
 }
@@ -19,7 +20,8 @@ export async function startTwitterOAuth(
   pubkey: string,
   returnUrl: string,
 ): Promise<Response> {
-  if (!env.TWITTER_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
+  // The explicit checks after isTwitterOAuthUsable let TypeScript see both values are set.
+  if (!isTwitterOAuthUsable(env) || !env.TWITTER_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
     return new Response(JSON.stringify({ error: 'Twitter OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },

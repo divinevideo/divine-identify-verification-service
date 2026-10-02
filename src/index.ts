@@ -116,17 +116,18 @@ app.get('/', (c) => {
   const ytTableRow = hasYouTube ? '<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>Yes</td></tr>' : ''
   const ttTableRow = hasTikTok ? `<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video ID (numeric)</td><td>${tiktokOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
   const extraPlatformNames = (hasYouTube ? ', YouTube' : '') + (hasTikTok ? ', TikTok' : '')
-  // OAuth-context platform list: leaves out Twitter and TikTok while their
-  // sign-in is unavailable, so the sign-in copy never advertises a path the
-  // picker omits.
-  const oauthPlatformNames = [
-    ...(twitterOAuthEnabled ? ['Twitter'] : []),
-    'Bluesky',
-    ...(hasYouTube ? ['YouTube'] : []),
-    ...(hasTikTok && tiktokOAuthEnabled ? ['TikTok'] : []),
+  // Sign-in platforms, in picker order. Leaves out Twitter and TikTok while
+  // their sign-in is unavailable. The picker and every list of sign-in
+  // platforms in the copy are built from this one list, so the copy never
+  // advertises a path the picker omits.
+  const oauthPlatforms = [
+    ...(twitterOAuthEnabled ? [{ value: 'twitter', name: 'Twitter', shortLabel: 'Twitter/X', optionLabel: 'Twitter / X' }] : []),
+    { value: 'bluesky', name: 'Bluesky', shortLabel: 'Bluesky', optionLabel: 'Bluesky' },
+    ...(hasYouTube ? [{ value: 'youtube', name: 'YouTube', shortLabel: 'YouTube', optionLabel: 'YouTube' }] : []),
+    ...(hasTikTok && tiktokOAuthEnabled ? [{ value: 'tiktok', name: 'TikTok', shortLabel: 'TikTok', optionLabel: 'TikTok' }] : []),
   ]
-  const quickConnectPlatformNames = oauthPlatformNames.map(name => name === 'Twitter' ? 'Twitter/X' : name)
-  const quickConnectPlatformList = listInProse(quickConnectPlatformNames)
+  const oauthPlatformNames = oauthPlatforms.map(platform => platform.name)
+  const quickConnectPlatformList = listInProse(oauthPlatforms.map(platform => platform.shortLabel))
   // Platforms verified only by pasting a post link: the always post-only ones,
   // plus Twitter and TikTok while their sign-in is unavailable. YouTube needs
   // no entry: when it is shown at all, its sign-in is offered.
@@ -145,7 +146,7 @@ app.get('/', (c) => {
   const extraLookupPlatforms = (hasYouTube ? ",'youtube'" : '') + (hasTikTok ? ",'tiktok'" : '')
   const choosePlatforms = `Choose Twitter, GitHub, Bluesky, Mastodon, Telegram, Discord${extraPlatformNames}.`
   const noPostingPlatforms = `No posting required for ${listInProse(oauthPlatformNames)}.`
-  const oauthPlatformOptions = `${twitterOAuthEnabled ? '<option value="twitter">Twitter / X</option>' : ''}<option value="bluesky">Bluesky</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok && tiktokOAuthEnabled ? '<option value="tiktok">TikTok</option>' : ''}`
+  const oauthPlatformOptions = oauthPlatforms.map(platform => `<option value="${platform.value}">${platform.optionLabel}</option>`).join('')
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
   c.header('Cache-Control', 'private, no-store')
@@ -671,8 +672,9 @@ app.get('/', (c) => {
           <span class="step-pill">Step 2 (Recommended)</span>
           <h3 style="margin-top:0;">Quick Connect (no posting)</h3>
           <p>Sign in with the platform account you want to link.</p>
+          <p id="oauth-platform-help" class="field-help">For ${proofPostOnlyPlatformList}, use Step 3 below to paste a post link instead.</p>
           <label for="oauth-platform-select" class="field-label">Platform</label>
-          <select id="oauth-platform-select" class="field-select">
+          <select id="oauth-platform-select" class="field-select" aria-describedby="oauth-platform-help">
             ${oauthPlatformOptions}
           </select>
           <div id="oauth-bluesky-handle-wrap" style="display:none;">
@@ -687,7 +689,7 @@ app.get('/', (c) => {
       <details class="advanced-proof" id="advanced-proof">
         <summary>Step 3 (Advanced): verify by post/link proof instead</summary>
         <div class="advanced-proof-inner">
-          <p style="margin-bottom:0.75rem;">Use this only if you do not want Quick Connect. You can paste a full URL and we'll extract IDs where possible.</p>
+          <p style="margin-bottom:0.75rem;">Use this for platforms without Quick Connect, or if you would rather not sign in. You can paste a full URL and we'll extract IDs where possible.</p>
           <label for="proof-platform-select" class="field-label">Platform</label>
           <select id="proof-platform-select" class="field-select">
             ${proofPlatformOptions}
