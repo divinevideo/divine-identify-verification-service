@@ -10,7 +10,7 @@ import { getOAuthVerification } from '../oauth/state'
 
 const verify = new Hono<{ Bindings: Bindings }>()
 
-const MAX_BATCH_SIZE = 10
+export const MAX_BATCH_SIZE = 10
 
 async function verifySingleClaim(
   claim: VerifyClaim,
