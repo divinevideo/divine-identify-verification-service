@@ -494,6 +494,18 @@ describe('GET /auth/:platform/start return address', () => {
     expect(await res.json()).toEqual({ error: 'Invalid return_url: must be a trusted origin' })
     expect(upstream).not.toHaveBeenCalled()
   })
+
+  it('starts a sign-in that returns to a local page when the verifier runs locally', async () => {
+    const env = {
+      ...createTestEnv(),
+      TWITTER_CLIENT_ID: 'test-client-id',
+      TWITTER_CLIENT_SECRET: 'test-client-secret',
+      OAUTH_REDIRECT_BASE: 'http://localhost:8787',
+    }
+    const res = await app.request(`/auth/twitter/start?pubkey=${'a'.repeat(64)}&return_url=${encodeURIComponent('http://localhost:5173/?signin=abc#verify-here')}`, {}, env)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toMatch(/^https:\/\/twitter\.com\/i\/oauth2\/authorize\?/)
+  })
 })
 
 describe('GET /auth/tiktok/start', () => {

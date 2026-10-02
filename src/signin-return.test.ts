@@ -14,19 +14,96 @@ async function pageHtml(): Promise<string> {
   return res.text()
 }
 
+// The part of the page's script from one marker up to the next.
+function scriptBetween(html: string, from: string, to: string): string {
+  const start = html.indexOf(from)
+  const end = html.indexOf(to, start)
+  expect(start).toBeGreaterThan(-1)
+  expect(end).toBeGreaterThan(start)
+  return html.slice(start, end)
+}
+
 // Runs the landing page's real sign-in return code (from the pending sign-in
 // helpers through handleOAuthCallbackMessage) against stand-ins for the
 // browser, so the test exercises the shipped script rather than a copy of it.
 async function loadReturnHandler() {
-  const html = await pageHtml()
-  const start = html.indexOf('const PENDING_SIGN_IN_KEY')
-  const end = html.indexOf('function showStatus(msg, type)', start)
-  expect(start).toBeGreaterThan(-1)
-  expect(end).toBeGreaterThan(start)
-  const source = html.slice(start, end)
+  const source = scriptBetween(await pageHtml(), 'const PENDING_SIGN_IN_KEY', 'function showStatus(msg, type)')
   const deps = ['window', 'localStorage', 'fetch', 'API', 'setStatus', 'document']
   return (env: Record<string, unknown>) =>
     new Function(...deps, `${source}\nreturn { handleOAuthCallbackMessage, rememberPendingSignIn, newSignInNonce };`)(...deps.map(d => env[d]))
+}
+
+// Runs the page's real sign-in start (startOAuthVerification, with the
+// setAccountInputValue and pending sign-in helpers it calls) against
+// stand-ins for the browser and the rest of the page.
+async function loadSignInStart() {
+  const html = await pageHtml()
+  const source = [
+    scriptBetween(html, 'function setAccountInputValue(value)', 'function inferLoginQueryPubkey(params)'),
+    scriptBetween(html, 'async function startOAuthVerification()', 'async function verifySingleHere()'),
+    scriptBetween(html, 'const PENDING_SIGN_IN_KEY', 'function showStatus(msg, type)'),
+  ].join('\n')
+  const deps = ['window', 'localStorage', 'fetch', 'API', 'setStatus', 'clearStatus', 'setButtonLoading', 'getActivePubkey', 'document']
+  return (env: Record<string, unknown>) =>
+    new Function(...deps, `${source}\nreturn { startOAuthVerification };`)(...deps.map(d => env[d]))
+}
+
+function startHarness(opts: { refusePending?: boolean } = {}) {
+  const store = new Map<string, string>()
+  const statuses: Array<[string, string, string]> = []
+  const buttons: Array<[string, boolean]> = []
+  // Every time the page leaves: where to, and what it had saved by then.
+  const departures: Array<{ url: string, saved: string[] }> = []
+  const leave = (url: string) => { departures.push({ url, saved: [...store.keys()] }) }
+  const fields: Record<string, { value: string }> = {
+    'oauth-platform-select': { value: 'twitter' },
+    'oauth-bluesky-handle-input': { value: '' },
+    'verify-pubkey-input': { value: '' },
+  }
+  const env: Record<string, unknown> = {
+    API,
+    window: { location: { origin: API, pathname: '/', search: '', hash: '', assign: leave, set href(url: string) { leave(url) } } },
+    localStorage: {
+      get length() { return store.size },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        if (opts.refusePending && k.startsWith(PENDING_PREFIX)) throw new Error('QuotaExceededError')
+        store.set(k, v)
+      },
+      removeItem: (k: string) => { store.delete(k) },
+    },
+    fetch: async () => { throw new Error('starting a sign-in must not call the verifier') },
+    setStatus: (id: string, msg: string, type: string) => { statuses.push([id, msg, type]) },
+    clearStatus: () => {},
+    setButtonLoading: (id: string, loading: boolean) => { buttons.push([id, loading]) },
+    getActivePubkey: async () => PUBKEY,
+    document: { getElementById: (id: string) => fields[id] ?? null },
+  }
+  return { env, store, statuses, buttons, departures }
+}
+
+// Runs the page's start-up code, from remembering the account box through the
+// Divine login checks, with the page functions it calls replaced by recorders.
+async function loadStartup() {
+  const source = scriptBetween(await pageHtml(), "document.getElementById('verify-pubkey-input').addEventListener('blur'", '// Lookup tool Enter key')
+  const pageFunctions = ['updateOAuthInputs', 'updateProofInputs', 'handleOAuthCallbackMessage', 'updateSignerSummary', 'maybeHandleKeycastCallback', 'applyLoginQueryHint', 'restoreKeycastSession']
+  return () => {
+    const calls: string[] = []
+    const store = new Map<string, string>()
+    const accountBox = { value: '', addEventListener: () => {} }
+    const env: Record<string, unknown> = {
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => { store.set(k, v) },
+      },
+      document: { getElementById: (id: string) => (id === 'verify-pubkey-input' ? accountBox : null) },
+      ...Object.fromEntries(pageFunctions.map(name => [name, async () => { calls.push(name); return false }])),
+    }
+    const deps = ['localStorage', 'document', ...pageFunctions]
+    new Function(...deps, source)(...deps.map(d => env[d]))
+    return { calls }
+  }
 }
 
 function harness(opts: { search: string, pending?: unknown, statusResponse?: unknown, statusFails?: boolean, statusOk?: boolean, stored?: Record<string, string>, store?: Map<string, string> }) {
@@ -34,6 +111,8 @@ function harness(opts: { search: string, pending?: unknown, statusResponse?: unk
   if (opts.pending !== undefined) store.set(PENDING_KEY, JSON.stringify(opts.pending))
   const statuses: Array<[string, string, string]> = []
   const fetched: string[] = []
+  // Every address the page rewrote itself to.
+  const replaced: string[] = []
   const fields: Record<string, { value: string, open?: boolean, scrollIntoView?: () => void }> = {
     'proof-platform-select': { value: '' },
     'proof-identity-input': { value: '' },
@@ -44,7 +123,7 @@ function harness(opts: { search: string, pending?: unknown, statusResponse?: unk
   const location = { search: opts.search, pathname: '/', hash: '#verify-here' }
   const env: Record<string, unknown> = {
     API,
-    window: { location, history: { replaceState: (_s: unknown, _t: string, url: string) => { location.search = url.includes('?') ? url.slice(url.indexOf('?'), url.indexOf('#') > -1 ? url.indexOf('#') : undefined) : '' } } },
+    window: { location, history: { replaceState: (_s: unknown, _t: string, url: string) => { replaced.push(url); location.search = url.includes('?') ? url.slice(url.indexOf('?'), url.indexOf('#') > -1 ? url.indexOf('#') : undefined) : '' } } },
     localStorage: {
       get length() { return store.size },
       key: (i: number) => [...store.keys()][i] ?? null,
@@ -60,7 +139,7 @@ function harness(opts: { search: string, pending?: unknown, statusResponse?: unk
     setStatus: (id: string, msg: string, type: string) => { statuses.push([id, msg, type]) },
     document: { getElementById: (id: string) => fields[id] ?? null },
   }
-  return { env, statuses, fetched, fields, store, location }
+  return { env, statuses, fetched, fields, store, location, replaced }
 }
 
 const freshPending = (platform = 'twitter') => ({ platform, pubkey: PUBKEY, nonce: NONCE, startedAt: Date.now() })
@@ -130,6 +209,17 @@ describe('sign-in return on the verifier page', () => {
     await load(h.env).handleOAuthCallbackMessage()
     expect(h.fetched).toEqual([])
     expect(h.statuses).toEqual([UNCONFIRMED])
+  })
+
+  it('still confirms a sign-in started 9 minutes ago', async () => {
+    const load = await loadReturnHandler()
+    const h = harness({
+      search: returned(),
+      pending: { ...freshPending(), startedAt: Date.now() - 9 * 60 * 1000 },
+      statusResponse: { verified: true, identity: 'jack' },
+    })
+    await load(h.env).handleOAuthCallbackMessage()
+    expect(h.statuses[h.statuses.length - 1][2]).toBe('ok')
   })
 
   it('uses up the pending sign-in so the same return works only once', async () => {
@@ -239,16 +329,12 @@ describe('sign-in return on the verifier page', () => {
   })
 
   it('does not leave for the provider when the pending sign-in could not be saved', async () => {
-    const html = await pageHtml()
-    const start = html.indexOf('async function startOAuthVerification()')
-    const body = html.slice(start, html.indexOf('async function verifySingleHere()', start))
-    const guard = body.indexOf('if (!rememberPendingSignIn(platform, pubkey, nonce)) {')
-    const leave = body.indexOf("window.location.href = API + '/auth/'")
-    expect(guard).toBeGreaterThan(-1)
-    expect(leave).toBeGreaterThan(guard)
-    // The failure path must stop the start before the page navigates away.
-    const failurePath = body.slice(guard, body.indexOf('}', guard))
-    expect(failurePath).toContain('throw new Error(')
+    const load = await loadSignInStart()
+    const h = startHarness({ refusePending: true })
+    await load(h.env).startOAuthVerification()
+    expect(h.departures).toEqual([])
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['oauth-status', 'This browser would not let the page save your sign-in, so it could not confirm it when you come back. Allow this site to store data and try again.', 'error'])
+    expect(h.buttons[h.buttons.length - 1]).toEqual(['oauth-start-btn', false])
   })
 
   it('tells API callers that the page only reports sign-ins it started', async () => {
@@ -265,6 +351,12 @@ describe('sign-in return on the verifier page', () => {
     expect(h.fetched).toEqual([])
   })
 
+  it('checks for a returning sign-in when the page loads', async () => {
+    const startup = await loadStartup()
+    const { calls } = startup()
+    expect(calls.filter(name => name === 'handleOAuthCallbackMessage')).toHaveLength(1)
+  })
+
   it('remembers the platform and account when a sign-in starts', async () => {
     const load = await loadReturnHandler()
     const h = harness({ search: '' })
@@ -275,14 +367,34 @@ describe('sign-in return on the verifier page', () => {
   })
 
   it('saves the pending sign-in before leaving for the provider', async () => {
-    const html = await pageHtml()
-    const start = html.indexOf('async function startOAuthVerification()')
-    const body = html.slice(start, html.indexOf('async function verifySingleHere()', start))
-    const remember = body.indexOf('rememberPendingSignIn(platform, pubkey, nonce)')
-    expect(remember).toBeGreaterThan(-1)
-    expect(remember).toBeLessThan(body.indexOf("window.location.href = API + '/auth/'"))
+    const load = await loadSignInStart()
+    const h = startHarness()
+    await load(h.env).startOAuthVerification()
+    expect(h.departures).toHaveLength(1)
+    const start = new URL(h.departures[0].url)
+    expect(start.origin + start.pathname).toBe(`${API}/auth/twitter/start`)
+    expect(start.searchParams.get('pubkey')).toBe(PUBKEY)
     // The same one-time code goes into the return address the provider sends the person back to.
-    expect(body).toContain("return_url: window.location.origin + window.location.pathname + '?signin=' + nonce + '#verify-here',")
+    const back = new URL(start.searchParams.get('return_url') as string)
+    expect(back.origin + back.pathname + back.hash).toBe(`${API}/#verify-here`)
+    const code = back.searchParams.get('signin') as string
+    expect(code).toMatch(/^[0-9a-f]{32}$/)
+    expect(h.departures[0].saved).toContain(PENDING_PREFIX + code)
+    expect(JSON.parse(h.store.get(PENDING_PREFIX + code) as string)).toMatchObject({ platform: 'twitter', pubkey: PUBKEY, nonce: code })
+  })
+
+  it('confirms a sign-in it started once the provider sends the person back', async () => {
+    const start = await loadSignInStart()
+    const startTab = startHarness()
+    await start(startTab.env).startOAuthVerification()
+    const back = new URL(new URL(startTab.departures[0].url).searchParams.get('return_url') as string)
+    // The verifier's callback adds the result to the return address.
+    const load = await loadReturnHandler()
+    const h = harness({ search: `${back.search}&oauth_verified=true&platform=twitter&identity=jack`, store: startTab.store, statusResponse: { verified: true, identity: 'jack' } })
+    await load(h.env).handleOAuthCallbackMessage()
+    expect(h.fetched).toEqual([`${API}/auth/twitter/status?pubkey=${PUBKEY}&identity=jack`])
+    expect(h.statuses[h.statuses.length - 1][2]).toBe('ok')
+    expect(h.fields['proof-identity-input'].value).toBe('jack')
   })
 
   it('makes a fresh 32-character one-time code for each sign-in', async () => {
@@ -391,5 +503,12 @@ describe('sign-in return on the verifier page', () => {
     const h = harness({ search: returned(), pending: freshPending(), statusResponse: { verified: true, identity: 'jack' } })
     await load(h.env).handleOAuthCallbackMessage()
     expect(h.location.search).toBe('')
+  })
+
+  it('keeps other parameters and the section anchor when it cleans the address', async () => {
+    const load = await loadReturnHandler()
+    const h = harness({ search: returned('&ref=home'), pending: freshPending(), statusResponse: { verified: true, identity: 'jack' } })
+    await load(h.env).handleOAuthCallbackMessage()
+    expect(h.replaced).toEqual(['/?ref=home#verify-here'])
   })
 })
