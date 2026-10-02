@@ -1,5 +1,7 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { Hono } from 'hono'
+import { schnorr } from '@noble/curves/secp256k1.js'
+import { bytesToHex, hexToBytes } from '@noble/curves/utils.js'
 import type { Bindings } from '../types'
 import auth, { isAllowedReturnUrl } from './auth'
 
@@ -44,8 +46,38 @@ function buildNip98Event(
   }
 }
 
+const LOGIN_URL = 'http://localhost/auth/nostr/login'
+
+// A really signed NIP-98 event (NIP-01 id + BIP-340 signature), so these tests
+// exercise the verifier's own signature check rather than a stubbed upstream.
+async function signNip98Event(
+  secretKey: Uint8Array,
+  overrides: Partial<{ url: string; method: string; created_at: number; content: string }> = {}
+) {
+  const pubkey = bytesToHex(schnorr.getPublicKey(secretKey))
+  const created_at = overrides.created_at ?? Math.floor(Date.now() / 1000)
+  const tags = [
+    ['u', overrides.url || REVOKE_URL],
+    ['method', overrides.method || 'POST'],
+  ]
+  const content = overrides.content ?? ''
+  const serialized = JSON.stringify([0, pubkey, created_at, 27235, tags, content])
+  const id = bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(serialized))))
+  const sig = bytesToHex(schnorr.sign(hexToBytes(id), secretKey))
+  return { id, pubkey, sig, kind: 27235, tags, created_at, content }
+}
+
+// The verifier must check signatures itself; reaching out to another service
+// to do it is the bug these tests guard against.
+function forbidUpstreamFetch() {
+  const fetchSpy = vi.fn(() => { throw new Error('verifier must not call an upstream service to check NIP-98') })
+  vi.stubGlobal('fetch', fetchSpy)
+  return fetchSpy
+}
+
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('POST /auth/oauth/revoke', () => {
@@ -93,20 +125,22 @@ describe('POST /auth/oauth/revoke', () => {
     expect(res.status).toBe(400)
   })
 
-  it('rejects pubkey mismatch between body and event', async () => {
+  it('will not revoke another user\'s record with a validly signed event from a different key', async () => {
     const env = createTestEnv()
-    const otherPubkey = 'cc'.repeat(32)
+    const victimPubkey = bytesToHex(schnorr.getPublicKey(schnorr.utils.randomSecretKey()))
+    const victimKey = `oauth_verified:twitter:alice:${victimPubkey}`
+    await env.CACHE_KV.put(victimKey, JSON.stringify({ verified: true }))
+    // A real, correctly addressed event, but signed by someone else.
+    const attackerEvent = await signNip98Event(schnorr.utils.randomSecretKey())
+    forbidUpstreamFetch()
+
     const res = await app.request('/auth/oauth/revoke', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        platform: 'twitter',
-        identity: 'user',
-        pubkey: testPubkey,
-        event: buildNip98Event(otherPubkey),
-      }),
+      body: JSON.stringify({ platform: 'twitter', identity: 'alice', pubkey: victimPubkey, event: attackerEvent }),
     }, env)
     expect(res.status).toBe(401)
+    expect(await env.CACHE_KV.get(victimKey)).not.toBeNull()
   })
 
   it('rejects NIP-98 events for a different URL', async () => {
@@ -162,16 +196,13 @@ describe('POST /auth/oauth/revoke', () => {
     expect(data.error).toMatch(/too old/)
   })
 
-  it('returns revoked:true and deletes KV entry', async () => {
+  it('returns revoked:true and deletes KV entry for an event signed by a non-admin key, without calling any upstream', async () => {
     const env = createTestEnv()
-    const key = `oauth_verified:twitter:alice:${testPubkey}`
+    const secretKey = schnorr.utils.randomSecretKey()
+    const event = await signNip98Event(secretKey)
+    const key = `oauth_verified:twitter:alice:${event.pubkey}`
     await env.CACHE_KV.put(key, JSON.stringify({ verified: true }))
-
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ pubkey: testPubkey }),
-    }))
+    const fetchSpy = forbidUpstreamFetch()
 
     const res = await app.request('/auth/oauth/revoke', {
       method: 'POST',
@@ -179,8 +210,8 @@ describe('POST /auth/oauth/revoke', () => {
       body: JSON.stringify({
         platform: 'twitter',
         identity: 'alice',
-        pubkey: testPubkey,
-        event: buildNip98Event(testPubkey),
+        pubkey: event.pubkey,
+        event,
       }),
     }, env)
     expect(res.status).toBe(200)
@@ -188,19 +219,32 @@ describe('POST /auth/oauth/revoke', () => {
     expect(data.revoked).toBe(true)
     expect(data.platform).toBe('twitter')
     expect(data.identity).toBe('alice')
+    expect(fetchSpy).not.toHaveBeenCalled()
 
     const after = await env.CACHE_KV.get(key)
     expect(after).toBeNull()
   })
 
+  it('deletes the signer\'s record when the body pubkey is sent in uppercase', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    const key = `oauth_verified:twitter:alice:${event.pubkey}`
+    await env.CACHE_KV.put(key, JSON.stringify({ verified: true }))
+    forbidUpstreamFetch()
+
+    const res = await app.request('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: 'twitter', identity: 'Alice', pubkey: event.pubkey.toUpperCase(), event }),
+    }, env)
+    expect(res.status).toBe(200)
+    expect(await env.CACHE_KV.get(key)).toBeNull()
+  })
+
   it('returns revoked:true even when KV entry already absent (idempotent)', async () => {
     const env = createTestEnv()
-
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ pubkey: testPubkey }),
-    }))
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    forbidUpstreamFetch()
 
     const res = await app.request('/auth/oauth/revoke', {
       method: 'POST',
@@ -208,14 +252,186 @@ describe('POST /auth/oauth/revoke', () => {
       body: JSON.stringify({
         platform: 'bluesky',
         identity: 'alice.bsky.social',
-        pubkey: testPubkey,
-        event: buildNip98Event(testPubkey),
+        pubkey: event.pubkey,
+        event,
       }),
     }, env)
     expect(res.status).toBe(200)
     const data = await res.json() as { revoked: boolean }
     expect(data.revoked).toBe(true)
   })
+
+  it('rejects an event whose signature was not made by its pubkey', async () => {
+    const env = createTestEnv()
+    const secretKey = schnorr.utils.randomSecretKey()
+    const event = await signNip98Event(secretKey)
+    // Correct id, but a signature over a different message.
+    const forged = { ...event, sig: bytesToHex(schnorr.sign(hexToBytes('11'.repeat(32)), secretKey)) }
+    const key = `oauth_verified:twitter:alice:${event.pubkey}`
+    await env.CACHE_KV.put(key, JSON.stringify({ verified: true }))
+    forbidUpstreamFetch()
+
+    const res = await app.request('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: 'twitter', identity: 'alice', pubkey: event.pubkey, event: forged }),
+    }, env)
+    expect(res.status).toBe(401)
+    const data = await res.json() as { error: string }
+    expect(data.error).toMatch(/signature/i)
+    expect(await env.CACHE_KV.get(key)).not.toBeNull()
+  })
+
+  async function revokeWith(event: Record<string, unknown>, pubkey = event.pubkey as string) {
+    return app.request('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: 'twitter', identity: 'alice', pubkey, event }),
+    }, createTestEnv())
+  }
+
+  describe('time window (NIP-98 suggests 60 seconds)', () => {
+    // Pin the clock so the boundary is exact rather than racing the wall clock.
+    const NOW = 1_790_000_000
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(NOW * 1000)
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('accepts events exactly 60 seconds old or ahead', async () => {
+      forbidUpstreamFetch()
+      for (const created_at of [NOW - 60, NOW + 60]) {
+        const res = await revokeWith(await signNip98Event(schnorr.utils.randomSecretKey(), { created_at }))
+        expect(res.status).toBe(200)
+      }
+    })
+
+    it('rejects events 61 seconds old or ahead', async () => {
+      forbidUpstreamFetch()
+      for (const created_at of [NOW - 61, NOW + 61]) {
+        const res = await revokeWith(await signNip98Event(schnorr.utils.randomSecretKey(), { created_at }))
+        expect(res.status).toBe(401)
+      }
+    })
+  })
+
+  it('rejects malformed NIP-98 fields before checking the signature', async () => {
+    forbidUpstreamFetch()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ ...event, created_at: event.created_at + 0.5 }, /created_at/],
+      [{ ...event, content: 7 }, /content/],
+      [{ ...event, kind: 1 }, /kind/],
+      [{ ...event, pubkey: event.pubkey.toUpperCase() }, /lowercase/],
+      [{ ...event, sig: event.sig.toUpperCase() }, /lowercase/],
+      [{ ...event, id: event.id.toUpperCase() }, /lowercase/],
+      [{ ...event, tags: {} }, /tags/],
+      [{ ...event, tags: null }, /tags/],
+      [{ ...event, tags: [...event.tags, 'x'] }, /tags/],
+      [{ ...event, id: [event.id] }, /required/],
+      [{ ...event, pubkey: 5 }, /required/],
+      [{ ...event, sig: [event.sig] }, /required/],
+    ]
+    for (const [bad, message] of cases) {
+      const res = await revokeWith(bad, event.pubkey)
+      expect(res.status).toBe(400)
+      const data = await res.json() as { error: string }
+      expect(data.error).toMatch(message)
+    }
+  })
+
+  it('rejects an event whose id does not match its contents', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    // Signed as-is, then altered: the id and signature no longer cover the event.
+    const tampered = { ...event, content: 'altered after signing' }
+    forbidUpstreamFetch()
+
+    const res = await app.request('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: 'twitter', identity: 'alice', pubkey: event.pubkey, event: tampered }),
+    }, env)
+    expect(res.status).toBe(401)
+    const data = await res.json() as { error: string }
+    expect(data.error).toMatch(/id does not match/)
+  })
+})
+
+describe('POST /auth/nostr/login', () => {
+  async function login(event: unknown) {
+    return app.request('/auth/nostr/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event }),
+    }, createTestEnv())
+  }
+
+  it('accepts an event signed for this endpoint by a non-admin key and returns its pubkey, without calling any upstream', async () => {
+    const event = await signNip98Event(schnorr.utils.randomSecretKey(), { url: LOGIN_URL })
+    const fetchSpy = forbidUpstreamFetch()
+
+    const res = await login(event)
+    expect(res.status).toBe(200)
+    const data = await res.json() as { authenticated: boolean; pubkey: string }
+    expect(data.authenticated).toBe(true)
+    expect(data.pubkey).toBe(event.pubkey)
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('rejects an event signed for login.divine.video instead of this endpoint', async () => {
+    const event = await signNip98Event(schnorr.utils.randomSecretKey(), { url: 'https://login.divine.video/api/auth/login' })
+    forbidUpstreamFetch()
+
+    const res = await login(event)
+    expect(res.status).toBe(401)
+    const data = await res.json() as { error: string }
+    expect(data.error).toMatch(/URL/)
+  })
+
+  it('rejects an event whose signature was not made by its pubkey', async () => {
+    const secretKey = schnorr.utils.randomSecretKey()
+    const event = await signNip98Event(secretKey, { url: LOGIN_URL })
+    const forged = { ...event, sig: bytesToHex(schnorr.sign(hexToBytes('22'.repeat(32)), secretKey)) }
+    forbidUpstreamFetch()
+
+    const res = await login(forged)
+    expect(res.status).toBe(401)
+    const data = await res.json() as { error: string }
+    expect(data.error).toMatch(/signature/i)
+  })
+})
+
+describe('POST /auth/oauth/revoke rejects a non-text or malformed identity with 400, not a crash', () => {
+  for (const identity of [123, ['a'], { a: 1 }, 'x'.repeat(501), 'a<b']) {
+    it(`identity ${JSON.stringify(identity)}`, async () => {
+      forbidUpstreamFetch()
+      const event = await signNip98Event(schnorr.utils.randomSecretKey())
+      const res = await app.request('/auth/oauth/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: 'twitter', identity, pubkey: event.pubkey, event }),
+      }, createTestEnv())
+      expect(res.status).toBe(400)
+    })
+  }
+})
+
+describe('NIP-98 routes reject a null JSON body with 400, not a crash', () => {
+  for (const path of ['/auth/nostr/login', '/auth/oauth/revoke']) {
+    it(`POST ${path}`, async () => {
+      forbidUpstreamFetch()
+      const res = await app.request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'null',
+      }, createTestEnv())
+      expect(res.status).toBe(400)
+    })
+  }
 })
 
 describe('isAllowedReturnUrl', () => {
