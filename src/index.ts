@@ -9,6 +9,13 @@ import nip05 from './routes/nip05'
 import auth from './routes/auth'
 import { EMBED_BRIDGE_SCRIPT } from './embed-bridge'
 import { isTikTokOAuthUsable } from './oauth/tiktok'
+import { isTwitterOAuthUsable } from './oauth/twitter'
+
+// Joins names the way the page's copy reads them: "A", "A and B", "A, B, and C".
+function listInProse(items: string[]): string {
+  if (items.length <= 2) return items.join(' and ')
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`
+}
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -82,6 +89,9 @@ app.get('/', (c) => {
   const origin = requestUrl.origin
   const hasYouTube = !!c.env.YOUTUBE_API_KEY
   const hasTikTok = true // TikTok oEmbed is public, no key needed for proof verification
+  // Twitter proof posts use the public oEmbed endpoint and need no
+  // credentials; only sign-in does, so the page hides just that path.
+  const twitterOAuthEnabled = isTwitterOAuthUsable(c.env)
   // TODO(#39): Enable the production UI after TikTok OAuth is approved.
   // The review cookie survives OAuth redirects without changing their exact
   // registered redirect URI, while ordinary users stay off the sandbox flow.
@@ -106,23 +116,37 @@ app.get('/', (c) => {
   const ytTableRow = hasYouTube ? '<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>Yes</td></tr>' : ''
   const ttTableRow = hasTikTok ? `<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video ID (numeric)</td><td>${tiktokOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
   const extraPlatformNames = (hasYouTube ? ', YouTube' : '') + (hasTikTok ? ', TikTok' : '')
-  // OAuth-context platform list: excludes TikTok while its OAuth app is
-  // hidden, so the sign-in copy never advertises a path the picker omits.
-  const oauthExtraPlatformNames = (hasYouTube ? ', YouTube' : '') + (hasTikTok && tiktokOAuthEnabled ? ', TikTok' : '')
-  const quickConnectPlatformNames = ['Twitter/X', 'Bluesky']
-  if (hasYouTube) quickConnectPlatformNames.push('YouTube')
-  if (hasTikTok && tiktokOAuthEnabled) quickConnectPlatformNames.push('TikTok')
-  const quickConnectPlatformList = `${quickConnectPlatformNames.slice(0, -1).join(', ')}${quickConnectPlatformNames.length > 2 ? ',' : ''} and ${quickConnectPlatformNames[quickConnectPlatformNames.length - 1]}`
+  // Sign-in platforms, in picker order. Leaves out Twitter and TikTok while
+  // their sign-in is unavailable. The picker and every list of sign-in
+  // platforms in the copy are built from this one list, so the copy never
+  // advertises a path the picker omits.
+  const oauthPlatforms = [
+    ...(twitterOAuthEnabled ? [{ value: 'twitter', name: 'Twitter', shortLabel: 'Twitter/X', optionLabel: 'Twitter / X' }] : []),
+    { value: 'bluesky', name: 'Bluesky', shortLabel: 'Bluesky', optionLabel: 'Bluesky' },
+    ...(hasYouTube ? [{ value: 'youtube', name: 'YouTube', shortLabel: 'YouTube', optionLabel: 'YouTube' }] : []),
+    ...(hasTikTok && tiktokOAuthEnabled ? [{ value: 'tiktok', name: 'TikTok', shortLabel: 'TikTok', optionLabel: 'TikTok' }] : []),
+  ]
+  const oauthPlatformNames = oauthPlatforms.map(platform => platform.name)
+  const quickConnectPlatformList = listInProse(oauthPlatforms.map(platform => platform.shortLabel))
+  // Platforms verified only by pasting a post link: the always post-only ones,
+  // plus Twitter and TikTok while their sign-in is unavailable. YouTube needs
+  // no entry: when it is shown at all, its sign-in is offered.
+  const proofPostOnlyPlatformList = listInProse([
+    ...(twitterOAuthEnabled ? [] : ['Twitter']),
+    'GitHub', 'Mastodon', 'Telegram', 'Discord',
+    ...(hasTikTok && !tiktokOAuthEnabled ? ['TikTok'] : []),
+  ])
   const tiktokOAuthHistoryNote = hasTikTok && !tiktokOAuthEnabled
     ? ' Existing TikTok OAuth verifications remain recognized.'
     : ''
   const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
+  const twitterOAuthInlineExample = twitterOAuthEnabled ? `GET ${origin}/auth/twitter/start?pubkey=hex64&amp;return_url=${origin}/#verify-here\n` : ''
   const ytOAuthInlineExample = hasYouTube ? `\nGET ${origin}/auth/youtube/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
   const ttOAuthInlineExample = hasTikTok && tiktokOAuthEnabled ? `\nGET ${origin}/auth/tiktok/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
   const extraLookupPlatforms = (hasYouTube ? ",'youtube'" : '') + (hasTikTok ? ",'tiktok'" : '')
   const choosePlatforms = `Choose Twitter, GitHub, Bluesky, Mastodon, Telegram, Discord${extraPlatformNames}.`
-  const noPostingPlatforms = `No posting required for Twitter${oauthExtraPlatformNames}, and Bluesky.`
-  const oauthPlatformOptions = `<option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok && tiktokOAuthEnabled ? '<option value="tiktok">TikTok</option>' : ''}`
+  const noPostingPlatforms = `No posting required for ${listInProse(oauthPlatformNames)}.`
+  const oauthPlatformOptions = oauthPlatforms.map(platform => `<option value="${platform.value}">${platform.optionLabel}</option>`).join('')
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
   c.header('Cache-Control', 'private, no-store')
@@ -596,7 +620,7 @@ app.get('/', (c) => {
       </div>
 
       <div class="note">
-        <strong>${noPostingPlatforms}</strong> For GitHub, Mastodon, Telegram, and Discord, use the advanced section to paste a post link and verify it.
+        <strong>${noPostingPlatforms}</strong> For ${proofPostOnlyPlatformList}, use the advanced section to paste a post link and verify it.
       </div>
     </section>
 
@@ -648,8 +672,9 @@ app.get('/', (c) => {
           <span class="step-pill">Step 2 (Recommended)</span>
           <h3 style="margin-top:0;">Quick Connect (no posting)</h3>
           <p>Sign in with the platform account you want to link.</p>
+          <p id="oauth-platform-help" class="field-help">For ${proofPostOnlyPlatformList}, use Step 3 below to paste a post link instead.</p>
           <label for="oauth-platform-select" class="field-label">Platform</label>
-          <select id="oauth-platform-select" class="field-select">
+          <select id="oauth-platform-select" class="field-select" aria-describedby="oauth-platform-help">
             ${oauthPlatformOptions}
           </select>
           <div id="oauth-bluesky-handle-wrap" style="display:none;">
@@ -664,7 +689,7 @@ app.get('/', (c) => {
       <details class="advanced-proof" id="advanced-proof">
         <summary>Step 3 (Advanced): verify by post/link proof instead</summary>
         <div class="advanced-proof-inner">
-          <p style="margin-bottom:0.75rem;">Use this only if you do not want Quick Connect. You can paste a full URL and we'll extract IDs where possible.</p>
+          <p style="margin-bottom:0.75rem;">Use this for platforms without Quick Connect, or if you would rather not sign in. You can paste a full URL and we'll extract IDs where possible.</p>
           <label for="proof-platform-select" class="field-label">Platform</label>
           <select id="proof-platform-select" class="field-select">
             ${proofPlatformOptions}
@@ -727,7 +752,7 @@ app.get('/', (c) => {
       <p>Two verification methods are supported:</p>
       <ul>
         <li><strong>Proof posts</strong> &mdash; User publishes a post containing their <code>npub</code> on the external platform. The service fetches the post and checks that the npub is present and the author matches.</li>
-        <li><strong>OAuth login</strong> (Twitter, Bluesky${oauthExtraPlatformNames}) &mdash; User authenticates directly. No proof post needed.</li>
+        <li><strong>OAuth login</strong> (${oauthPlatformNames.join(', ')}) &mdash; User authenticates directly. No proof post needed.</li>
       </ul>
     </section>
 
@@ -745,7 +770,7 @@ app.get('/', (c) => {
           <td><code>twitter</code></td>
           <td>Username (e.g., <code>jack</code>)</td>
           <td>Tweet ID</td>
-          <td>Yes</td>
+          <td>${twitterOAuthEnabled ? 'Yes' : 'No'}</td>
         </tr>
         <tr>
           <td><code>bluesky</code></td>
@@ -862,18 +887,17 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     </section>
 
     <section id="oauth">
-      <h2>OAuth Verification (Twitter, Bluesky${oauthExtraPlatformNames})</h2>
+      <h2>OAuth Verification (${oauthPlatformNames.join(', ')})</h2>
       <p>Users can verify by logging in instead of posting a proof.</p>
       <p>The verifier page only reports sign-ins it started itself. The <code>return_url</code> in these examples is the verifier page; a Divine app that starts its own sign-in should return to its own page on a Divine site and confirm the result with the status check below.</p>
 
       <h3>Start OAuth</h3>
-      <pre>GET ${origin}/auth/twitter/start?pubkey=hex64&amp;return_url=${origin}/#verify-here
-GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;return_url=${origin}/#verify-here${ytOAuthInlineExample}${ttOAuthInlineExample}</pre>
+      <pre>${twitterOAuthInlineExample}GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;return_url=${origin}/#verify-here${ytOAuthInlineExample}${ttOAuthInlineExample}</pre>
 
       <h3>Check OAuth Status</h3>
-      <pre>GET ${origin}/auth/twitter/status?pubkey=hex64&amp;identity=jack</pre>
+      <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=alice.bsky.social</pre>
 
-      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for Twitter, Bluesky${oauthExtraPlatformNames}.${tiktokOAuthHistoryNote}</div>
+      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for ${listInProse(oauthPlatformNames)}.${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">

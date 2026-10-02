@@ -75,6 +75,13 @@ describe('startTwitterOAuth', () => {
     const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/')
     expect(resp.status).toBe(503)
   })
+
+  it('returns 503 without the client secret, before sending anyone to Twitter', async () => {
+    const env = makeEnv({ TWITTER_CLIENT_SECRET: undefined })
+    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    expect(resp.status).toBe(503)
+    expect(resp.headers.get('Location')).toBeNull()
+  })
 })
 
 describe('handleTwitterCallback', () => {

@@ -554,3 +554,121 @@ describe('GET /auth/twitter/callback return address', () => {
     }
   })
 })
+
+describe('GET /auth/:platform/callback after the person cancels or denies sign-in', () => {
+  const PLATFORMS = ['twitter', 'youtube', 'tiktok', 'bluesky'] as const
+  const RETURN_URL = 'https://verifier.divine.video/#verify-here'
+  const LABELS = { twitter: 'Twitter', youtube: 'YouTube', tiktok: 'TikTok', bluesky: 'Bluesky' }
+
+  // The cancel path logs; keep that out of the test output and let the log
+  // test read what was written. The file-level afterEach restores the spies.
+  let warn: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  async function storeState(env: Bindings, stateId: string, platform: string) {
+    await env.CACHE_KV.put(oauthStateKey(stateId), JSON.stringify({
+      platform,
+      pubkey: 'a'.repeat(64),
+      codeVerifier: 'verifier',
+      returnUrl: RETURN_URL,
+      createdAt: Date.now(),
+    }))
+  }
+
+  it.each(PLATFORMS)('%s: sends the person back to where they started, with a reason', async (platform) => {
+    const env = createTestEnv()
+    await storeState(env, 'state-1', platform)
+    const res = await app.request(`/auth/${platform}/callback?error=access_denied&state=state-1`, {}, env)
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get('Location') as string)
+    expect(location.origin + location.pathname).toBe('https://verifier.divine.video/')
+    expect(location.hash).toBe('#verify-here')
+    expect(location.searchParams.get('oauth_error')).toBe(`cancelled or declined at ${LABELS[platform]}`)
+    expect(location.searchParams.has('oauth_verified')).toBe(false)
+  })
+
+  it.each(PLATFORMS)('%s: uses up the stored sign-in state', async (platform) => {
+    const env = createTestEnv()
+    await storeState(env, 'state-1', platform)
+    await app.request(`/auth/${platform}/callback?error=access_denied&state=state-1`, {}, env)
+    expect(await env.CACHE_KV.get(oauthStateKey('state-1'))).toBeNull()
+  })
+
+  it.each(PLATFORMS)('%s: falls back to the verifier page when the state is unknown or expired', async (platform) => {
+    const res = await app.request(`/auth/${platform}/callback?error=access_denied&state=missing`, {}, createTestEnv())
+    expect(res.status).toBe(302)
+    const location = res.headers.get('Location') as string
+    expect(location.startsWith('/?')).toBe(true)
+    expect(new URLSearchParams(location.slice(2)).get('oauth_error')).toBe(`cancelled or declined at ${LABELS[platform]}`)
+  })
+
+  it.each(PLATFORMS)('%s: falls back to the verifier page when the provider sends no state', async (platform) => {
+    const res = await app.request(`/auth/${platform}/callback?error=access_denied`, {}, createTestEnv())
+    expect(res.status).toBe(302)
+    const location = res.headers.get('Location') as string
+    expect(location.startsWith('/?')).toBe(true)
+    expect(new URLSearchParams(location.slice(2)).get('oauth_error')).toBe(`cancelled or declined at ${LABELS[platform]}`)
+  })
+
+  it.each(PLATFORMS)('%s: falls back to the verifier page when the state store fails', async (platform) => {
+    const env = createTestEnv()
+    env.CACHE_KV = { ...env.CACHE_KV, get: async () => { throw new Error('storage unavailable') } } as unknown as KVNamespace
+    const res = await app.request(`/auth/${platform}/callback?error=access_denied&state=state-1`, {}, env)
+    expect(res.status).toBe(302)
+    const location = res.headers.get('Location') as string
+    expect(location.startsWith('/?')).toBe(true)
+    expect(new URLSearchParams(location.slice(2)).get('oauth_error')).toBe(`cancelled or declined at ${LABELS[platform]}`)
+  })
+
+  it('ignores, and keeps, a state that belongs to a different platform', async () => {
+    const env = createTestEnv()
+    await storeState(env, 'state-1', 'bluesky')
+    const res = await app.request('/auth/twitter/callback?error=access_denied&state=state-1', {}, env)
+    expect(res.status).toBe(302)
+    expect((res.headers.get('Location') as string).startsWith('/?')).toBe(true)
+    expect(await env.CACHE_KV.get(oauthStateKey('state-1'))).not.toBeNull()
+  })
+
+  it('logs only a well-formed provider error code, never its description or the state id', async () => {
+    const env = createTestEnv()
+    await storeState(env, 'state-1', 'twitter')
+    await app.request('/auth/twitter/callback?error=access_denied&error_description=private+detail&state=state-1', {}, env)
+    await app.request('/auth/twitter/callback?error=%3Cb%3Eboom%3C%2Fb%3E&state=state-2', {}, env)
+    expect(warn.mock.calls.map(call => call[1])).toEqual(['access_denied', 'other'])
+    const logged = JSON.stringify(warn.mock.calls)
+    expect(logged).not.toContain('private detail')
+    expect(logged).not.toContain('state-1')
+    expect(logged).not.toContain('boom')
+  })
+
+  it.each(PLATFORMS)('%s: describes a provider-side error as not completed, not as a cancel', async (platform) => {
+    const env = createTestEnv()
+    await storeState(env, 'state-1', platform)
+    const res = await app.request(`/auth/${platform}/callback?error=server_error&state=state-1`, {}, env)
+    const location = new URL(res.headers.get('Location') as string)
+    expect(location.origin + location.pathname).toBe('https://verifier.divine.video/')
+    expect(location.searchParams.get('oauth_error')).toBe(`could not be completed at ${LABELS[platform]}`)
+  })
+
+  it('still returns the person to where they started when clearing the state fails', async () => {
+    const env = createTestEnv()
+    await storeState(env, 'state-1', 'twitter')
+    env.CACHE_KV = { ...env.CACHE_KV, delete: async () => { throw new Error('storage unavailable') } } as unknown as KVNamespace
+    const res = await app.request('/auth/twitter/callback?error=access_denied&state=state-1', {}, env)
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get('Location') as string)
+    expect(location.origin + location.pathname + location.hash).toBe('https://verifier.divine.video/#verify-here')
+    expect(location.searchParams.get('oauth_error')).toBe('cancelled or declined at Twitter')
+  })
+
+  it('does not pass the provider\'s error text through to the page', async () => {
+    const env = createTestEnv()
+    await storeState(env, 'state-1', 'twitter')
+    const res = await app.request('/auth/twitter/callback?error=%3Cb%3Eboom%3C%2Fb%3E&state=state-1', {}, env)
+    const location = new URL(res.headers.get('Location') as string)
+    expect(location.searchParams.get('oauth_error')).toBe('could not be completed at Twitter')
+  })
+})

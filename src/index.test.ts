@@ -64,32 +64,40 @@ describe('verifier footer', () => {
   })
 })
 
+async function homeHtml(
+  url = 'https://verifier.divine.video/',
+  env = {},
+  headers: HeadersInit = {},
+): Promise<string> {
+  const response = await worker.fetch(
+    new Request(url, { headers }),
+    env as never,
+  )
+  expect(response.status).toBe(200)
+  return response.text()
+}
+
+function sliceSelect(html: string, id: string): string {
+  const start = html.indexOf(`id="${id}"`)
+  expect(start).toBeGreaterThan(-1)
+  const end = html.indexOf('</select>', start)
+  expect(end).toBeGreaterThan(start)
+  return html.slice(start, end)
+}
+
+// Twitter sign-in needs all three: the start step uses the client ID and
+// redirect base, and the callback's token exchange also needs the secret.
+const twitterOAuthConfig = {
+  TWITTER_CLIENT_ID: 'test-client-id',
+  TWITTER_CLIENT_SECRET: 'test-client-secret',
+  OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
+}
+
 describe('verifier tiktok oauth gating', () => {
   const tiktokOAuthConfig = {
     TIKTOK_CLIENT_KEY: 'test-client-key',
     TIKTOK_CLIENT_SECRET: 'test-client-secret',
     OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
-  }
-
-  async function homeHtml(
-    url = 'https://verifier.divine.video/',
-    env = {},
-    headers: HeadersInit = {},
-  ): Promise<string> {
-    const response = await worker.fetch(
-      new Request(url, { headers }),
-      env as never,
-    )
-    expect(response.status).toBe(200)
-    return response.text()
-  }
-
-  function sliceSelect(html: string, id: string): string {
-    const start = html.indexOf(`id="${id}"`)
-    expect(start).toBeGreaterThan(-1)
-    const end = html.indexOf('</select>', start)
-    expect(end).toBeGreaterThan(start)
-    return html.slice(start, end)
   }
 
   it('hides TikTok from the OAuth picker while its OAuth app is unapproved', async () => {
@@ -161,7 +169,7 @@ describe('verifier tiktok oauth gating', () => {
   })
 
   it('does not advertise TikTok in the no-posting sign-in instructions', async () => {
-    const html = await homeHtml()
+    const html = await homeHtml('https://verifier.divine.video/', twitterOAuthConfig)
     const marker = 'just sign in from this page'
     const idx = html.indexOf(marker)
     expect(idx).toBeGreaterThan(-1)
@@ -181,7 +189,7 @@ describe('verifier tiktok oauth gating', () => {
   })
 
   it('renders a grammatical Quick Connect list', async () => {
-    const html = await homeHtml('https://verifier.divine.video/', { YOUTUBE_API_KEY: 'key' })
+    const html = await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, YOUTUBE_API_KEY: 'key' })
     expect(html).toContain('For Twitter/X, Bluesky, and YouTube, just sign in')
   })
 
@@ -191,6 +199,114 @@ describe('verifier tiktok oauth gating', () => {
 
   it('documents why TikTok is unavailable through the platforms endpoint', async () => {
     expect(await homeHtml()).toContain('TikTok reports unsupported while production OAuth rollout is gated')
+  })
+})
+
+describe('verifier twitter oauth gating', () => {
+  function platformTableRow(html: string, code: string): string {
+    const marker = `<td><code>${code}</code></td>`
+    const idx = html.indexOf(marker)
+    expect(idx).toBeGreaterThan(-1)
+    return html.slice(html.lastIndexOf('<tr>', idx), html.indexOf('</tr>', idx))
+  }
+
+  function oauthDocsSection(html: string): string {
+    const start = html.indexOf('<section id="oauth">')
+    expect(start).toBeGreaterThan(-1)
+    return html.slice(start, html.indexOf('</section>', start))
+  }
+
+  it('hides Twitter from the sign-in picker when Twitter sign-in is not configured', async () => {
+    const oauthSelect = sliceSelect(await homeHtml(), 'oauth-platform-select')
+    expect(oauthSelect).not.toContain('value="twitter"')
+    expect(oauthSelect).toContain('value="bluesky"')
+  })
+
+  it('keeps Twitter in the proof-post picker', async () => {
+    const proofSelect = sliceSelect(await homeHtml(), 'proof-platform-select')
+    expect(proofSelect).toContain('value="twitter"')
+  })
+
+  it('offers Twitter sign-in when it is fully configured', async () => {
+    const oauthSelect = sliceSelect(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig), 'oauth-platform-select')
+    expect(oauthSelect).toContain('value="twitter"')
+  })
+
+  it.each(Object.keys(twitterOAuthConfig))('keeps Twitter sign-in hidden without %s', async (missing) => {
+    const partial = Object.fromEntries(Object.entries(twitterOAuthConfig).filter(([key]) => key !== missing))
+    const oauthSelect = sliceSelect(await homeHtml('https://verifier.divine.video/', partial), 'oauth-platform-select')
+    expect(oauthSelect).not.toContain('value="twitter"')
+  })
+
+  it('points Twitter users to proof posts instead of sign-in when it is not configured', async () => {
+    const html = await homeHtml()
+    expect(html).toContain('For Bluesky, just sign in from this page.')
+    expect(html).toContain('No posting required for Bluesky.')
+    expect(html).toContain('For Twitter, GitHub, Mastodon, Telegram, Discord, and TikTok, use the advanced section')
+  })
+
+  it('describes Twitter as a sign-in platform when it is configured', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', twitterOAuthConfig)
+    expect(html).toContain('For Twitter/X and Bluesky, just sign in from this page.')
+    expect(html).toContain('No posting required for Twitter and Bluesky.')
+    expect(html).toContain('For GitHub, Mastodon, Telegram, Discord, and TikTok, use the advanced section')
+  })
+
+  it('leaves TikTok out of the post-link list once its sign-in is enabled', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', {
+      TIKTOK_CLIENT_KEY: 'test-client-key',
+      TIKTOK_CLIENT_SECRET: 'test-client-secret',
+      OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
+      TIKTOK_OAUTH_ENABLED: 'true',
+    })
+    expect(html).toContain('For Twitter, GitHub, Mastodon, Telegram, and Discord, use the advanced section')
+  })
+
+  it('tells people in the sign-in card which platforms use a post link instead', async () => {
+    const card = (html: string) => {
+      const start = html.indexOf('Quick Connect (no posting)')
+      expect(start).toBeGreaterThan(-1)
+      const end = html.indexOf('id="oauth-start-btn"', start)
+      expect(end).toBeGreaterThan(start)
+      return html.slice(start, end)
+    }
+    expect(card(await homeHtml())).toContain('For Twitter, GitHub, Mastodon, Telegram, Discord, and TikTok, use Step 3 below to paste a post link instead.')
+    expect(card(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig))).toContain('For GitHub, Mastodon, Telegram, Discord, and TikTok, use Step 3 below to paste a post link instead.')
+  })
+
+  it('reads the post-link hint before the picker and ties it to the picker for screen readers', async () => {
+    const html = await homeHtml()
+    const hint = html.indexOf('id="oauth-platform-help"')
+    expect(hint).toBeGreaterThan(-1)
+    expect(hint).toBeLessThan(html.indexOf('<label for="oauth-platform-select"'))
+    expect(html).toContain('<select id="oauth-platform-select" class="field-select" aria-describedby="oauth-platform-help">')
+  })
+
+  it('describes Step 3 as the path for platforms without Quick Connect', async () => {
+    const html = await homeHtml()
+    expect(html).toContain('Use this for platforms without Quick Connect, or if you would rather not sign in.')
+    expect(html).not.toContain('Use this only if you do not want Quick Connect.')
+  })
+
+  it('marks Twitter sign-in as unavailable in the supported-platform table', async () => {
+    expect(platformTableRow(await homeHtml(), 'twitter')).toContain('<td>No</td>')
+    expect(platformTableRow(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig), 'twitter')).toContain('<td>Yes</td>')
+  })
+
+  it('leaves Twitter out of the sign-in API docs when it is not configured', async () => {
+    const html = await homeHtml()
+    const docs = oauthDocsSection(html)
+    expect(docs).toContain('<h2>OAuth Verification (Bluesky)</h2>')
+    expect(docs).not.toContain('/auth/twitter/')
+    expect(docs).toContain('/auth/bluesky/status?pubkey=hex64&amp;identity=alice.bsky.social')
+    expect(docs).toContain('fallback during proof-post verification for Bluesky.')
+    expect(html).toContain('<li><strong>OAuth login</strong> (Bluesky) &mdash;')
+  })
+
+  it('documents Twitter sign-in when it is configured', async () => {
+    const docs = oauthDocsSection(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig))
+    expect(docs).toContain('<h2>OAuth Verification (Twitter, Bluesky)</h2>')
+    expect(docs).toContain('/auth/twitter/start?pubkey=hex64')
   })
 })
 

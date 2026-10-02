@@ -1,10 +1,11 @@
 import { Hono } from 'hono'
 import { getCookie } from 'hono/cookie'
+import type { Context } from 'hono'
 import type { Bindings, OAuthPlatform } from '../types'
 import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
-import { getOAuthVerification, deleteOAuthVerification } from '../oauth/state'
+import { getOAuthVerification, deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
@@ -248,6 +249,61 @@ auth.get('/:platform/start', async (c) => {
   }
 })
 
+const SIGN_IN_LABELS: Record<OAuthPlatform, string> = {
+  twitter: 'Twitter',
+  youtube: 'YouTube',
+  tiktok: 'TikTok',
+  bluesky: 'Bluesky',
+}
+
+// A sign-in the provider did not complete comes back with `error` and, per
+// RFC 6749 4.1.2.1, the `state` we sent. Send the person back to where the
+// sign-in started, like the success path does, instead of leaving them on a
+// raw error. The provider's own error text is not passed on. A state that is
+// missing, expired or belongs to another platform falls back to the verifier
+// page and is left untouched.
+async function redirectAfterUnfinishedSignIn(
+  c: Context<{ Bindings: Bindings }>,
+  platform: OAuthPlatform,
+  providerError: string,
+  stateId: string | undefined,
+): Promise<Response> {
+  // Log only the provider's error code, and only when it looks like one, so
+  // a misconfigured app can be told apart from a person saying no. The
+  // description and the state id are never logged.
+  console.warn(`${platform} sign-in returned an error:`, /^[a-z_]{1,64}$/.test(providerError) ? providerError : 'other')
+
+  // The page shows this after "Sign-in was not completed: ". `access_denied`
+  // means the request was refused, usually by the person; any other code means
+  // the sign-in failed for another reason, possibly our own configuration, so
+  // it isn't described as a cancel.
+  const label = SIGN_IN_LABELS[platform]
+  const reason = {
+    oauth_error: providerError === 'access_denied' ? `cancelled or declined at ${label}` : `could not be completed at ${label}`,
+  }
+  const fallback = () => c.redirect(buildReturnUrl('/', reason))
+  if (!stateId) return fallback()
+
+  let returnUrl: string
+  try {
+    const state = await getOAuthState(c.env.CACHE_KV, stateId)
+    if (!state || state.platform !== platform) return fallback()
+    returnUrl = state.returnUrl
+  } catch (err) {
+    // Like the success path: a storage failure must not strand the person.
+    console.error(`${platform} unfinished sign-in state lookup failed:`, err instanceof Error ? err.message : err)
+    return fallback()
+  }
+  try {
+    await deleteOAuthState(c.env.CACHE_KV, stateId)
+  } catch (err) {
+    // The return address is already known and was checked when the sign-in
+    // started; the leftover state expires on its own (src/oauth/state.ts).
+    console.error(`${platform} unfinished sign-in state cleanup failed:`, err instanceof Error ? err.message : err)
+  }
+  return c.redirect(buildReturnUrl(returnUrl, reason))
+}
+
 // OAuth callbacks
 auth.get('/twitter/callback', async (c) => {
   const code = c.req.query('code')
@@ -255,7 +311,7 @@ auth.get('/twitter/callback', async (c) => {
   const error = c.req.query('error')
 
   if (error) {
-    return c.json({ error: 'Twitter OAuth was denied or cancelled' }, 400)
+    return redirectAfterUnfinishedSignIn(c, 'twitter', error, state)
   }
   if (!code || !state) {
     return c.json({ error: 'Missing code or state parameter' }, 400)
@@ -280,7 +336,7 @@ auth.get('/youtube/callback', async (c) => {
   const error = c.req.query('error')
 
   if (error) {
-    return c.json({ error: 'YouTube OAuth was denied or cancelled' }, 400)
+    return redirectAfterUnfinishedSignIn(c, 'youtube', error, state)
   }
   if (!code || !state) {
     return c.json({ error: 'Missing code or state parameter' }, 400)
@@ -305,7 +361,7 @@ auth.get('/tiktok/callback', async (c) => {
   const error = c.req.query('error')
 
   if (error) {
-    return c.json({ error: 'TikTok OAuth was denied or cancelled' }, 400)
+    return redirectAfterUnfinishedSignIn(c, 'tiktok', error, state)
   }
   if (!code || !state) {
     return c.json({ error: 'Missing code or state parameter' }, 400)
@@ -331,7 +387,7 @@ auth.get('/bluesky/callback', async (c) => {
   const error = c.req.query('error')
 
   if (error) {
-    return c.json({ error: 'Bluesky OAuth was denied or cancelled' }, 400)
+    return redirectAfterUnfinishedSignIn(c, 'bluesky', error, state)
   }
   if (!code || !state || !iss) {
     return c.json({ error: 'Missing code, state, or iss parameter' }, 400)
