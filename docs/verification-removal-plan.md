@@ -41,7 +41,7 @@ divine-web's `LinkedAccountsSettingsPage` already lets users remove identity cla
 
 ### Backend (`src/routes/auth.ts`)
 - Existing auth capability:
-  - `POST /auth/nostr/login` validates NIP-98 event via `login.divine.video`.
+  - `POST /auth/nostr/login` validates the NIP-98 event in the worker: id hash, Schnorr signature, `u` = this endpoint's URL, method, and a 60s window. (Before #66 it forwarded the event to `login.divine.video`, which only accepts admin keys and its own URL.)
 - Existing OAuth capability:
   - `GET /auth/:platform/start`, callbacks, and `GET /auth/:platform/status`.
 - Missing today:
@@ -148,19 +148,18 @@ Behavior:
 1. Validate JSON/body fields.
 2. Validate platform is OAuth-supported.
 3. Validate `pubkey` and normalize.
-4. Verify `event` through same upstream trust path used by `/auth/nostr/login` (`login.divine.video`).
+4. Verify `event` locally with the same NIP-98 check used by `/auth/nostr/login` (#66).
 5. Ensure authenticated pubkey equals body pubkey.
 6. Delete OAuth verification key from `CACHE_KV`.
 7. Return `200 { revoked: true, platform, identity }`.
 
 Recommended refactor:
-- Extract shared helper from `/auth/nostr/login` for login.divine.video verification to avoid duplicated event validation/fetch logic.
+- Both endpoints share one NIP-98 verification helper in `src/routes/auth.ts` (#66).
 
 Error model:
 - `400` invalid input
 - `401` auth/pubkey mismatch
 - `429` rate limit exceeded
-- `502` upstream login verification unavailable
 - `500` unexpected server error
 
 ### OAuth Helper Changes (`src/oauth/state.ts`)
