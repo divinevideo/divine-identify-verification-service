@@ -4,7 +4,7 @@ import { getCookie, setCookie } from 'hono/cookie'
 import type { Bindings } from './types'
 import health from './routes/health'
 import platforms from './routes/platforms'
-import verify from './routes/verify'
+import verify, { MAX_BATCH_SIZE } from './routes/verify'
 import nip05 from './routes/nip05'
 import auth from './routes/auth'
 import { EMBED_BRIDGE_SCRIPT } from './embed-bridge'
@@ -919,6 +919,7 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
     const NOSTR_TOOLS_NIP46_URL = 'https://esm.sh/nostr-tools@2.23.3/nip46?bundle';
     const NOSTR_TOOLS_PURE_URL = 'https://esm.sh/nostr-tools@2.23.3/pure?bundle';
     const PROFILE_RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
+    const VERIFY_BATCH_SIZE = ${MAX_BATCH_SIZE};
     // NIP-46 traffic needs relays that accept kind 24133 events.
     const REMOTE_SIGNER_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.snort.social', 'wss://relay.primal.net'];
     let signerPubkeyHex = null;
@@ -2101,7 +2102,9 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
           try {
             if (!identityEvent) identityEvent = await fetchIdentityEvent(relay, pubkey);
             if (!legacyProfile) legacyProfile = await fetchProfileLegacy(relay, pubkey);
-            if (identityEvent) break;
+            // Keep going until both are found: the claims live in the identity
+            // event, but the NIP-05 lives in the kind 0 profile.
+            if (identityEvent && legacyProfile) break;
           } catch { /* try next relay */ }
         }
 
@@ -2146,32 +2149,37 @@ GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;r
 
         showStatus('Verifying ' + claims.length + ' identity claim(s)...', 'loading');
 
-        // Batch verify
-        const verifyResp = await fetch(API + '/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ claims }),
-        });
-        const verifyData = await verifyResp.json();
+        // Batch verify, at most VERIFY_BATCH_SIZE claims per request (the server's limit).
+        let allResults = [];
+        for (let i = 0; i < claims.length; i += VERIFY_BATCH_SIZE) {
+          const verifyResp = await fetch(API + '/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ claims: claims.slice(i, i + VERIFY_BATCH_SIZE) }),
+          });
+          const verifyData = await verifyResp.json();
 
-        if (verifyData.error) {
-          showStatus('Verification error: ' + verifyData.error, 'error');
-          return;
+          if (verifyData.error) {
+            showStatus('Verification error: ' + verifyData.error, 'error');
+            return;
+          }
+          allResults = allResults.concat(verifyData.results || []);
         }
 
-        // Also check NIP-05
-        const content = tryParseJSON(profile.content);
-        let allResults = verifyData.results || [];
+        // Also check NIP-05, which lives in the kind 0 profile.
+        const content = legacyProfile ? tryParseJSON(legacyProfile.content) : null;
         if (content && content.nip05) {
-          const nip05Resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(content.nip05) + '&pubkey=' + pubkey);
-          const nip05Result = await nip05Resp.json();
-          allResults = [{
-            platform: 'nip05',
-            identity: content.nip05,
-            verified: nip05Result.verified,
-            error: nip05Result.error,
-            cached: nip05Result.cached
-          }, ...allResults];
+          // The NIP-05 row is extra: if its check fails, show that row as not
+          // verified rather than hiding the accounts that did verify.
+          let nip05Row;
+          try {
+            const nip05Resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(content.nip05) + '&pubkey=' + pubkey);
+            const nip05Result = await nip05Resp.json();
+            nip05Row = { platform: 'nip05', identity: content.nip05, verified: nip05Result.verified, error: nip05Result.error, cached: nip05Result.cached };
+          } catch {
+            nip05Row = { platform: 'nip05', identity: content.nip05, verified: false, error: 'NIP-05 check failed', cached: false };
+          }
+          allResults = [nip05Row, ...allResults];
         }
 
         hideStatus();
