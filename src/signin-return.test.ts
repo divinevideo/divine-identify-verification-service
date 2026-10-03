@@ -95,7 +95,7 @@ function startHarness(opts: { refusePending?: boolean, blockStorage?: boolean } 
 // Divine login checks, with the page functions it calls replaced by recorders.
 async function loadStartup() {
   const source = scriptBetween(await pageHtml(), "document.getElementById('verify-pubkey-input').addEventListener('blur'", '// Lookup tool Enter key')
-  const pageFunctions = ['updateOAuthInputs', 'updateProofInputs', 'handleOAuthCallbackMessage', 'updateSignerSummary', 'maybeHandleKeycastCallback', 'applyLoginQueryHint', 'restoreKeycastSession']
+  const pageFunctions = ['updateOAuthInputs', 'updateProofInputs', 'handleOAuthCallbackMessage', 'forgetExpiredSignIns', 'updateSignerSummary', 'maybeHandleKeycastCallback', 'applyLoginQueryHint', 'restoreKeycastSession']
   return (opts: { blockStorage?: boolean } = {}) => {
     const calls: string[] = []
     const store = new Map<string, string>()
@@ -375,6 +375,12 @@ describe('sign-in return on the verifier page', () => {
     const startup = await loadStartup()
     const { calls } = startup()
     expect(calls.filter(name => name === 'handleOAuthCallbackMessage')).toHaveLength(1)
+  })
+
+  it('clears out expired pending sign-ins when the page loads', async () => {
+    const startup = await loadStartup()
+    const { calls } = startup()
+    expect(calls.filter(name => name === 'forgetExpiredSignIns')).toHaveLength(1)
   })
 
   it('still checks for a returning sign-in when the browser blocks storage', async () => {

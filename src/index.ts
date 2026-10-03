@@ -2639,6 +2639,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     updateOAuthInputs();
     updateProofInputs();
     handleOAuthCallbackMessage();
+    // Sign-ins that failed to start or were abandoned never come back to be
+    // used up, so drop the expired ones here too.
+    forgetExpiredSignIns();
     updateSignerSummary();
     (async () => {
       const handledKeycast = await maybeHandleKeycastCallback();
