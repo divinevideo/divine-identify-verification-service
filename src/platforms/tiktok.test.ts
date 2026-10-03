@@ -37,7 +37,7 @@ describe('TikTokVerifier', () => {
 
     const result = await verifier.verify('testuser', '7123456789012345678', npub)
     expect(result.verified).toBe(false)
-    expect(result.error).toContain('npub not found')
+    expect(result.error).toBe('npub not found in post caption')
   })
 
   it('returns error when author does not match identity', async () => {
@@ -119,7 +119,7 @@ describe('TikTokVerifier', () => {
 
     const result = await verifier.verify('foo7323', '7676181219524021535', npub)
     expect(result.verified).toBe(false)
-    expect(result.error).toContain('did not say who posted this video')
+    expect(result.error).toContain('did not say whose post this is')
   })
 
   it('ignores a non-HTTPS author_url', async () => {
@@ -135,7 +135,7 @@ describe('TikTokVerifier', () => {
 
     const result = await verifier.verify('foo7323', '7676181219524021535', npub)
     expect(result.verified).toBe(false)
-    expect(result.error).toContain('did not say who posted this video')
+    expect(result.error).toContain('did not say whose post this is')
   })
 
   it('ignores an author_url that is not a bare @handle profile path', async () => {
@@ -151,7 +151,7 @@ describe('TikTokVerifier', () => {
 
     const result = await verifier.verify('foo7323', '7676181219524021535', npub)
     expect(result.verified).toBe(false)
-    expect(result.error).toContain('did not say who posted this video')
+    expect(result.error).toContain('did not say whose post this is')
   })
 
   it('returns error when neither author_unique_id nor a valid author_url is present', async () => {
@@ -166,7 +166,7 @@ describe('TikTokVerifier', () => {
 
     const result = await verifier.verify('testuser', '7123456789012345678', npub)
     expect(result.verified).toBe(false)
-    expect(result.error).toContain('did not say who posted this video')
+    expect(result.error).toContain('did not say whose post this is')
   })
 
   it('returns error for 404 video', async () => {
@@ -197,7 +197,7 @@ describe('TikTokVerifier', () => {
 
     const result = await verifier.verify('testuser', '7123456789012345678', npub)
     expect(result.verified).toBe(false)
-    expect(result.error).toContain('Failed to fetch')
+    expect(result.error).toBe('Failed to fetch TikTok post')
   })
 
   it('returns error on non-ok response', async () => {
@@ -364,7 +364,7 @@ describe('TikTokVerifier: the links people paste', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const result = await verifier.verify('testuser', 'https://www.tiktok.com/@testuser', npub)
-    expect(result).toEqual({ verified: false, error: 'That is a TikTok profile link. Paste a link to a video whose caption contains your npub.' })
+    expect(result).toEqual({ verified: false, error: 'That is a TikTok profile link. Paste a link to a post whose caption contains your npub.' })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -383,7 +383,7 @@ describe('TikTokVerifier: the links people paste', () => {
   it('explains a share link that leads to a profile', async () => {
     stubShareThenOembed('https://www.tiktok.com/@testuser?_t=xyz')
     const result = await verifier.verify('testuser', 'https://vm.tiktok.com/ZMabc123/', npub)
-    expect(result.error).toBe('That is a TikTok profile link. Paste a link to a video whose caption contains your npub.')
+    expect(result.error).toBe('That is a TikTok profile link. Paste a link to a post whose caption contains your npub.')
   })
 
   it.each([
@@ -418,10 +418,10 @@ describe('TikTokVerifier: the links people paste', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('says plainly when TikTok does not say who posted the video', async () => {
+  it('says plainly when TikTok does not say whose post it is', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ author_url: 'https://www.tiktok.com/', title: '' }) }))
     const result = await verifier.verify('testuser', VIDEO_ID, npub)
-    expect(result).toEqual({ verified: false, error: 'TikTok did not say who posted this video, so it cannot be checked.' })
+    expect(result).toEqual({ verified: false, error: 'TikTok did not say whose post this is, so it cannot be checked.' })
   })
 
   it.each([
@@ -440,7 +440,7 @@ describe('TikTokVerifier: the links people paste', () => {
       .mockResolvedValueOnce({ ok: false, status: 301, headers: new Headers({ Location: `https://www.tiktok.com/@someoneelse/video/${VIDEO_ID}` }) })
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ author_unique_id: 'someoneelse', title: `key ${npub}` }) }))
     const result = await verifier.verify('testuser', 'https://vm.tiktok.com/ZMabc123/', npub)
-    expect(result).toEqual({ verified: false, error: 'Video author does not match claimed identity' })
+    expect(result).toEqual({ verified: false, error: 'Post author does not match claimed identity' })
   })
 
   it('reports no separate post number when the proof already is one', async () => {

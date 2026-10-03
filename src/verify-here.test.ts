@@ -65,7 +65,7 @@ describe('Verify this link', () => {
 
   it('leaves the proof alone when verification fails', async () => {
     const load = await loadVerifySingleHere()
-    const h = harness({ verified: false, error: 'npub not found in video caption', canonical_proof: '7123456789012345678' }, 'https://vm.tiktok.com/ZMabc123/')
+    const h = harness({ verified: false, error: 'npub not found in post caption', canonical_proof: '7123456789012345678' }, 'https://vm.tiktok.com/ZMabc123/')
     await load(h.env)()
     expect(h.fields['proof-proof-input'].value).toBe('https://vm.tiktok.com/ZMabc123/')
   })

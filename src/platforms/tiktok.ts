@@ -136,7 +136,7 @@ export class TikTokVerifier implements PlatformVerifier {
       if (parsed.kind === 'invalid') return { verified: false, error: SHARE_LINK_FAILED }
     }
     if (parsed.kind === 'profile') {
-      return { verified: false, error: 'That is a TikTok profile link. Paste a link to a video whose caption contains your npub.' }
+      return { verified: false, error: 'That is a TikTok profile link. Paste a link to a post whose caption contains your npub.' }
     }
     if (parsed.kind !== 'video') {
       return { verified: false, error: 'Paste a TikTok video or photo link (or the post number from it).' }
@@ -152,7 +152,7 @@ export class TikTokVerifier implements PlatformVerifier {
         headers: { 'User-Agent': 'divine-identity-verification-service' },
       })
     } catch {
-      return { verified: false, error: 'Failed to fetch TikTok video' }
+      return { verified: false, error: 'Failed to fetch TikTok post' }
     }
 
     // TikTok's oEmbed answers 400 ("Something went wrong") for a post that
@@ -180,10 +180,10 @@ export class TikTokVerifier implements PlatformVerifier {
     // to the handle — and cannot prove ownership.
     const handle = data.author_unique_id || handleFromAuthorUrl(data.author_url)
     if (!handle) {
-      return { verified: false, error: 'TikTok did not say who posted this video, so it cannot be checked.' }
+      return { verified: false, error: 'TikTok did not say whose post this is, so it cannot be checked.' }
     }
     if (handle.toLowerCase() !== identity.toLowerCase()) {
-      return { verified: false, error: 'Video author does not match claimed identity' }
+      return { verified: false, error: 'Post author does not match claimed identity' }
     }
 
     // Search title (caption) for npub
@@ -195,6 +195,6 @@ export class TikTokVerifier implements PlatformVerifier {
       return videoId === proof ? { verified: true } : { verified: true, canonicalProof: videoId }
     }
 
-    return { verified: false, error: 'npub not found in video caption' }
+    return { verified: false, error: 'npub not found in post caption' }
   }
 }

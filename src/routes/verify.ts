@@ -360,7 +360,8 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
   const platformLabel = PLATFORM_LABELS[platform] || platform
   const statusText = verified ? 'Verified' : 'Not Verified'
   const checkedAt = result.checked_at ? new Date(result.checked_at * 1000).toUTCString() : 'N/A'
-  // A share link verifies to a post number; link that, since the link itself can't be.
+  // A verified share link reports its post number; link the post by that number,
+  // since proofUrl can't build a link from a share link.
   const proofLink = proofUrl(platform, identity, result.canonical_proof || proof)
   const profileUrl = `https://divine.video/profile/${npub}`
   const ogTitle = verified
