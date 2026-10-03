@@ -1315,7 +1315,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       const inputEl = document.getElementById('verify-pubkey-input');
       if (!inputEl) return;
       inputEl.value = value;
-      if (value) localStorage.setItem('verifyer_account_input', value);
+      // Remembering the account is a convenience; a browser that blocks
+      // storage must not stop the caller (such as starting a sign-in).
+      try { if (value) localStorage.setItem('verifyer_account_input', value); } catch {}
     }
 
     function inferLoginQueryPubkey(params) {
@@ -2625,9 +2627,12 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     });
     document.getElementById('verify-pubkey-input').addEventListener('blur', () => {
       const value = document.getElementById('verify-pubkey-input').value.trim();
-      if (value) localStorage.setItem('verifyer_account_input', value);
+      try { if (value) localStorage.setItem('verifyer_account_input', value); } catch {}
     });
-    const savedAccountInput = localStorage.getItem('verifyer_account_input');
+    // A browser that blocks storage throws here; the rest of start-up,
+    // including handling a returning sign-in, must still run.
+    let savedAccountInput = null;
+    try { savedAccountInput = localStorage.getItem('verifyer_account_input'); } catch {}
     if (savedAccountInput) {
       document.getElementById('verify-pubkey-input').value = savedAccountInput;
     }

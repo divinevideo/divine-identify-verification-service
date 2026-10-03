@@ -8,6 +8,7 @@ const NONCE = '0123456789abcdef'.repeat(2)
 const PENDING_KEY = PENDING_PREFIX + NONCE
 const CONFIRMING: [string, string, string] = ['verify-global-status', 'Confirming your sign-in...', 'loading']
 const UNCONFIRMED: [string, string, string] = ['verify-global-status', 'This page could not confirm a sign-in. Start the sign-in again from this page.', 'error']
+const SAVE_REFUSED: [string, string, string] = ['oauth-status', 'This browser would not let the page save your sign-in, so it could not confirm it when you come back. Allow this site to store data and try again.', 'error']
 
 async function pageHtml(): Promise<string> {
   const res = await worker.fetch(new Request(`${API}/`), {} as never)
@@ -48,7 +49,14 @@ async function loadSignInStart() {
     new Function(...deps, `${source}\nreturn { startOAuthVerification };`)(...deps.map(d => env[d]))
 }
 
-function startHarness(opts: { refusePending?: boolean } = {}) {
+// Stands in for localStorage in a browser that blocks site data, where every
+// use of it throws.
+const blockedStorage = () => {
+  const blocked = (): never => { throw new Error('SecurityError: access is denied for this document') }
+  return { get length() { return blocked() }, key: blocked, getItem: blocked, setItem: blocked, removeItem: blocked }
+}
+
+function startHarness(opts: { refusePending?: boolean, blockStorage?: boolean } = {}) {
   const store = new Map<string, string>()
   const statuses: Array<[string, string, string]> = []
   const buttons: Array<[string, boolean]> = []
@@ -63,7 +71,7 @@ function startHarness(opts: { refusePending?: boolean } = {}) {
   const env: Record<string, unknown> = {
     API,
     window: { location: { origin: API, pathname: '/', search: '', hash: '', assign: leave, set href(url: string) { leave(url) } } },
-    localStorage: {
+    localStorage: opts.blockStorage ? blockedStorage() : {
       get length() { return store.size },
       key: (i: number) => [...store.keys()][i] ?? null,
       getItem: (k: string) => store.get(k) ?? null,
@@ -88,12 +96,13 @@ function startHarness(opts: { refusePending?: boolean } = {}) {
 async function loadStartup() {
   const source = scriptBetween(await pageHtml(), "document.getElementById('verify-pubkey-input').addEventListener('blur'", '// Lookup tool Enter key')
   const pageFunctions = ['updateOAuthInputs', 'updateProofInputs', 'handleOAuthCallbackMessage', 'updateSignerSummary', 'maybeHandleKeycastCallback', 'applyLoginQueryHint', 'restoreKeycastSession']
-  return () => {
+  return (opts: { blockStorage?: boolean } = {}) => {
     const calls: string[] = []
     const store = new Map<string, string>()
-    const accountBox = { value: '', addEventListener: () => {} }
+    const accountListeners: Record<string, () => void> = {}
+    const accountBox = { value: '', addEventListener: (type: string, listener: () => void) => { accountListeners[type] = listener } }
     const env: Record<string, unknown> = {
-      localStorage: {
+      localStorage: opts.blockStorage ? blockedStorage() : {
         getItem: (k: string) => store.get(k) ?? null,
         setItem: (k: string, v: string) => { store.set(k, v) },
       },
@@ -102,7 +111,7 @@ async function loadStartup() {
     }
     const deps = ['localStorage', 'document', ...pageFunctions]
     new Function(...deps, source)(...deps.map(d => env[d]))
-    return { calls }
+    return { calls, accountBox, accountListeners }
   }
 }
 
@@ -336,8 +345,16 @@ describe('sign-in return on the verifier page', () => {
     const h = startHarness({ refusePending: true })
     await load(h.env).startOAuthVerification()
     expect(h.departures).toEqual([])
-    expect(h.statuses[h.statuses.length - 1]).toEqual(['oauth-status', 'This browser would not let the page save your sign-in, so it could not confirm it when you come back. Allow this site to store data and try again.', 'error'])
+    expect(h.statuses[h.statuses.length - 1]).toEqual(SAVE_REFUSED)
     expect(h.buttons[h.buttons.length - 1]).toEqual(['oauth-start-btn', false])
+  })
+
+  it('says why it cannot start a sign-in when the browser blocks storage entirely', async () => {
+    const load = await loadSignInStart()
+    const h = startHarness({ blockStorage: true })
+    await load(h.env).startOAuthVerification()
+    expect(h.departures).toEqual([])
+    expect(h.statuses[h.statuses.length - 1]).toEqual(SAVE_REFUSED)
   })
 
   it('tells API callers that the page only reports sign-ins it started', async () => {
@@ -358,6 +375,19 @@ describe('sign-in return on the verifier page', () => {
     const startup = await loadStartup()
     const { calls } = startup()
     expect(calls.filter(name => name === 'handleOAuthCallbackMessage')).toHaveLength(1)
+  })
+
+  it('still checks for a returning sign-in when the browser blocks storage', async () => {
+    const startup = await loadStartup()
+    const { calls } = startup({ blockStorage: true })
+    expect(calls.filter(name => name === 'handleOAuthCallbackMessage')).toHaveLength(1)
+  })
+
+  it('does not throw when the account box loses focus and the browser blocks storage', async () => {
+    const startup = await loadStartup()
+    const { accountBox, accountListeners } = startup({ blockStorage: true })
+    accountBox.value = 'npub1example'
+    expect(() => accountListeners.blur()).not.toThrow()
   })
 
   it('remembers the platform and account when a sign-in starts', async () => {
