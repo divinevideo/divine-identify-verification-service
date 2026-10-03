@@ -462,6 +462,50 @@ describe('isAllowedReturnUrl', () => {
   it('returns false for malformed input', () => {
     expect(isAllowedReturnUrl('not a url')).toBe(false)
   })
+
+  it('accepts localhost addresses only when the verifier itself runs locally', () => {
+    expect(isAllowedReturnUrl('http://localhost:5173/x')).toBe(false)
+    expect(isAllowedReturnUrl('http://127.0.0.1:3000/x', 'https://verifier.divine.video')).toBe(false)
+    expect(isAllowedReturnUrl('http://localhost:5173/x', 'http://127.0.0.1:8787')).toBe(true)
+    expect(isAllowedReturnUrl('http://127.0.0.1:3000/x', 'http://localhost:8787')).toBe(true)
+    // Running locally widens the rule to localhost only, not to every address.
+    expect(isAllowedReturnUrl('https://example.com/x', 'http://localhost:8787')).toBe(false)
+  })
+
+  it('accepts only web addresses on localhost during local development', () => {
+    expect(isAllowedReturnUrl('https://localhost:5173/x', 'http://localhost:8787')).toBe(true)
+    // file://localhost/x would parse with an empty hostname and never reach the
+    // protocol check, so use an address that does.
+    expect(isAllowedReturnUrl('file://127.0.0.1/x', 'http://localhost:8787')).toBe(false)
+    expect(isAllowedReturnUrl('ws://localhost:5173/x', 'http://localhost:8787')).toBe(false)
+    expect(isAllowedReturnUrl('ftp://localhost/x', 'http://localhost:8787')).toBe(false)
+  })
+})
+
+describe('GET /auth/:platform/start return address', () => {
+  it('turns away a localhost return address in production', async () => {
+    const env = { ...createTestEnv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' }
+    // A Bluesky start looks the handle up upstream, so if this check ever
+    // lets the address through, fail here instead of calling bsky.social.
+    const upstream = vi.fn(() => { throw new Error('a turned-away sign-in must not contact the provider') })
+    vi.stubGlobal('fetch', upstream)
+    const res = await app.request(`/auth/bluesky/start?pubkey=${'a'.repeat(64)}&handle=alice.bsky.social&return_url=${encodeURIComponent('http://localhost:5173/x')}`, {}, env)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'Invalid return_url: must be a trusted origin' })
+    expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('starts a sign-in that returns to a local page when the verifier runs locally', async () => {
+    const env = {
+      ...createTestEnv(),
+      TWITTER_CLIENT_ID: 'test-client-id',
+      TWITTER_CLIENT_SECRET: 'test-client-secret',
+      OAUTH_REDIRECT_BASE: 'http://localhost:8787',
+    }
+    const res = await app.request(`/auth/twitter/start?pubkey=${'a'.repeat(64)}&return_url=${encodeURIComponent('http://localhost:5173/?signin=abc#verify-here')}`, {}, env)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toMatch(/^https:\/\/twitter\.com\/i\/oauth2\/authorize\?/)
+  })
 })
 
 describe('GET /auth/tiktok/start', () => {
@@ -496,6 +540,37 @@ describe('GET /auth/tiktok/start', () => {
     }, env)
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toContain('tiktok.com')
+  })
+})
+
+describe('GET /auth/twitter/callback return address', () => {
+  it('keeps the page\'s one-time code when it sends the person back', async () => {
+    const env = {
+      ...createTestEnv(),
+      TWITTER_CLIENT_ID: 'test-client-id',
+      TWITTER_CLIENT_SECRET: 'test-client-secret',
+      OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
+    }
+    await env.CACHE_KV.put(oauthStateKey('state-1'), JSON.stringify({
+      platform: 'twitter',
+      pubkey: 'a'.repeat(64),
+      codeVerifier: 'verifier',
+      returnUrl: 'https://verifier.divine.video/?signin=abc123#verify-here',
+      createdAt: Date.now(),
+    }))
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'tok' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: '1', username: 'jack' } }), { status: 200 })))
+    try {
+      const res = await app.request('/auth/twitter/callback?code=abc&state=state-1', {}, env)
+      expect(res.status).toBe(302)
+      const location = new URL(res.headers.get('Location') as string)
+      expect(location.searchParams.get('signin')).toBe('abc123')
+      expect(location.searchParams.get('oauth_verified')).toBe('true')
+      expect(location.hash).toBe('#verify-here')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

@@ -122,17 +122,23 @@ const ALLOWED_RETURN_ORIGINS = new Set([
   'https://verifier.divine.video',
 ])
 
+function isLocalHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1'
+}
+
 export function isAllowedReturnUrl(url: string, oauthRedirectBase?: string): boolean {
   try {
     const parsed = new URL(url)
+    const base = oauthRedirectBase ? new URL(oauthRedirectBase) : null
     // Compare exact origin (scheme + host + port) to prevent subdomain tricks
-    if (oauthRedirectBase) {
-      const base = new URL(oauthRedirectBase)
-      if (parsed.origin === base.origin) return true
-    }
+    if (base && parsed.origin === base.origin) return true
     if (ALLOWED_RETURN_ORIGINS.has(parsed.origin)) return true
-    // Allow localhost dev origins
-    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') return true
+    // Local development only: when the verifier itself runs on localhost,
+    // also accept other local dev servers. Production never sends people to
+    // localhost.
+    if (base && isLocalHostname(base.hostname) && isLocalHostname(parsed.hostname)) {
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+    }
     return false
   } catch {
     return false

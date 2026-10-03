@@ -889,6 +889,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     <section id="oauth">
       <h2>OAuth Verification (${oauthPlatformNames.join(', ')})</h2>
       <p>Users can verify by logging in instead of posting a proof.</p>
+      <p>The verifier page only reports sign-ins it started itself. The <code>return_url</code> in these examples is the verifier page; a Divine app that starts its own sign-in should return to its own page on a Divine site and confirm the result with the status check below.</p>
 
       <h3>Start OAuth</h3>
       <pre>${twitterOAuthInlineExample}GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;return_url=${origin}/#verify-here${ytOAuthInlineExample}${ttOAuthInlineExample}</pre>
@@ -1314,7 +1315,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       const inputEl = document.getElementById('verify-pubkey-input');
       if (!inputEl) return;
       inputEl.value = value;
-      if (value) localStorage.setItem('verifyer_account_input', value);
+      // Remembering the account is a convenience; a browser that blocks
+      // storage must not stop the caller (such as starting a sign-in).
+      try { if (value) localStorage.setItem('verifyer_account_input', value); } catch {}
     }
 
     function inferLoginQueryPubkey(params) {
@@ -1798,9 +1801,11 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         const platform = document.getElementById('oauth-platform-select').value;
         setAccountInputValue(pubkey);
 
+        // A one-time code that ties the return to the sign-in this page started.
+        const nonce = newSignInNonce();
         const params = new URLSearchParams({
           pubkey,
-          return_url: window.location.origin + window.location.pathname + '#verify-here',
+          return_url: window.location.origin + window.location.pathname + '?signin=' + nonce + '#verify-here',
         });
         if (platform === 'bluesky') {
           const handle = document.getElementById('oauth-bluesky-handle-input').value.trim().replace(/^@/, '').toLowerCase();
@@ -1808,6 +1813,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
           params.set('handle', handle);
         }
         setStatus('oauth-status', 'Opening secure ' + platform + ' sign-in...', 'loading');
+        if (!rememberPendingSignIn(platform, pubkey, nonce)) {
+          throw new Error('This browser would not let the page save your sign-in, so it could not confirm it when you come back. Allow this site to store data and try again.');
+        }
         window.location.href = API + '/auth/' + platform + '/start?' + params.toString();
       } catch (e) {
         setStatus('oauth-status', e.message || 'Could not start sign-in.', 'error');
@@ -2008,43 +2016,138 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       }
     }
 
-    function handleOAuthCallbackMessage() {
-      const params = new URLSearchParams(window.location.search);
-      let shouldClean = false;
-      if (params.get('oauth_verified') === 'true') {
-        const platform = params.get('platform') || 'account';
-        const identity = params.get('identity') || '';
-        setStatus('verify-global-status', 'Success. Your ' + platform + ' account is now linked' + (identity ? ': ' + identity : '') + '. You can now publish this to your Nostr profile below.', 'ok');
+    // A sign-in this page started, remembered across the trip to the provider so
+    // the page only reports results for sign-ins it actually began. Kept in
+    // localStorage under the sign-in's one-time code, so a return that opens
+    // in another tab of the same browser still finds it.
+    const PENDING_SIGN_IN_KEY = 'verifier_pending_sign_in:';
+    // Matches how long the verifier keeps a sign-in open (10 minutes).
+    const PENDING_SIGN_IN_MAX_AGE_MS = 10 * 60 * 1000;
+    const SIGN_IN_PLATFORMS = ['twitter', 'bluesky', 'youtube', 'tiktok'];
+    const UNCONFIRMED_SIGN_IN = 'This page could not confirm a sign-in. Start the sign-in again from this page.';
 
-        // Pre-fill the Advanced section so the Publish button works for this OAuth result
-        const proofPlatformEl = document.getElementById('proof-platform-select');
-        const proofIdentityEl = document.getElementById('proof-identity-input');
-        const proofProofEl = document.getElementById('proof-proof-input');
-        if (proofPlatformEl && proofIdentityEl) {
-          proofPlatformEl.value = platform;
-          proofIdentityEl.value = identity;
-          if (proofProofEl) proofProofEl.value = 'oauth';
-          // Open the Advanced section and scroll the publish button into view
-          const advancedDetails = document.getElementById('advanced-proof');
-          if (advancedDetails) {
-            advancedDetails.open = true;
-            const publishBtn = document.getElementById('publish-kind0-btn');
-            if (publishBtn) publishBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
+    function newSignInNonce() {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // Drops pending sign-ins that are too old to come back.
+    function forgetExpiredSignIns() {
+      try {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.indexOf(PENDING_SIGN_IN_KEY) === 0) keys.push(key);
         }
+        for (const key of keys) {
+          let startedAt = 0;
+          try { startedAt = JSON.parse(localStorage.getItem(key) || '{}').startedAt; } catch {}
+          if (typeof startedAt !== 'number' || Date.now() - startedAt > PENDING_SIGN_IN_MAX_AGE_MS) localStorage.removeItem(key);
+        }
+      } catch {}
+    }
 
-        shouldClean = true;
-      } else if (params.get('oauth_error')) {
-        setStatus('verify-global-status', 'Sign-in was not completed: ' + params.get('oauth_error'), 'error');
-        shouldClean = true;
+    // Returns false when the browser won't store it, so the page can say so
+    // instead of sending the person off on a sign-in it could never confirm.
+    function rememberPendingSignIn(platform, pubkey, nonce) {
+      try {
+        forgetExpiredSignIns();
+        localStorage.setItem(PENDING_SIGN_IN_KEY + nonce, JSON.stringify({ platform, pubkey, nonce, startedAt: Date.now() }));
+        return true;
+      } catch {
+        return false;
       }
-      if (shouldClean) {
-        params.delete('oauth_verified');
-        params.delete('platform');
-        params.delete('identity');
-        params.delete('oauth_error');
-        const cleanUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
-        window.history.replaceState({}, '', cleanUrl);
+    }
+
+    function takePendingSignIn(nonce) {
+      // newSignInNonce always makes 32 lowercase hex characters.
+      if (!/^[0-9a-f]{32}$/.test(nonce)) return null;
+      try {
+        const raw = localStorage.getItem(PENDING_SIGN_IN_KEY + nonce);
+        localStorage.removeItem(PENDING_SIGN_IN_KEY + nonce);
+        const pending = raw ? JSON.parse(raw) : null;
+        if (!pending || SIGN_IN_PLATFORMS.indexOf(pending.platform) === -1) return null;
+        if (typeof pending.pubkey !== 'string' || typeof pending.startedAt !== 'number') return null;
+        if (Date.now() - pending.startedAt > PENDING_SIGN_IN_MAX_AGE_MS) return null;
+        return pending;
+      } catch {
+        return null;
+      }
+    }
+
+    // Only messages the verifier's sign-in callbacks actually send are shown.
+    function signInErrorMessage(reason) {
+      if (reason === 'Verification failed') return 'Sign-in was not completed: the account could not be verified.';
+      if (/^(cancelled or declined|could not be completed) at (Twitter|YouTube|TikTok|Bluesky)$/.test(reason)) return 'Sign-in was not completed: ' + reason;
+      return 'Sign-in was not completed.';
+    }
+
+    async function handleOAuthCallbackMessage() {
+      const params = new URLSearchParams(window.location.search);
+      const verified = params.get('oauth_verified') === 'true';
+      const reason = params.get('oauth_error');
+      if (!verified && !reason) return;
+
+      const platform = params.get('platform') || '';
+      const identity = params.get('identity') || '';
+      const nonce = params.get('signin') || '';
+      params.delete('signin');
+      params.delete('oauth_verified');
+      params.delete('platform');
+      params.delete('identity');
+      params.delete('oauth_error');
+      const cleanUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
+      window.history.replaceState({}, '', cleanUrl);
+
+      const pending = takePendingSignIn(nonce);
+      if (!verified) {
+        setStatus('verify-global-status', signInErrorMessage(reason), 'error');
+        return;
+      }
+      if (!pending || pending.nonce !== nonce || pending.platform !== platform || !identity) {
+        setStatus('verify-global-status', UNCONFIRMED_SIGN_IN, 'error');
+        return;
+      }
+
+      // Ask the verifier whether this account really is linked before saying so.
+      setStatus('verify-global-status', 'Confirming your sign-in...', 'loading');
+      let linkedIdentity = '';
+      // Give up after 10 seconds rather than leaving the page on "Confirming".
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      try {
+        const query = new URLSearchParams({ pubkey: pending.pubkey, identity });
+        const resp = await fetch(API + '/auth/' + pending.platform + '/status?' + query.toString(), { signal: controller.signal });
+        const data = await resp.json();
+        if (resp.ok && data && data.verified === true) linkedIdentity = String(data.identity || identity);
+      } catch {} finally {
+        clearTimeout(timer);
+      }
+      if (!linkedIdentity) {
+        setStatus('verify-global-status', UNCONFIRMED_SIGN_IN, 'error');
+        return;
+      }
+
+      setStatus('verify-global-status', 'Success. Your ' + pending.platform + ' account is now linked: ' + linkedIdentity + '. You can now publish this to your Nostr profile below.', 'ok');
+
+      // Pre-fill the Advanced section so the Publish button works for this OAuth result
+      const proofPlatformEl = document.getElementById('proof-platform-select');
+      const proofIdentityEl = document.getElementById('proof-identity-input');
+      const proofProofEl = document.getElementById('proof-proof-input');
+      if (proofPlatformEl && proofIdentityEl) {
+        proofPlatformEl.value = pending.platform;
+        // Setting the value does not fire 'change', so update the labels here.
+        updateProofInputs();
+        proofIdentityEl.value = linkedIdentity;
+        if (proofProofEl) proofProofEl.value = 'oauth';
+        // Open the Advanced section and scroll the publish button into view
+        const advancedDetails = document.getElementById('advanced-proof');
+        if (advancedDetails) {
+          advancedDetails.open = true;
+          const publishBtn = document.getElementById('publish-kind0-btn');
+          if (publishBtn) publishBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
       }
     }
 
@@ -2524,15 +2627,21 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     });
     document.getElementById('verify-pubkey-input').addEventListener('blur', () => {
       const value = document.getElementById('verify-pubkey-input').value.trim();
-      if (value) localStorage.setItem('verifyer_account_input', value);
+      try { if (value) localStorage.setItem('verifyer_account_input', value); } catch {}
     });
-    const savedAccountInput = localStorage.getItem('verifyer_account_input');
+    // A browser that blocks storage throws here; the rest of start-up,
+    // including handling a returning sign-in, must still run.
+    let savedAccountInput = null;
+    try { savedAccountInput = localStorage.getItem('verifyer_account_input'); } catch {}
     if (savedAccountInput) {
       document.getElementById('verify-pubkey-input').value = savedAccountInput;
     }
     updateOAuthInputs();
     updateProofInputs();
     handleOAuthCallbackMessage();
+    // Sign-ins that failed to start or were abandoned never come back to be
+    // used up, so drop the expired ones here too.
+    forgetExpiredSignIns();
     updateSignerSummary();
     (async () => {
       const handledKeycast = await maybeHandleKeycastCallback();
@@ -2542,6 +2651,15 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       }
       updateSignerSummary();
     })();
+
+    // Going Back from the provider, or from a start the verifier turned away,
+    // can restore this page from the back/forward cache exactly as it was
+    // left: the sign-in button disabled and reading "Opening sign-in...".
+    window.addEventListener('pageshow', (event) => {
+      if (!event.persisted) return;
+      setButtonLoading('oauth-start-btn', false, '');
+      clearStatus('oauth-status');
+    });
 
     // Lookup tool Enter key
     document.getElementById('lookup-input').addEventListener('keydown', (e) => {
