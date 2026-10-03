@@ -33,6 +33,7 @@ async function verifySingleClaim(
       code: cached.code,
       method: cached.method,
       provenance: cached.provenance,
+      ...(cached.canonical_proof ? { canonical_proof: cached.canonical_proof } : {}),
       checked_at: cached.checked_at,
       cached: true,
     }
@@ -97,6 +98,7 @@ async function verifySingleClaim(
       code: result.code,
       method: result.method,
       provenance: result.provenance,
+      ...(result.canonicalProof ? { canonical_proof: result.canonicalProof } : {}),
       checked_at: now,
       type: result.verified ? 'verified' : 'failed',
     }
@@ -110,6 +112,7 @@ async function verifySingleClaim(
       code: result.code,
       method: result.method,
       provenance: result.provenance,
+      ...(result.canonicalProof ? { canonical_proof: result.canonicalProof } : {}),
       checked_at: now,
       cached: false,
     }
@@ -321,7 +324,14 @@ export function proofUrl(platform: string, identity: string, proof: string): str
       return url.toString()
     }
     case 'youtube': return `https://www.youtube.com/watch?v=${proof}`
-    case 'tiktok': return `https://www.tiktok.com/@${identity}/video/${proof}`
+    case 'tiktok': {
+      // Link to the post only when its number is known: a bare number, or a
+      // full TikTok video or photo link. A share link or anything else gets no
+      // link rather than a broken one.
+      if (/^\d{15,25}$/.test(proof)) return `https://www.tiktok.com/@${identity}/video/${proof}`
+      const match = proof.match(/^https?:\/\/(?:www\.|m\.)?tiktok\.com\/@[^/?#]+\/(video|photo)\/(\d{15,25})(?:[/?#]|$)/i)
+      return match ? `https://www.tiktok.com/@${identity}/${match[1].toLowerCase()}/${match[2]}` : null
+    }
     default: return null
   }
 }
@@ -350,7 +360,9 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
   const platformLabel = PLATFORM_LABELS[platform] || platform
   const statusText = verified ? 'Verified' : 'Not Verified'
   const checkedAt = result.checked_at ? new Date(result.checked_at * 1000).toUTCString() : 'N/A'
-  const proofLink = proofUrl(platform, identity, proof)
+  // A verified share link reports its post number; link the post by that number,
+  // since proofUrl can't build a link from a share link.
+  const proofLink = proofUrl(platform, identity, result.canonical_proof || proof)
   const profileUrl = `https://divine.video/profile/${npub}`
   const ogTitle = verified
     ? `${identity} is verified on ${platformLabel}`
@@ -646,7 +658,12 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
           return url.toString();
         }
         case 'youtube': return 'https://www.youtube.com/watch?v=' + proof;
-        case 'tiktok': return 'https://www.tiktok.com/@' + identity + '/video/' + proof;
+        case 'tiktok': {
+          // Mirrors the server's proofUrl: link only when the post number is known.
+          if (/^\\d{15,25}$/.test(proof)) return 'https://www.tiktok.com/@' + identity + '/video/' + proof;
+          var match = proof.match(/^https?:\\/\\/(?:www\\.|m\\.)?tiktok\\.com\\/@[^\\/?#]+\\/(video|photo)\\/(\\d{15,25})(?:[\\/?#]|$)/i);
+          return match ? 'https://www.tiktok.com/@' + identity + '/' + match[1].toLowerCase() + '/' + match[2] : null;
+        }
         default: return null;
       }
     }
@@ -859,7 +876,7 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
         if (data.results) {
           // Attach proof URLs
           for (var k = 0; k < data.results.length; k++) {
-            data.results[k]._proofUrl = proofUrl(claims[k].platform, claims[k].identity, claims[k].proof);
+            data.results[k]._proofUrl = proofUrl(claims[k].platform, claims[k].identity, data.results[k].canonical_proof || claims[k].proof);
           }
 
           // Also check NIP-05 if present

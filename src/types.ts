@@ -77,6 +77,8 @@ export interface VerifyResult {
   code?: VerificationCode
   method?: VerificationMethod
   provenance?: VerificationProvenance
+  /** The proof to publish instead of the one sent; see PlatformVerifier.verify. */
+  canonical_proof?: string
   checked_at: number
   cached: boolean
 }
@@ -88,6 +90,7 @@ export interface CachedResult {
   code?: VerificationCode
   method?: VerificationMethod
   provenance?: VerificationProvenance
+  canonical_proof?: string
   checked_at: number
   type: 'verified' | 'failed' | 'platform_error'
 }
