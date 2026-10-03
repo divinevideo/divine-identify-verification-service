@@ -2652,6 +2652,15 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       updateSignerSummary();
     })();
 
+    // Going Back from the provider, or from a start the verifier turned away,
+    // can restore this page from the back/forward cache exactly as it was
+    // left: the sign-in button disabled and reading "Opening sign-in...".
+    window.addEventListener('pageshow', (event) => {
+      if (!event.persisted) return;
+      setButtonLoading('oauth-start-btn', false, '');
+      clearStatus('oauth-status');
+    });
+
     // Lookup tool Enter key
     document.getElementById('lookup-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') doLookup();

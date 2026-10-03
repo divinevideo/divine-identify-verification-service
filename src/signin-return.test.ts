@@ -101,17 +101,23 @@ async function loadStartup() {
     const store = new Map<string, string>()
     const accountListeners: Record<string, () => void> = {}
     const accountBox = { value: '', addEventListener: (type: string, listener: () => void) => { accountListeners[type] = listener } }
+    const windowListeners: Record<string, (event: { persisted: boolean }) => void> = {}
+    const buttons: Array<[string, boolean]> = []
+    const cleared: string[] = []
     const env: Record<string, unknown> = {
+      window: { addEventListener: (type: string, listener: (event: { persisted: boolean }) => void) => { windowListeners[type] = listener } },
       localStorage: opts.blockStorage ? blockedStorage() : {
         getItem: (k: string) => store.get(k) ?? null,
         setItem: (k: string, v: string) => { store.set(k, v) },
       },
       document: { getElementById: (id: string) => (id === 'verify-pubkey-input' ? accountBox : null) },
+      setButtonLoading: (id: string, loading: boolean) => { buttons.push([id, loading]) },
+      clearStatus: (id: string) => { cleared.push(id) },
       ...Object.fromEntries(pageFunctions.map(name => [name, async () => { calls.push(name); return false }])),
     }
-    const deps = ['localStorage', 'document', ...pageFunctions]
+    const deps = ['window', 'localStorage', 'document', 'setButtonLoading', 'clearStatus', ...pageFunctions]
     new Function(...deps, source)(...deps.map(d => env[d]))
-    return { calls, accountBox, accountListeners }
+    return { calls, accountBox, accountListeners, windowListeners, buttons, cleared }
   }
 }
 
@@ -387,6 +393,16 @@ describe('sign-in return on the verifier page', () => {
     const startup = await loadStartup()
     const { calls } = startup({ blockStorage: true })
     expect(calls.filter(name => name === 'handleOAuthCallbackMessage')).toHaveLength(1)
+  })
+
+  it('re-enables the sign-in button when Back restores the page from the cache', async () => {
+    const startup = await loadStartup()
+    const { windowListeners, buttons, cleared } = startup()
+    windowListeners.pageshow({ persisted: false })
+    expect(buttons).toEqual([])
+    windowListeners.pageshow({ persisted: true })
+    expect(buttons).toEqual([['oauth-start-btn', false]])
+    expect(cleared).toEqual(['oauth-status'])
   })
 
   it('does not throw when the account box loses focus and the browser blocks storage', async () => {
