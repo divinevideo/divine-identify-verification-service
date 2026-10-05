@@ -29,7 +29,7 @@ function scriptBetween(html: string, from: string, to: string): string {
 // browser, so the test exercises the shipped script rather than a copy of it.
 async function loadReturnHandler() {
   const source = scriptBetween(await pageHtml(), 'const PENDING_SIGN_IN_KEY', 'function showStatus(msg, type)')
-  const deps = ['window', 'localStorage', 'fetch', 'API', 'setStatus', 'document', 'updateProofInputs']
+  const deps = ['window', 'localStorage', 'fetch', 'API', 'setStatus', 'clearStatus', 'document', 'updateProofInputs']
   return (env: Record<string, unknown>) =>
     new Function(...deps, `${source}\nreturn { handleOAuthCallbackMessage, rememberPendingSignIn, newSignInNonce };`)(...deps.map(d => env[d]))
 }
@@ -121,7 +121,11 @@ async function loadStartup() {
   }
 }
 
-function harness(opts: { search: string, pending?: unknown, statusResponse?: unknown, statusFails?: boolean, statusOk?: boolean, stored?: Record<string, string>, store?: Map<string, string> }) {
+// One scripted answer to a confirmation request: a network failure, or a
+// response with a status and either a JSON body or a body that isn't JSON.
+type StatusAnswer = 'network error' | { status: number, json?: unknown, notJson?: boolean }
+
+function harness(opts: { search: string, pending?: unknown, statusResponse?: unknown, statusFails?: boolean, statusOk?: boolean, answers?: StatusAnswer[], stored?: Record<string, string>, store?: Map<string, string>, readyState?: 'loading' | 'interactive' }) {
   const store = opts.store ?? new Map<string, string>(Object.entries(opts.stored ?? {}))
   if (opts.pending !== undefined) store.set(PENDING_KEY, JSON.stringify(opts.pending))
   const statuses: Array<[string, string, string]> = []
@@ -130,17 +134,40 @@ function harness(opts: { search: string, pending?: unknown, statusResponse?: unk
   const replaced: string[] = []
   // The proof platform each time the page updated the proof form's labels.
   const labelUpdates: string[] = []
-  const fields: Record<string, { value: string, open?: boolean, scrollIntoView?: () => void }> = {
-    'proof-platform-select': { value: '' },
-    'proof-identity-input': { value: '' },
-    'proof-proof-input': { value: '' },
-    'advanced-proof': { value: '', open: false },
-    'publish-kind0-btn': { value: '', scrollIntoView: () => {} },
+  // Which elements the page scrolled into view, in order, and the sign-in
+  // message showing each time it brought that message into view.
+  const scrolledTo: string[] = []
+  const scrolledWith: string[] = []
+  // A stand-in element: a value, optional extras, and event listeners a test can fire.
+  type Field = { value: string, textContent?: string, hidden?: boolean, open?: boolean, scrollIntoView?: () => void, listeners: Record<string, Array<() => void>>, addEventListener: (type: string, fn: () => void) => void, removeEventListener: (type: string, fn: () => void) => void }
+  const field = (extra: Partial<Field> = {}): Field => {
+    const listeners: Record<string, Array<() => void>> = {}
+    return {
+      value: '',
+      ...extra,
+      listeners,
+      addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn) },
+      removeEventListener: (type, fn) => { listeners[type] = (listeners[type] ?? []).filter(f => f !== fn) },
+    }
   }
+  const fields: Record<string, Field> = {
+    'proof-platform-select': field(),
+    'proof-identity-input': field(),
+    'proof-proof-input': field(),
+    'proof-status': field(),
+    'advanced-proof': field({ open: false }),
+    'publish-kind0-btn': field({ scrollIntoView: () => { scrolledTo.push('publish-kind0-btn') } }),
+    'verify-global-status': field({ scrollIntoView: () => { scrolledTo.push('verify-global-status'); scrolledWith.push(statuses[statuses.length - 1]?.[1] ?? '') } }),
+  }
+  const answers = opts.answers ? [...opts.answers] : null
   const location = { search: opts.search, pathname: '/', hash: '#verify-here' }
+  // The page's load listeners, so a test can finish loading the page.
+  const loadListeners: Array<() => void> = []
+  const doc = { readyState: opts.readyState ?? 'complete', getElementById: (id: string) => fields[id] ?? null }
+  const finishLoading = () => { doc.readyState = 'complete'; loadListeners.splice(0).forEach(fn => fn()) }
   const env: Record<string, unknown> = {
     API,
-    window: { location, history: { replaceState: (_s: unknown, _t: string, url: string) => { replaced.push(url); location.search = url.includes('?') ? url.slice(url.indexOf('?'), url.indexOf('#') > -1 ? url.indexOf('#') : undefined) : '' } } },
+    window: { location, addEventListener: (type: string, fn: () => void) => { if (type === 'load') loadListeners.push(fn) }, history: { replaceState: (_s: unknown, _t: string, url: string) => { replaced.push(url); location.search = url.includes('?') ? url.slice(url.indexOf('?'), url.indexOf('#') > -1 ? url.indexOf('#') : undefined) : '' } } },
     localStorage: {
       get length() { return store.size },
       key: (i: number) => [...store.keys()][i] ?? null,
@@ -150,14 +177,31 @@ function harness(opts: { search: string, pending?: unknown, statusResponse?: unk
     },
     fetch: async (url: string) => {
       fetched.push(url)
+      if (answers) {
+        const answer = answers.shift() ?? 'network error'
+        if (answer === 'network error') throw new Error('network down')
+        return {
+          ok: answer.status >= 200 && answer.status < 300,
+          status: answer.status,
+          json: async () => { if (answer.notJson) throw new SyntaxError('not JSON'); return answer.json },
+        }
+      }
       if (opts.statusFails) throw new Error('network down')
-      return { ok: opts.statusOk ?? true, json: async () => opts.statusResponse }
+      const ok = opts.statusOk ?? true
+      // A refused request (4xx), which is final: no second try.
+      return { ok, status: ok ? 200 : 400, json: async () => opts.statusResponse }
     },
-    setStatus: (id: string, msg: string, type: string) => { statuses.push([id, msg, type]) },
-    document: { getElementById: (id: string) => fields[id] ?? null },
+    setStatus: (id: string, msg: string, type: string) => {
+      statuses.push([id, msg, type])
+      if (fields[id]) { fields[id].textContent = msg; fields[id].hidden = false }
+    },
+    clearStatus: (id: string) => { if (fields[id]) fields[id].hidden = true },
+    document: doc,
     updateProofInputs: () => { labelUpdates.push(fields['proof-platform-select'].value) },
   }
-  return { env, statuses, fetched, fields, store, location, replaced, labelUpdates }
+  // Runs a field's listeners, the way the browser would for a person's edit or click.
+  const fire = (id: string, type: string) => { [...(fields[id].listeners[type] ?? [])].forEach(fn => fn()) }
+  return { env, statuses, fetched, fields, store, location, replaced, labelUpdates, scrolledTo, scrolledWith, finishLoading, fire }
 }
 
 const freshPending = (platform = 'twitter') => ({ platform, pubkey: PUBKEY, nonce: NONCE, startedAt: Date.now() })
@@ -173,7 +217,7 @@ describe('sign-in return on the verifier page', () => {
     })
     await load(h.env).handleOAuthCallbackMessage()
     expect(h.fetched).toEqual([`${API}/auth/twitter/status?pubkey=${PUBKEY}&identity=jack`])
-    expect(h.statuses).toEqual([CONFIRMING, ['verify-global-status', 'Success. Your twitter account is now linked: jack. You can now publish this to your Nostr profile below.', 'ok']])
+    expect(h.statuses).toEqual([CONFIRMING, ['verify-global-status', 'Success. Your twitter account is now linked: jack. You can now publish this to your Nostr profile below.', 'ok'], ['proof-status', 'Your twitter account jack is linked. Publish to add it to your Nostr profile.', 'ok']])
     expect(h.fields['proof-platform-select'].value).toBe('twitter')
     expect(h.fields['proof-identity-input'].value).toBe('jack')
     expect(h.fields['proof-proof-input'].value).toBe('oauth')
@@ -218,15 +262,29 @@ describe('sign-in return on the verifier page', () => {
     expect(h.statuses).toEqual([UNCONFIRMED])
   })
 
-  it('does not show success for a sign-in started more than 10 minutes ago', async () => {
+  it('does not show success for a sign-in started more than 11 minutes ago', async () => {
     const load = await loadReturnHandler()
     const h = harness({
       search: returned(),
-      pending: { ...freshPending(), startedAt: Date.now() - 11 * 60 * 1000 },
+      pending: { ...freshPending(), startedAt: Date.now() - 12 * 60 * 1000 },
     })
     await load(h.env).handleOAuthCallbackMessage()
     expect(h.fetched).toEqual([])
     expect(h.statuses).toEqual([UNCONFIRMED])
+  })
+
+  // The page starts its clock at the click; the verifier's 10 minutes start a
+  // little later and it enforces them itself, so the page allows a minute more.
+  it('still asks the verifier about a sign-in started 10 and a half minutes ago', async () => {
+    const load = await loadReturnHandler()
+    const h = harness({
+      search: returned(),
+      pending: { ...freshPending(), startedAt: Date.now() - 10.5 * 60 * 1000 },
+      statusResponse: { verified: true, identity: 'jack' },
+    })
+    await load(h.env).handleOAuthCallbackMessage()
+    expect(h.fetched).toHaveLength(1)
+    expect(h.statuses[h.statuses.length - 1][2]).toBe('ok')
   })
 
   it('still confirms a sign-in started 9 minutes ago', async () => {
@@ -496,10 +554,11 @@ describe('sign-in return on the verifier page', () => {
     expect(h.labelUpdates).toEqual(['twitter'])
   })
 
-  it('does not show success when the confirmation request is answered with an error status', async () => {
+  it('does not show success when the confirmation request is refused, even if the answer claims the link', async () => {
     const load = await loadReturnHandler()
     const h = harness({ search: returned(), pending: freshPending(), statusOk: false, statusResponse: { verified: true, identity: 'jack' } })
     await load(h.env).handleOAuthCallbackMessage()
+    expect(h.fetched).toHaveLength(1)
     expect(h.statuses).toEqual([CONFIRMING, UNCONFIRMED])
   })
 
@@ -544,7 +603,7 @@ describe('sign-in return on the verifier page', () => {
     const h = harness({
       search: '',
       stored: {
-        [expiredKey]: JSON.stringify({ ...freshPending(), startedAt: Date.now() - 11 * 60 * 1000 }),
+        [expiredKey]: JSON.stringify({ ...freshPending(), startedAt: Date.now() - 12 * 60 * 1000 }),
         [freshKey]: JSON.stringify(freshPending()),
         [PENDING_PREFIX + 'b'.repeat(32)]: 'not json',
         [PENDING_PREFIX + 'c'.repeat(32)]: JSON.stringify({ ...freshPending(), startedAt: 'now' }),
@@ -572,5 +631,255 @@ describe('sign-in return on the verifier page', () => {
     const h = harness({ search: returned('&ref=home'), pending: freshPending(), statusResponse: { verified: true, identity: 'jack' } })
     await load(h.env).handleOAuthCallbackMessage()
     expect(h.replaced).toEqual(['/?ref=home#verify-here'])
+  })
+})
+
+describe('confirming a returning sign-in', () => {
+  const linked: StatusAnswer = { status: 200, json: { verified: true, identity: 'jack' } }
+
+  it.each([
+    ['a network error', 'network error' as StatusAnswer],
+    ['a server error', { status: 503, json: { error: 'unavailable' } } as StatusAnswer],
+    ['an answer that is not JSON', { status: 200, notJson: true } as StatusAnswer],
+  ])('asks again after %s', async (_label, first) => {
+    const load = await loadReturnHandler()
+    const h = harness({ search: returned(), pending: freshPending(), answers: [first, linked] })
+    await load(h.env).handleOAuthCallbackMessage()
+    expect(h.fetched).toHaveLength(2)
+    expect(h.statuses[h.statuses.length - 1][2]).toBe('ok')
+  })
+
+  it('stops after three tries', async () => {
+    const load = await loadReturnHandler()
+    const h = harness({ search: returned(), pending: freshPending(), answers: ['network error', 'network error', 'network error', linked] })
+    await load(h.env).handleOAuthCallbackMessage()
+    expect(h.fetched).toHaveLength(3)
+    expect(h.statuses).toEqual([CONFIRMING, UNCONFIRMED])
+  })
+
+  it.each([
+    ['the verifier says the account is not linked', { status: 200, json: { verified: false } } as StatusAnswer],
+    ['the request is refused', { status: 400, json: { error: 'Invalid identity' } } as StatusAnswer],
+  ])('does not ask again when %s', async (_label, first) => {
+    const load = await loadReturnHandler()
+    const h = harness({ search: returned(), pending: freshPending(), answers: [first, linked] })
+    await load(h.env).handleOAuthCallbackMessage()
+    expect(h.fetched).toHaveLength(1)
+    expect(h.statuses).toEqual([CONFIRMING, UNCONFIRMED])
+  })
+
+  it('keeps every try inside the same 10 seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      const load = await loadReturnHandler()
+      const h = harness({ search: returned(), pending: freshPending() })
+      let tries = 0
+      // Each try fails after 4 seconds, so a third try would end past the limit.
+      h.env.fetch = (_url: string, init?: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+        tries++
+        const t = setTimeout(() => reject(new Error('network down')), 4000)
+        init?.signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('aborted')) })
+      })
+      let settled = false
+      const done = load(h.env).handleOAuthCallbackMessage().then(() => { settled = true })
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(settled).toBe(true)
+      await done
+      expect(tries).toBe(3)
+      expect(h.statuses).toEqual([CONFIRMING, UNCONFIRMED])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lands on Publish after a successful sign-in, with a note right above it', async () => {
+    const load = await loadReturnHandler()
+    const h = harness({ search: returned(), pending: freshPending(), answers: [linked] })
+    await load(h.env).handleOAuthCallbackMessage()
+    // The top message reports the sign-in; the note beside Publish says what Publish will do.
+    expect(h.statuses.slice(-2)).toEqual([['verify-global-status', 'Success. Your twitter account is now linked: jack. You can now publish this to your Nostr profile below.', 'ok'], ['proof-status', 'Your twitter account jack is linked. Publish to add it to your Nostr profile.', 'ok']])
+    // Confirming is brought into view, then the page lands on Publish.
+    expect(h.scrolledWith).toEqual([CONFIRMING[1]])
+    expect(h.scrolledTo).toEqual(['verify-global-status', 'publish-kind0-btn'])
+    expect(h.fields['advanced-proof'].open).toBe(true)
+  })
+
+  it('brings the message into view when it cannot confirm the sign-in', async () => {
+    const load = await loadReturnHandler()
+    const h = harness({ search: returned(), pending: freshPending(), answers: [{ status: 200, json: { verified: false } }] })
+    await load(h.env).handleOAuthCallbackMessage()
+    expect(h.scrolledWith).toEqual([CONFIRMING[1], UNCONFIRMED[1]])
+  })
+
+  it('brings the message into view when the page did not start the sign-in', async () => {
+    const load = await loadReturnHandler()
+    const h = harness({ search: returned() })
+    await load(h.env).handleOAuthCallbackMessage()
+    expect(h.scrolledWith).toEqual([UNCONFIRMED[1]])
+  })
+
+  it.each([
+    ['platform', 'proof-platform-select', 'github'],
+    ['account name', 'proof-identity-input', 'octocat'],
+    ['post link', 'proof-proof-input', 'https://gist.github.com/octocat/abc123'],
+  ])('leaves the Publish form alone if its %s was changed while the sign-in was being confirmed', async (_label, field, typed) => {
+    const load = await loadReturnHandler()
+    const h = harness({ search: returned(), pending: freshPending() })
+    h.env.fetch = async () => {
+      h.fields[field].value = typed
+      return { ok: true, status: 200, json: async () => ({ verified: true, identity: 'jack' }) }
+    }
+    await load(h.env).handleOAuthCallbackMessage()
+    // The whole form is as the person left it: their change, and nothing filled in around it.
+    const form = ['proof-platform-select', 'proof-identity-input', 'proof-proof-input']
+    expect(Object.fromEntries(form.map(id => [id, h.fields[id].value]))).toEqual({ ...Object.fromEntries(form.map(id => [id, ''])), [field]: typed })
+    expect(h.labelUpdates).toEqual([])
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['verify-global-status', 'Success. Your twitter account is now linked: jack. The Publish form below was left as you changed it.', 'ok'])
+    // Nothing was filled in to publish, so there's no note beside Publish
+    // and the page stays on the message.
+    expect(h.statuses.filter(([id]) => id === 'proof-status')).toEqual([])
+    expect(Object.values(h.fields['publish-kind0-btn'].listeners).flat()).toEqual([])
+    expect(h.scrolledWith).toEqual([CONFIRMING[1], 'Success. Your twitter account is now linked: jack. The Publish form below was left as you changed it.'])
+    expect(h.scrolledTo).not.toContain('publish-kind0-btn')
+  })
+
+  it('stops at 10 seconds even while waiting to try again', async () => {
+    vi.useFakeTimers()
+    try {
+      const load = await loadReturnHandler()
+      const h = harness({ search: returned(), pending: freshPending() })
+      let tries = 0
+      // The first try fails just before the limit, so the wait before the next one crosses it.
+      h.env.fetch = (_url: string, init?: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+        tries++
+        const t = setTimeout(() => reject(new Error('network down')), 9_900)
+        init?.signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('aborted')) })
+      })
+      let settled = false
+      const done = load(h.env).handleOAuthCallbackMessage().then(() => { settled = true })
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(settled).toBe(true)
+      await done
+      expect(tries).toBe(1)
+      expect(h.statuses).toEqual([CONFIRMING, UNCONFIRMED])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops at 10 seconds even while reading an answer', async () => {
+    vi.useFakeTimers()
+    try {
+      const load = await loadReturnHandler()
+      const h = harness({ search: returned(), pending: freshPending() })
+      let tries = 0
+      h.env.fetch = async (_url: string, init?: { signal?: AbortSignal }) => {
+        tries++
+        return {
+          ok: true,
+          status: 200,
+          // The body never finishes arriving; the limit cuts it off.
+          json: () => new Promise((_resolve, reject) => { init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))) }),
+        }
+      }
+      let settled = false
+      const done = load(h.env).handleOAuthCallbackMessage().then(() => { settled = true })
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(settled).toBe(true)
+      await done
+      expect(tries).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // 'interactive' means the page's content is ready but its fonts and images
+  // are still loading, so the browser hasn't made its own jump yet either.
+  it.each(['loading', 'interactive'] as const)('waits for the page to finish loading (now %s) before bringing the message into view', async (readyState) => {
+    vi.useFakeTimers()
+    try {
+      const load = await loadReturnHandler()
+      // A cancelled sign-in is answered straight away, before the page has finished loading.
+      const h = harness({ search: `?oauth_error=${encodeURIComponent('cancelled or declined at Twitter')}`, readyState })
+      await load(h.env).handleOAuthCallbackMessage()
+      expect(h.statuses).toEqual([['verify-global-status', 'Sign-in was not completed: cancelled or declined at Twitter', 'error']])
+      expect(h.scrolledTo).toEqual([])
+      h.finishLoading()
+      // One more turn after load, so the browser's own jump comes first.
+      expect(h.scrolledTo).toEqual([])
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.scrolledTo).toEqual(['verify-global-status'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['loading', 'interactive'] as const)('waits for the page to finish loading (now %s) before landing on Publish', async (readyState) => {
+    vi.useFakeTimers()
+    try {
+      const load = await loadReturnHandler()
+      const h = harness({ search: returned(), pending: freshPending(), answers: [{ status: 200, json: { verified: true, identity: 'jack' } }], readyState })
+      await load(h.env).handleOAuthCallbackMessage()
+      expect(h.scrolledTo).toEqual([])
+      h.finishLoading()
+      expect(h.scrolledTo).toEqual([])
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.scrolledTo).toEqual(['verify-global-status', 'publish-kind0-btn'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  describe('the note beside Publish', () => {
+    const READY = 'Your twitter account jack is linked. Publish to add it to your Nostr profile.'
+    async function signedIn() {
+      const load = await loadReturnHandler()
+      const h = harness({ search: returned(), pending: freshPending(), answers: [{ status: 200, json: { verified: true, identity: 'jack' } }] })
+      await load(h.env).handleOAuthCallbackMessage()
+      expect(h.fields['proof-status']).toMatchObject({ textContent: READY, hidden: false })
+      return h
+    }
+    const setStatus = (h: { env: Record<string, unknown> }) => h.env.setStatus as (id: string, msg: string, type: string) => void
+
+    it.each([
+      ['platform', 'proof-platform-select', 'github', 'change'],
+      ['account name', 'proof-identity-input', 'someone-else', 'input'],
+      ['proof', 'proof-proof-input', 'https://bsky.app/profile/jack/post/abc', 'input'],
+    ])('goes away once the %s no longer matches what was filled in', async (_label, id, value, event) => {
+      const h = await signedIn()
+      h.fields[id].value = value
+      h.fire(id, event)
+      expect(h.fields['proof-status'].hidden).toBe(true)
+    })
+
+    it('stays when an edit event leaves the form unchanged, such as retyping the same letter', async () => {
+      const h = await signedIn()
+      h.fields['proof-identity-input'].value = 'jack'
+      h.fire('proof-identity-input', 'input')
+      expect(h.fields['proof-status'].hidden).toBe(false)
+    })
+
+    it('goes away when Publish is clicked', async () => {
+      const h = await signedIn()
+      h.fire('publish-kind0-btn', 'click')
+      expect(h.fields['proof-status'].hidden).toBe(true)
+    })
+
+    it('leaves a newer message in that spot alone, such as a "Verify this link" result', async () => {
+      const h = await signedIn()
+      setStatus(h)('proof-status', 'Success. This account is verified.', 'ok')
+      h.fields['proof-identity-input'].value = 'someone-else'
+      h.fire('proof-identity-input', 'input')
+      h.fire('publish-kind0-btn', 'click')
+      expect(h.fields['proof-status']).toMatchObject({ textContent: 'Success. This account is verified.', hidden: false })
+    })
+
+    it('stops watching once it has gone', async () => {
+      const h = await signedIn()
+      h.fire('publish-kind0-btn', 'click')
+      for (const id of ['proof-platform-select', 'proof-identity-input', 'proof-proof-input', 'publish-kind0-btn']) {
+        expect(Object.values(h.fields[id].listeners).flat()).toEqual([])
+      }
+    })
   })
 })

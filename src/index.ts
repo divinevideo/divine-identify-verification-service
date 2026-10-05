@@ -2021,8 +2021,10 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     // localStorage under the sign-in's one-time code, so a return that opens
     // in another tab of the same browser still finds it.
     const PENDING_SIGN_IN_KEY = 'verifier_pending_sign_in:';
-    // Matches how long the verifier keeps a sign-in open (10 minutes).
-    const PENDING_SIGN_IN_MAX_AGE_MS = 10 * 60 * 1000;
+    // The verifier keeps a sign-in open for 10 minutes and enforces that itself.
+    // Its clock starts a little after this page's (at the click), so allow one
+    // more minute here rather than turn away a sign-in the verifier recorded.
+    const PENDING_SIGN_IN_MAX_AGE_MS = 11 * 60 * 1000;
     const SIGN_IN_PLATFORMS = ['twitter', 'bluesky', 'youtube', 'tiktok'];
     const UNCONFIRMED_SIGN_IN = 'This page could not confirm a sign-in. Start the sign-in again from this page.';
 
@@ -2076,6 +2078,66 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       }
     }
 
+    // Brings an element into view. While the page is still loading, the
+    // browser's own jump to the address's #section would override the scroll,
+    // so wait for it.
+    function bringIntoViewOnceLoaded(el) {
+      if (!el || !el.scrollIntoView) return;
+      const bringIntoView = () => el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (document.readyState === 'complete') bringIntoView();
+      else window.addEventListener('load', () => setTimeout(bringIntoView, 0), { once: true });
+    }
+
+    // Shows a sign-in message and brings it into view, since a return can land
+    // anywhere on the page.
+    function showSignInStatus(msg, type) {
+      setStatus('verify-global-status', msg, type);
+      bringIntoViewOnceLoaded(document.getElementById('verify-global-status'));
+    }
+
+    // Asks the verifier whether this account really is linked, and returns the
+    // account name it recorded, or '' if it can't say so. Asks up to three
+    // times, within one 10-second limit, when a request fails outright: a
+    // network error, a server error, or an answer that isn't JSON. A clear
+    // answer, linked or not, is final.
+    async function confirmSignIn(pending, identity) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      const url = API + '/auth/' + pending.platform + '/status?' + new URLSearchParams({ pubkey: pending.pubkey, identity }).toString();
+      try {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) {
+            // Wait a moment before trying again, but not past the 10 seconds.
+            await new Promise(resolve => {
+              const wait = setTimeout(resolve, 250 * attempt);
+              controller.signal.addEventListener('abort', () => { clearTimeout(wait); resolve(); }, { once: true });
+            });
+          }
+          if (controller.signal.aborted) return '';
+          let resp;
+          try {
+            resp = await fetch(url, { signal: controller.signal });
+          } catch {
+            // Past the 10 seconds: stop now rather than wait to try again.
+            if (controller.signal.aborted) return '';
+            continue;
+          }
+          if (resp.status >= 500) continue;
+          let data;
+          try {
+            data = await resp.json();
+          } catch {
+            if (controller.signal.aborted) return '';
+            continue;
+          }
+          return resp.ok && data && data.verified === true ? String(data.identity || identity) : '';
+        }
+        return '';
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     // Only messages the verifier's sign-in callbacks actually send are shown.
     function signInErrorMessage(reason) {
       if (reason === 'Verification failed') return 'Sign-in was not completed: the account could not be verified.';
@@ -2102,53 +2164,69 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
 
       const pending = takePendingSignIn(nonce);
       if (!verified) {
-        setStatus('verify-global-status', signInErrorMessage(reason), 'error');
+        showSignInStatus(signInErrorMessage(reason), 'error');
         return;
       }
       if (!pending || pending.nonce !== nonce || pending.platform !== platform || !identity) {
-        setStatus('verify-global-status', UNCONFIRMED_SIGN_IN, 'error');
+        showSignInStatus(UNCONFIRMED_SIGN_IN, 'error');
         return;
       }
 
       // Ask the verifier whether this account really is linked before saying so.
-      setStatus('verify-global-status', 'Confirming your sign-in...', 'loading');
-      let linkedIdentity = '';
-      // Give up after 10 seconds rather than leaving the page on "Confirming".
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10000);
-      try {
-        const query = new URLSearchParams({ pubkey: pending.pubkey, identity });
-        const resp = await fetch(API + '/auth/' + pending.platform + '/status?' + query.toString(), { signal: controller.signal });
-        const data = await resp.json();
-        if (resp.ok && data && data.verified === true) linkedIdentity = String(data.identity || identity);
-      } catch {} finally {
-        clearTimeout(timer);
-      }
-      if (!linkedIdentity) {
-        setStatus('verify-global-status', UNCONFIRMED_SIGN_IN, 'error');
-        return;
-      }
-
-      setStatus('verify-global-status', 'Success. Your ' + pending.platform + ' account is now linked: ' + linkedIdentity + '. You can now publish this to your Nostr profile below.', 'ok');
-
-      // Pre-fill the Advanced section so the Publish button works for this OAuth result
+      showSignInStatus('Confirming your sign-in...', 'loading');
       const proofPlatformEl = document.getElementById('proof-platform-select');
       const proofIdentityEl = document.getElementById('proof-identity-input');
       const proofProofEl = document.getElementById('proof-proof-input');
-      if (proofPlatformEl && proofIdentityEl) {
+      const formBefore = JSON.stringify([proofPlatformEl, proofIdentityEl, proofProofEl].map(el => el ? el.value : ''));
+      const linkedIdentity = await confirmSignIn(pending, identity);
+      if (!linkedIdentity) {
+        showSignInStatus(UNCONFIRMED_SIGN_IN, 'error');
+        return;
+      }
+
+      // Pre-fill the Advanced section so the Publish button works for this
+      // sign-in, unless the person changed that form while it was confirming.
+      const formChanged = JSON.stringify([proofPlatformEl, proofIdentityEl, proofProofEl].map(el => el ? el.value : '')) !== formBefore;
+      if (proofPlatformEl && proofIdentityEl && !formChanged) {
         proofPlatformEl.value = pending.platform;
         // Setting the value does not fire 'change', so update the labels here.
         updateProofInputs();
         proofIdentityEl.value = linkedIdentity;
         if (proofProofEl) proofProofEl.value = 'oauth';
-        // Open the Advanced section and scroll the publish button into view
-        const advancedDetails = document.getElementById('advanced-proof');
-        if (advancedDetails) {
-          advancedDetails.open = true;
-          const publishBtn = document.getElementById('publish-kind0-btn');
-          if (publishBtn) publishBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
       }
+      const advancedDetails = document.getElementById('advanced-proof');
+      if (advancedDetails) advancedDetails.open = true;
+      const linked = 'Success. Your ' + pending.platform + ' account is now linked: ' + linkedIdentity + '. ';
+      if (formChanged) {
+        showSignInStatus(linked + 'The Publish form below was left as you changed it.', 'ok');
+        return;
+      }
+      // Publish is the next step, and on a phone it is too far below the
+      // message for both to fit on screen. So put a note beside Publish saying
+      // what it will do, and land there.
+      setStatus('verify-global-status', linked + 'You can now publish this to your Nostr profile below.', 'ok');
+      const note = 'Your ' + pending.platform + ' account ' + linkedIdentity + ' is linked. Publish to add it to your Nostr profile.';
+      setStatus('proof-status', note, 'ok');
+      watchPublishNote(note, [proofPlatformEl, proofIdentityEl, proofProofEl]);
+      bringIntoViewOnceLoaded(document.getElementById('publish-kind0-btn'));
+    }
+
+    // The note beside Publish says what Publish will do, so it goes as soon as
+    // that stops being true: the form no longer matches what was filled in, or
+    // Publish is clicked. A newer message in the same spot is left alone.
+    function watchPublishNote(note, formEls) {
+      const els = formEls.filter(Boolean);
+      const filledIn = JSON.stringify(els.map(el => el.value));
+      const publishBtn = document.getElementById('publish-kind0-btn');
+      const forget = () => {
+        const statusEl = document.getElementById('proof-status');
+        if (statusEl && statusEl.textContent === note) clearStatus('proof-status');
+        els.forEach(el => { el.removeEventListener('input', onEdit); el.removeEventListener('change', onEdit); });
+        if (publishBtn) publishBtn.removeEventListener('click', forget);
+      };
+      const onEdit = () => { if (JSON.stringify(els.map(el => el.value)) !== filledIn) forget(); };
+      els.forEach(el => { el.addEventListener('input', onEdit); el.addEventListener('change', onEdit); });
+      if (publishBtn) publishBtn.addEventListener('click', forget);
     }
 
     function showStatus(msg, type) {
