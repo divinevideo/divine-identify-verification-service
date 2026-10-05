@@ -738,7 +738,9 @@ describe('confirming a returning sign-in', () => {
     // Nothing was filled in to publish, so there's no note beside Publish
     // and the page stays on the message.
     expect(h.statuses.filter(([id]) => id === 'proof-status')).toEqual([])
-    expect(Object.values(h.fields['publish-kind0-btn'].listeners).flat()).toEqual([])
+    for (const id of ['proof-platform-select', 'proof-identity-input', 'proof-proof-input', 'publish-kind0-btn']) {
+      expect(Object.values(h.fields[id].listeners).flat()).toEqual([])
+    }
     expect(h.scrolledWith).toEqual([CONFIRMING[1], 'Success. Your twitter account is now linked: jack. The Publish form below was left as you changed it.'])
     expect(h.scrolledTo).not.toContain('publish-kind0-btn')
   })
@@ -852,7 +854,7 @@ describe('confirming a returning sign-in', () => {
       expect(h.fields['proof-status'].hidden).toBe(true)
     })
 
-    it('stays when an edit event leaves the form unchanged, such as retyping the same letter', async () => {
+    it('stays when an edit event leaves the form unchanged, such as typing the same letter over a selected one', async () => {
       const h = await signedIn()
       h.fields['proof-identity-input'].value = 'jack'
       h.fire('proof-identity-input', 'input')
