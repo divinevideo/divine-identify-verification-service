@@ -472,6 +472,28 @@ describe('isAllowedReturnUrl', () => {
     expect(isAllowedReturnUrl('https://example.com/x', 'http://localhost:8787')).toBe(false)
   })
 
+  it('treats the verifier as local when the request itself reaches it on localhost', () => {
+    // No .dev.vars: no base at all.
+    expect(isAllowedReturnUrl('http://localhost:8787/#verify-here', undefined, 'http://localhost:8787/auth/twitter/start')).toBe(true)
+    // A public tunnel as the base (Bluesky and TikTok need one), page opened at localhost.
+    expect(isAllowedReturnUrl('http://localhost:8787/#verify-here', 'https://abc.trycloudflare.com', 'http://localhost:8787/auth/bluesky/start')).toBe(true)
+    // The IPv6 loopback address.
+    expect(isAllowedReturnUrl('http://[::1]:8787/x', undefined, 'http://[::1]:8787/auth/twitter/start')).toBe(true)
+    expect(isAllowedReturnUrl('http://[::1]:5173/x', 'http://[::1]:8787')).toBe(true)
+    // Still only local addresses, even then.
+    expect(isAllowedReturnUrl('https://example.com/x', undefined, 'http://localhost:8787/auth/twitter/start')).toBe(false)
+  })
+
+  it('turns away localhost addresses when the request reaches the live verifier', () => {
+    expect(isAllowedReturnUrl('http://localhost:5173/x', 'https://verifier.divine.video', 'https://verifier.divine.video/auth/twitter/start')).toBe(false)
+    expect(isAllowedReturnUrl('http://localhost:5173/x', undefined, 'https://verifier.divine.video/auth/twitter/start')).toBe(false)
+  })
+
+  it('accepts only web addresses, even on a trusted origin', () => {
+    expect(isAllowedReturnUrl('blob:https://verifier.divine.video/x')).toBe(false)
+    expect(isAllowedReturnUrl('blob:https://staging.divine.video/x', 'https://staging.divine.video')).toBe(false)
+  })
+
   it('accepts only web addresses on localhost during local development', () => {
     expect(isAllowedReturnUrl('https://localhost:5173/x', 'http://localhost:8787')).toBe(true)
     // file://localhost/x would parse with an empty hostname and never reach the
@@ -489,10 +511,16 @@ describe('GET /auth/:platform/start return address', () => {
     // lets the address through, fail here instead of calling bsky.social.
     const upstream = vi.fn(() => { throw new Error('a turned-away sign-in must not contact the provider') })
     vi.stubGlobal('fetch', upstream)
-    const res = await app.request(`/auth/bluesky/start?pubkey=${'a'.repeat(64)}&handle=alice.bsky.social&return_url=${encodeURIComponent('http://localhost:5173/x')}`, {}, env)
+    const res = await app.request(`https://verifier.divine.video/auth/bluesky/start?pubkey=${'a'.repeat(64)}&handle=alice.bsky.social&return_url=${encodeURIComponent('http://localhost:5173/x')}`, {}, env)
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'Invalid return_url: must be a trusted origin' })
     expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('says sign-in is not set up, rather than blaming the return address, on a local verifier with no settings', async () => {
+    const res = await app.request(`http://localhost:8787/auth/twitter/start?pubkey=${'a'.repeat(64)}&return_url=${encodeURIComponent('http://localhost:8787/?signin=abc#verify-here')}`, {}, createTestEnv())
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({ error: 'Twitter OAuth not configured' })
   })
 
   it('starts a sign-in that returns to a local page when the verifier runs locally', async () => {
