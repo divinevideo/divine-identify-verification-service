@@ -21,5 +21,11 @@ export interface PlatformVerifier {
     code?: VerificationCode
     method?: VerificationMethod
     provenance?: VerificationProvenance
+    /**
+     * The proof to publish, when verification resolved the given one to a
+     * simpler stable form (for example a TikTok share link to its post
+     * number). Only set on success, and only when it differs from the input.
+     */
+    canonicalProof?: string
   }>
 }
