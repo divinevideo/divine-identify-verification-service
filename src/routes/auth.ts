@@ -122,18 +122,28 @@ const ALLOWED_RETURN_ORIGINS = new Set([
   'https://verifier.divine.video',
 ])
 
-export function isAllowedReturnUrl(url: string, oauthRedirectBase?: string): boolean {
+function isLocalHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+}
+
+// requestUrl is the address this request reached the verifier on. The live
+// verifier is only ever reached on its public hostnames, so a request that
+// arrived on localhost means the verifier is running locally.
+export function isAllowedReturnUrl(url: string, oauthRedirectBase?: string, requestUrl?: string): boolean {
   try {
     const parsed = new URL(url)
+    // Only web addresses: some other schemes (blob:) report a trusted origin.
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+    const base = oauthRedirectBase ? new URL(oauthRedirectBase) : null
     // Compare exact origin (scheme + host + port) to prevent subdomain tricks
-    if (oauthRedirectBase) {
-      const base = new URL(oauthRedirectBase)
-      if (parsed.origin === base.origin) return true
-    }
+    if (base && parsed.origin === base.origin) return true
     if (ALLOWED_RETURN_ORIGINS.has(parsed.origin)) return true
-    // Allow localhost dev origins
-    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') return true
-    return false
+    // Local development only: when the verifier itself runs on localhost,
+    // also accept other local dev servers. Production never sends people to
+    // localhost.
+    const runningLocally = (base !== null && isLocalHostname(base.hostname))
+      || (requestUrl !== undefined && isLocalHostname(new URL(requestUrl).hostname))
+    return runningLocally && isLocalHostname(parsed.hostname)
   } catch {
     return false
   }
@@ -211,7 +221,7 @@ auth.get('/:platform/start', async (c) => {
   }
 
   // Validate return_url to prevent open redirect
-  if (returnUrl !== '/' && !isAllowedReturnUrl(returnUrl, c.env.OAUTH_REDIRECT_BASE)) {
+  if (returnUrl !== '/' && !isAllowedReturnUrl(returnUrl, c.env.OAUTH_REDIRECT_BASE, c.req.url)) {
     return c.json({ error: 'Invalid return_url: must be a trusted origin' }, 400)
   }
 
