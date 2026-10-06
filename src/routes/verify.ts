@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import type { Bindings, Platform, VerifyClaim, VerifyResult, CachedResult } from '../types'
-import { validateClaim, isValidPlatform, isValidHexPubkey, isValidIdentity, isValidProof, normalizePubkey } from '../utils/validation'
+import type { Bindings, VerifyClaim, VerifyResult, CachedResult } from '../types'
+import { validateClaim, normalizePubkey } from '../utils/validation'
 import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
@@ -18,8 +18,15 @@ async function verifySingleClaim(
   clientIp: string
 ): Promise<VerifyResult> {
   const now = Math.floor(Date.now() / 1000)
-  // Normalize pubkey to lowercase for consistent cache keys
-  const normalizedClaim = { ...claim, pubkey: normalizePubkey(claim.pubkey), proof: claim.proof || '' }
+  // Normalize pubkey to lowercase for consistent cache keys. Validation treats a
+  // Bluesky proof that is only whitespace as no proof, so make it no proof here
+  // too: the same cache entry, and the Bluesky check's own no-proof answer.
+  const proof = claim.proof || ''
+  const normalizedClaim = {
+    ...claim,
+    pubkey: normalizePubkey(claim.pubkey),
+    proof: claim.platform === 'bluesky' && proof.trim() === '' ? '' : proof,
+  }
   const key = cacheKey(normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.proof, normalizedClaim.pubkey)
 
   // Check cache first
@@ -139,6 +146,30 @@ async function verifySingleClaim(
   }
 }
 
+type InvalidClaimResult = {
+  platform: string
+  identity: string
+  verified: false
+  error: string
+  checked_at: number
+  cached: false
+}
+type BatchResult = VerifyResult | InvalidClaimResult
+
+// Clients read platform and identity as strings to match results to their
+// claims, so echo them when present and fall back to '' otherwise.
+function invalidClaimResult(claim: unknown, error: string, checkedAt: number): InvalidClaimResult {
+  const fields = claim && typeof claim === 'object' ? claim as Record<string, unknown> : {}
+  return {
+    platform: typeof fields.platform === 'string' ? fields.platform : '',
+    identity: typeof fields.identity === 'string' ? fields.identity : '',
+    verified: false,
+    error,
+    checked_at: checkedAt,
+    cached: false,
+  }
+}
+
 // POST /verify — batch verification
 verify.post('/', async (c) => {
   const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
@@ -149,14 +180,14 @@ verify.post('/', async (c) => {
     return c.json({ error: 'Rate limit exceeded' }, 429)
   }
 
-  let body: { claims?: VerifyClaim[] }
+  let body: { claims?: unknown[] } | null
   try {
     body = await c.req.json()
   } catch {
     return c.json({ error: 'Invalid JSON body' }, 400)
   }
 
-  if (!body.claims || !Array.isArray(body.claims)) {
+  if (!body || !Array.isArray(body.claims)) {
     return c.json({ error: 'Missing or invalid "claims" array' }, 400)
   }
 
@@ -168,19 +199,16 @@ verify.post('/', async (c) => {
     return c.json({ error: `Maximum ${MAX_BATCH_SIZE} claims per request` }, 400)
   }
 
-  // Validate all claims
-  const errors: { index: number; error: string }[] = []
-  for (let i = 0; i < body.claims.length; i++) {
-    const err = validateClaim(body.claims[i], i)
-    if (err) errors.push(err)
-  }
-  if (errors.length > 0) {
-    return c.json({ error: 'Validation failed', details: errors }, 400)
-  }
-
-  // Verify all claims concurrently
-  const results = await Promise.all(
-    body.claims.map(claim => verifySingleClaim(claim, c.env, clientIp))
+  // Each claim is judged on its own: one malformed signed tag must not hide the
+  // results of the valid claims beside it (#35). Invalid claims become
+  // verified:false results in place, and never reach rate limits or platforms.
+  const now = Math.floor(Date.now() / 1000)
+  const results: BatchResult[] = await Promise.all(
+    body.claims.map((claim, index) => {
+      const invalid = validateClaim(claim, index)
+      if (invalid) return invalidClaimResult(claim, invalid.error, now)
+      return verifySingleClaim(claim as VerifyClaim, c.env, clientIp)
+    })
   )
 
   return c.json({ results })
@@ -196,38 +224,17 @@ verify.post('/single', async (c) => {
     return c.json({ error: 'Rate limit exceeded' }, 429)
   }
 
-  let body: { platform?: string; identity?: string; proof?: string; pubkey?: string }
+  let body: unknown
   try {
     body = await c.req.json()
   } catch {
     return c.json({ error: 'Invalid JSON body' }, 400)
   }
 
-  if (!body.platform || !isValidPlatform(body.platform)) {
-    return c.json({ error: 'Invalid or missing platform' }, 400)
-  }
-  if (!body.pubkey || !isValidHexPubkey(body.pubkey)) {
-    return c.json({ error: 'Invalid or missing pubkey (64-char hex)' }, 400)
-  }
-  if (!body.identity || !isValidIdentity(body.identity)) {
-    return c.json({ error: 'Invalid or missing identity' }, 400)
-  }
-  const proof = body.proof || ''
-  if (body.platform !== 'bluesky') {
-    if (!proof || !isValidProof(proof)) {
-      return c.json({ error: 'Invalid or missing proof' }, 400)
-    }
-  } else if (proof && !isValidProof(proof)) {
-    return c.json({ error: 'Invalid proof' }, 400)
-  }
+  const invalid = validateClaim(body, 0)
+  if (invalid) return c.json({ error: invalid.error }, 400)
 
-  const claim: VerifyClaim = {
-    platform: body.platform as Platform,
-    identity: body.identity,
-    proof,
-    pubkey: body.pubkey,
-  }
-  const result = await verifySingleClaim(claim, c.env, clientIp)
+  const result = await verifySingleClaim(body as VerifyClaim, c.env, clientIp)
   return c.json(result)
 })
 
@@ -245,13 +252,6 @@ verify.get('/:platform/*', async (c) => {
   const platform = c.req.param('platform')
   const pubkey = c.req.query('pubkey')
 
-  if (!platform || !isValidPlatform(platform)) {
-    return c.json({ error: 'Invalid platform' }, 400)
-  }
-  if (!pubkey || !isValidHexPubkey(pubkey)) {
-    return c.json({ error: 'Invalid or missing pubkey query parameter (64-char hex)' }, 400)
-  }
-
   // Parse the wildcard path to extract identity and proof
   const prefix = `/verify/${platform}/`
   const prefixIdx = c.req.path.indexOf(prefix)
@@ -264,18 +264,20 @@ verify.get('/:platform/*', async (c) => {
     return c.json({ error: 'Invalid path: expected /verify/:platform/:identity/:proof' }, 400)
   }
 
-  const identity = decodeURIComponent(wildcardPath.slice(0, lastSlash))
-  const proof = decodeURIComponent(wildcardPath.slice(lastSlash + 1))
-
-  if (!isValidIdentity(identity)) {
-    return c.json({ error: 'Invalid identity' }, 400)
+  let identity: string
+  let proof: string
+  try {
+    identity = decodeURIComponent(wildcardPath.slice(0, lastSlash))
+    proof = decodeURIComponent(wildcardPath.slice(lastSlash + 1))
+  } catch {
+    return c.json({ error: 'Invalid path encoding' }, 400)
   }
-  if (!isValidProof(proof)) {
-    return c.json({ error: 'Invalid proof' }, 400)
-  }
 
-  const claim: VerifyClaim = { pubkey, platform: platform as Platform, identity, proof }
-  const result = await verifySingleClaim(claim, c.env, clientIp)
+  const claim = { pubkey, platform, identity, proof }
+  const invalid = validateClaim(claim, 0)
+  if (invalid) return c.json({ error: invalid.error }, 400)
+  const validatedClaim = claim as VerifyClaim
+  const result = await verifySingleClaim(validatedClaim, c.env, clientIp)
 
   // Content negotiation: HTML for browsers, JSON for API clients
   const accept = c.req.header('accept') || ''
@@ -284,9 +286,9 @@ verify.get('/:platform/*', async (c) => {
     return c.json(result)
   }
   if (accept.includes('text/html') && !accept.includes('application/json')) {
-    const npub = hexToNpub(pubkey)
+    const npub = hexToNpub(validatedClaim.pubkey)
     const origin = new URL(c.req.url).origin
-    return c.html(renderVerifyHtml(result, platform, identity, proof, pubkey, npub, c.req.url, origin))
+    return c.html(renderVerifyHtml(result, platform, identity, proof, validatedClaim.pubkey, npub, c.req.url, origin))
   }
 
   return c.json(result)
@@ -305,6 +307,9 @@ const PLATFORM_LABELS: Record<string, string> = {
 }
 
 export function proofUrl(platform: string, identity: string, proof: string): string | null {
+  // No proof, no post to link to: a Bluesky claim can be confirmed by sign-in
+  // or an identity-link record alone.
+  if (typeof proof !== 'string' || !proof.trim()) return null
   switch (platform) {
     case 'github': return `https://gist.github.com/${identity}/${proof}`
     case 'twitter': return `https://x.com/${identity}/status/${proof}`
@@ -645,6 +650,9 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
     }
 
     function proofUrl(platform, identity, proof) {
+      // Mirrors the server's proofUrl: no proof, no link. Claims here come from
+      // tags on relay events, so a proof may not even be text.
+      if (typeof proof !== 'string' || !proof.trim()) return null;
       switch (platform) {
         case 'github': return 'https://gist.github.com/' + identity + '/' + proof;
         case 'twitter': return 'https://x.com/' + identity + '/status/' + proof;
