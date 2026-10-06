@@ -130,6 +130,16 @@ describe('GET /verify/:platform/*', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('shows no proof link for a Bluesky claim whose proof is only spaces', async () => {
+    const { env, store } = createEnv()
+    store.set(oauthVerificationKey('bluesky', 'synthetic.bsky.social', PUBKEY), JSON.stringify({ checked_at: 1_700_000_000 }))
+    const response = await worker.fetch(new Request(`https://example.com/verify/bluesky/synthetic.bsky.social/%20?pubkey=${PUBKEY}`, { headers: { Accept: 'text/html' } }), env)
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    expect(html).toContain('synthetic.bsky.social is verified')
+    expect(html).not.toContain('View proof post')
+  })
+
   it('accepts proofless Bluesky claims through OAuth', async () => {
     const { env, store } = createEnv()
     store.set(oauthVerificationKey('bluesky', 'synthetic.bsky.social', PUBKEY), JSON.stringify({ checked_at: 1_700_000_000 }))
@@ -137,5 +147,35 @@ describe('GET /verify/:platform/*', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ verified: true, method: 'oauth' })
     expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('a Bluesky proof that is only whitespace', () => {
+  it.each(['  ', '\t'])('is the same claim as no proof at all (%j)', async (blank) => {
+    const { env, store } = createEnv()
+    const cached: CachedResult = { verified: true, method: 'identity_link', checked_at: 1_700_000_000, type: 'verified' }
+    store.set(cacheKey('bluesky', 'synthetic.bsky.social', '', PUBKEY), JSON.stringify(cached))
+    const response = await post('/verify/single', { platform: 'bluesky', identity: 'synthetic.bsky.social', proof: blank, pubkey: PUBKEY }, env)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ verified: true, cached: true })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('gets the Bluesky check\'s no-proof answer, not a lookup of a blank post', async () => {
+    const { env } = createEnv()
+    const fetched: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => { fetched.push(String(url)); return new Response('{}', { status: 404 }) }))
+    const response = await post('/verify/single', { platform: 'bluesky', identity: 'synthetic.bsky.social', proof: '  ', pubkey: PUBKEY }, env)
+    expect(await response.json()).toMatchObject({ verified: false, error: 'No identity link record found and no Bluesky post proof provided' })
+    expect(fetched.some(url => url.includes('getPostThread'))).toBe(false)
+  })
+
+  it('stays a Bluesky rule: a blank proof on another platform is not treated as no proof', async () => {
+    const { env, store } = createEnv()
+    const cached: CachedResult = { verified: true, checked_at: 1_700_000_000, type: 'verified' }
+    store.set(cacheKey('github', 'synthetic-user', '', PUBKEY), JSON.stringify(cached))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })))
+    const response = await post('/verify/single', { platform: 'github', identity: 'synthetic-user', proof: ' ', pubkey: PUBKEY }, env)
+    expect(await response.json()).toMatchObject({ verified: false, cached: false })
   })
 })

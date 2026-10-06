@@ -14,6 +14,16 @@ const FAKE_RESULT: VerifyResult = {
 const DISCORD_MESSAGE_LINK = 'https://discord.com/channels/1234567890123456789/2345678901234567890/3456789012345678901'
 
 describe('proofUrl', () => {
+  // A Bluesky claim may carry no proof at all: it is confirmed by sign-in or by
+  // an identity-link record. There is no post to link to then.
+  it.each(['bluesky', 'github', 'twitter', 'mastodon', 'youtube', 'tiktok'])('omits the link when a %s claim has no proof', (platform) => {
+    expect(proofUrl(platform, 'alice', '')).toBeNull()
+  })
+
+  it.each([' ', '\t'])('omits the link when the proof is only whitespace (%j)', (blank) => {
+    expect(proofUrl('bluesky', 'alice', blank)).toBeNull()
+  })
+
   it('points a Discord proof straight at the message link it already is', () => {
     expect(proofUrl('discord', 'alice', DISCORD_MESSAGE_LINK)).toBe(DISCORD_MESSAGE_LINK)
   })
@@ -60,6 +70,21 @@ describe('renderVerifyHtml — "View proof post" link', () => {
     const html = render('3456789012345678901')
     expect(html).not.toContain('View proof post')
   })
+
+  it('renders no proof link for a Bluesky claim with no proof', () => {
+    const html = renderVerifyHtml(
+      { ...FAKE_RESULT, platform: 'bluesky', identity: 'alice.bsky.social' },
+      'bluesky',
+      'alice.bsky.social',
+      '',
+      'a'.repeat(64),
+      'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+      'https://verifier.divine.video/verify/bluesky/alice.bsky.social/?pubkey=' + 'a'.repeat(64),
+      'https://verifier.divine.video',
+    )
+    expect(html).not.toContain('View proof post')
+    expect(html).not.toContain('bsky.app/profile/alice.bsky.social/post/"')
+  })
 })
 
 describe('renderVerifyHtml — embedded client-side proof link (other verified identities)', () => {
@@ -90,6 +115,23 @@ describe('renderVerifyHtml — embedded client-side proof link (other verified i
   it('also omits the link for a bare snowflake', () => {
     const fn = embeddedProofUrl()
     expect(fn('discord', 'alice', '3456789012345678901')).toBeNull()
+  })
+
+  it.each(['bluesky', 'github', 'twitter'])('also omits the link when a %s claim has no proof', (platform) => {
+    const fn = embeddedProofUrl()
+    expect(fn(platform, 'alice', '')).toBeNull()
+  })
+
+  it.each([' ', '\t'])('also omits the link when the proof is only whitespace (%j)', (blank) => {
+    const fn = embeddedProofUrl()
+    expect(fn('bluesky', 'alice', blank)).toBeNull()
+  })
+
+  // Claims come from tags on events fetched from relays, which aren't checked
+  // here, so a proof may not even be text. One odd tag must not break the list.
+  it.each([123, ['x'], { a: 1 }, true])('omits the link, without throwing, when a proof is not text (%j)', (odd) => {
+    const fn = embeddedProofUrl() as unknown as (platform: string, identity: string, proof: unknown) => string | null
+    expect(fn('github', 'alice', odd)).toBeNull()
   })
 
   it('uses the server allowlist for every Discord client host', () => {

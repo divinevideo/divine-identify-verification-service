@@ -18,8 +18,15 @@ async function verifySingleClaim(
   clientIp: string
 ): Promise<VerifyResult> {
   const now = Math.floor(Date.now() / 1000)
-  // Normalize pubkey to lowercase for consistent cache keys
-  const normalizedClaim = { ...claim, pubkey: normalizePubkey(claim.pubkey), proof: claim.proof || '' }
+  // Normalize pubkey to lowercase for consistent cache keys. Validation treats a
+  // Bluesky proof that is only whitespace as no proof, so make it no proof here
+  // too: the same cache entry, and the Bluesky check's own no-proof answer.
+  const proof = claim.proof || ''
+  const normalizedClaim = {
+    ...claim,
+    pubkey: normalizePubkey(claim.pubkey),
+    proof: claim.platform === 'bluesky' && proof.trim() === '' ? '' : proof,
+  }
   const key = cacheKey(normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.proof, normalizedClaim.pubkey)
 
   // Check cache first
@@ -297,6 +304,9 @@ const PLATFORM_LABELS: Record<string, string> = {
 }
 
 export function proofUrl(platform: string, identity: string, proof: string): string | null {
+  // No proof, no post to link to: a Bluesky claim can be confirmed by sign-in
+  // or an identity-link record alone.
+  if (typeof proof !== 'string' || !proof.trim()) return null
   switch (platform) {
     case 'github': return `https://gist.github.com/${identity}/${proof}`
     case 'twitter': return `https://x.com/${identity}/status/${proof}`
@@ -628,6 +638,9 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
     }
 
     function proofUrl(platform, identity, proof) {
+      // Mirrors the server's proofUrl: no proof, no link. Claims here come from
+      // tags on relay events, so a proof may not even be text.
+      if (typeof proof !== 'string' || !proof.trim()) return null;
       switch (platform) {
         case 'github': return 'https://gist.github.com/' + identity + '/' + proof;
         case 'twitter': return 'https://x.com/' + identity + '/status/' + proof;
