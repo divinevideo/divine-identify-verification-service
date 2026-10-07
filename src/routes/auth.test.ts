@@ -719,3 +719,28 @@ describe('GET /auth/:platform/callback after the person cancels or denies sign-i
     expect(location.searchParams.get('oauth_error')).toBe('could not be completed at Twitter')
   })
 })
+
+describe('GET /auth/bluesky/start handle', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  // The page strips a leading @ before starting; apps may not, and people type
+  // their handle the way Bluesky shows it.
+  it('looks up the handle without a leading @ or surrounding spaces', async () => {
+    for (const typed of ['@alice.bsky.social', ' @alice.bsky.social ', '  alice.bsky.social', '@ alice.bsky.social']) {
+      const upstream = vi.fn(async (_input: RequestInfo | URL) => new Response('{}', { status: 404 }))
+      vi.stubGlobal('fetch', upstream)
+      await app.request(`https://verifier.divine.video/auth/bluesky/start?pubkey=${'a'.repeat(64)}&handle=${encodeURIComponent(typed)}`, {}, { ...createTestEnv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' })
+      const lookup = String(upstream.mock.calls[0]?.[0])
+      expect(lookup, typed).toContain('resolveHandle?handle=alice.bsky.social')
+    }
+  })
+
+  it('treats a handle that is only @ as missing', async () => {
+    const upstream = vi.fn(() => { throw new Error('a missing handle must not contact the provider') })
+    vi.stubGlobal('fetch', upstream)
+    const res = await app.request(`https://verifier.divine.video/auth/bluesky/start?pubkey=${'a'.repeat(64)}&handle=${encodeURIComponent(' @ ')}`, {}, { ...createTestEnv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'Missing handle parameter (e.g., user.bsky.social)' })
+    expect(upstream).not.toHaveBeenCalled()
+  })
+})
