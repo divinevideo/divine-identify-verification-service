@@ -35,6 +35,9 @@ export interface OAuthState {
   dpopPublicJwk?: JsonWebKey
   issuer?: string
   tokenEndpoint?: string
+  // Bluesky: the account and handle the sign-in started with
+  did?: string
+  handle?: string
 }
 
 export interface OAuthVerification {
