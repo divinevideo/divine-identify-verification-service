@@ -268,6 +268,34 @@ describe('startBlueskyOAuth - DPoP nonce retry', () => {
     expect(fetchMock.mock.calls[parCalls - 1][1]).toMatchObject({ method: 'POST', redirect: 'manual' })
   })
 
+  // The AT Protocol OAuth spec requires both metadata documents to answer
+  // "HTTP 200 (not 2xx or redirect)", so a redirect is refused, even to a public host.
+  it.each([
+    ['the PDS resource metadata', 2],
+    ['the authorization server metadata', 3],
+  ])('does not follow a redirect from %s to a public host', async (_label, redirectedFetch) => {
+    const discovery = mockDiscoveryChain()
+    const fetchMock = vi.fn()
+    for (const response of discovery.slice(0, redirectedFetch)) fetchMock.mockResolvedValueOnce(response)
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, { status: 302, headers: { Location: 'https://elsewhere.example/.well-known/x' } }),
+    )
+    // What a followed redirect would find: the rest of a working sign-in.
+    for (const response of discovery.slice(redirectedFetch)) fetchMock.mockResolvedValueOnce(response)
+    fetchMock.mockResolvedValue(parSuccess())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const resp = await startBlueskyOAuth(
+      makeEnv(),
+      'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
+      'alice.bsky.social',
+      'https://verifier.divine.video/',
+    )
+
+    expect(resp.status).toBe(400)
+    expect(fetchMock).toHaveBeenCalledTimes(redirectedFetch + 1)
+  })
+
   it('returns 503 when OAUTH_REDIRECT_BASE is not set', async () => {
     const env = makeEnv({ OAUTH_REDIRECT_BASE: undefined })
     const resp = await startBlueskyOAuth(
