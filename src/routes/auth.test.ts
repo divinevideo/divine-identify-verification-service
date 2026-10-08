@@ -745,6 +745,13 @@ describe('GET /auth/bluesky/start handle', () => {
   })
 })
 
+async function revoke(env: Bindings, identity: string, event: Awaited<ReturnType<typeof signNip98Event>>) {
+  return app.request('/auth/oauth/revoke', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ platform: 'bluesky', identity, pubkey: event.pubkey, event }),
+  }, env)
+}
+
 describe('unlinking a kept Bluesky sign-in', () => {
   const DID = 'did:plc:alice111111111111111111'
   async function linked(env: Bindings, pubkey: string) {
@@ -768,18 +775,28 @@ describe('unlinking a kept Bluesky sign-in', () => {
       expect(await env.CACHE_KV.get(`oauth_verified:bluesky:${DID}:${event.pubkey}`)).toBeNull()
     })
   }
+
+  it('can be retried when part of an unlink fails', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    await linked(env, event.pubkey)
+    const realDelete = env.CACHE_KV.delete.bind(env.CACHE_KV)
+    let failed = false
+    env.CACHE_KV.delete = async (key: string) => {
+      if (!failed && key.includes(DID)) { failed = true; throw new Error('KV DELETE failed') }
+      return realDelete(key)
+    }
+    forbidUpstreamFetch()
+    expect((await revoke(env, 'alice.bsky.social', event)).status).toBe(500)
+    expect((await revoke(env, 'alice.bsky.social', event)).status).toBe(200)
+    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:alice.bsky.social:${event.pubkey}`)).toBeNull()
+    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:${DID}:${event.pubkey}`)).toBeNull()
+  })
 })
 
 describe('unlinking after the Bluesky handle changed', () => {
   const DID = 'did:plc:alice111111111111111111'
   const record = (identity: string, handle: string, pubkey: string) => JSON.stringify({ platform: 'bluesky', identity, pubkey, verified: true, method: 'oauth', checked_at: 1, account_id: DID, handle })
-
-  async function revoke(env: Bindings, identity: string, event: Awaited<ReturnType<typeof signNip98Event>>) {
-    return app.request('/auth/oauth/revoke', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform: 'bluesky', identity, pubkey: event.pubkey, event }),
-    }, env)
-  }
 
   it('does not remove the newer link when the old handle is unlinked', async () => {
     const env = createTestEnv()
@@ -805,24 +822,6 @@ describe('unlinking after the Bluesky handle changed', () => {
     expect((await revoke(env, DID, event)).status).toBe(200)
     expect(await env.CACHE_KV.get(`oauth_verified:bluesky:${DID}:${event.pubkey}`)).toBeNull()
     expect(await env.CACHE_KV.get(`oauth_verified:bluesky:alice.bsky.social:${event.pubkey}`)).not.toBeNull()
-  })
-
-  it('can be retried when part of an unlink fails', async () => {
-    const env = createTestEnv()
-    const event = await signNip98Event(schnorr.utils.randomSecretKey())
-    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${event.pubkey}`, record('alice.bsky.social', 'alice.bsky.social', event.pubkey))
-    await env.CACHE_KV.put(`oauth_verified:bluesky:${DID}:${event.pubkey}`, record(DID, 'alice.bsky.social', event.pubkey))
-    const realDelete = env.CACHE_KV.delete.bind(env.CACHE_KV)
-    let failed = false
-    env.CACHE_KV.delete = async (key: string) => {
-      if (!failed && key.includes(DID)) { failed = true; throw new Error('KV DELETE failed') }
-      return realDelete(key)
-    }
-    forbidUpstreamFetch()
-    expect((await revoke(env, 'alice.bsky.social', event)).status).toBe(500)
-    expect((await revoke(env, 'alice.bsky.social', event)).status).toBe(200)
-    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:alice.bsky.social:${event.pubkey}`)).toBeNull()
-    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:${DID}:${event.pubkey}`)).toBeNull()
   })
 })
 

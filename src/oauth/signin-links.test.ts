@@ -186,16 +186,6 @@ describe('checking a Bluesky sign-in link with an unusual handle', () => {
     expect(store.has(`bsky_handle_did:${HANDLE}`)).toBe(false)
     expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
   })
-
-  it('does not remember a lookup Bluesky could not answer', async () => {
-    const { env, store } = createEnv()
-    const lookup = vi.fn(async () => new Response('upstream error', { status: 502 }))
-    vi.stubGlobal('fetch', lookup)
-    store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
-    await check(env)
-    await check(env)
-    expect(lookup).toHaveBeenCalledTimes(2)
-  })
 })
 
 describe('remembering a handle lookup', () => {
@@ -205,6 +195,16 @@ describe('remembering a handle lookup', () => {
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
     await check(env)
     expect(kv.put.mock.calls.find(c => c[0] === `bsky_handle_did:${HANDLE}`)?.[2]).toEqual({ expirationTtl: 300 })
+  })
+
+  it('does not remember a lookup Bluesky could not answer', async () => {
+    const { env, store } = createEnv()
+    const lookup = vi.fn(async () => new Response('upstream error', { status: 502 }))
+    vi.stubGlobal('fetch', lookup)
+    store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
+    await check(env)
+    await check(env)
+    expect(lookup).toHaveBeenCalledTimes(2)
   })
 
   it.each([
