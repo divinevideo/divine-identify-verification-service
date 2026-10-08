@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_BATCH_SIZE, renderVerifyHtml } from './verify'
 import type { VerifyResult } from '../types'
 import { VALID_PLATFORMS } from '../utils/validation'
@@ -283,6 +283,35 @@ describe('verification-link page: all verified identities', () => {
       expect.objectContaining({ platform: 'nip05', identity: 'alice@divine.video', verified: false }),
       expect.objectContaining({ platform: 'github', identity: 'octocat', verified: true }),
     ])
+  })
+})
+
+describe('verification-link page: asking a relay for an event', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  function loadFetchEventByKind() {
+    const { html } = pageScript()
+    const source = section(html, 'function fetchEventByKind(', '\n    function tryParseJSON')
+    return new Function('WebSocket', `${source}\nreturn fetchEventByKind;`)
+  }
+
+  it('gives up cleanly, with no timer left to fire, when the socket can\'t be opened', async () => {
+    vi.useFakeTimers()
+    const Throws = function () { throw new Error('blocked') } as unknown as typeof WebSocket
+    const fetchEvent = loadFetchEventByKind()(Throws)
+    await expect(fetchEvent('wss://relay.example', PUBKEY, 0)).rejects.toThrow('blocked')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('stops waiting when the relay hangs up without answering', async () => {
+    vi.useFakeTimers()
+    let socket: { onclose?: () => void, close: () => void, send: () => void } | undefined
+    const Hangs = function (this: unknown) { socket = { close: () => {}, send: () => {} }; return socket } as unknown as typeof WebSocket
+    const fetchEvent = loadFetchEventByKind()(Hangs)
+    const result = fetchEvent('wss://relay.example', PUBKEY, 0)
+    socket!.onclose!()
+    await expect(result).rejects.toThrow('ws closed')
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
 

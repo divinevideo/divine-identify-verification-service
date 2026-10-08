@@ -712,9 +712,9 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
     // Fetch a person's latest event of one kind from a relay
     function fetchEventByKind(relayUrl, pubkey, kind) {
       return new Promise(function(resolve, reject) {
-        var timeout = setTimeout(function() { ws.close(); reject(new Error('timeout')); }, 8000);
         var ws;
-        try { ws = new WebSocket(relayUrl); } catch(e) { reject(e); return; }
+        var timeout = setTimeout(function() { if (ws) ws.close(); reject(new Error('timeout')); }, 8000);
+        try { ws = new WebSocket(relayUrl); } catch(e) { clearTimeout(timeout); reject(e); return; }
         var subId = 'vp_' + Math.random().toString(36).slice(2, 8);
         ws.onopen = function() {
           ws.send(JSON.stringify(['REQ', subId, { kinds: [kind], authors: [pubkey], limit: 1 }]));
@@ -735,6 +735,9 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
           } catch(e) {}
         };
         ws.onerror = function() { clearTimeout(timeout); reject(new Error('ws error')); };
+        // A relay that hangs up without answering has nothing for us; don't
+        // make the caller wait out the timeout.
+        ws.onclose = function() { clearTimeout(timeout); reject(new Error('ws closed')); };
       });
     }
 
