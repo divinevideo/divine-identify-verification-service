@@ -39,6 +39,8 @@ export function isValidIdentity(identity: string): boolean {
  * Anything other than a bare hostname is refused.
  */
 export function isPrivateHostname(hostname: string): boolean {
+  // Fail closed: anything that isn't a string would be coerced to one below
+  if (typeof hostname !== 'string') return true
   // Characters that end a host or add a port or user to it
   if (/[/\\?#@:]/.test(hostname)) return true
   let url: URL

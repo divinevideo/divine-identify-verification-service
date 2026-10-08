@@ -141,6 +141,13 @@ describe('isPrivateHostname', () => {
   })
 })
 
+describe('isPrivateHostname with input that is not a string', () => {
+  // The array would read as the public name mastodon.social if it were coerced
+  it.each([undefined, null, 42, {}, ['mastodon.social']])('treats %j as not fetchable', value => {
+    expect(isPrivateHostname(value as unknown as string)).toBe(true)
+  })
+})
+
 describe('isSafeUrl', () => {
   it.each([
     'https://localhost./x', 'https://printer.local./x', 'https://db.internal./x',
