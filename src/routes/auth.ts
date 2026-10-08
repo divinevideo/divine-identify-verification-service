@@ -231,11 +231,14 @@ auth.get('/:platform/start', async (c) => {
     case 'twitter':
       return startTwitterOAuth(c.env, normalizedPubkey, returnUrl)
 
-    case 'bluesky':
-      if (!handle) {
+    case 'bluesky': {
+      // People type handles the way Bluesky shows them, with a leading @.
+      const bareHandle = handle?.trim().replace(/^@/, '').trim()
+      if (!bareHandle) {
         return c.json({ error: 'Missing handle parameter (e.g., user.bsky.social)' }, 400)
       }
-      return startBlueskyOAuth(c.env, normalizedPubkey, handle, returnUrl)
+      return startBlueskyOAuth(c.env, normalizedPubkey, bareHandle, returnUrl)
+    }
 
     case 'youtube':
       return startYouTubeOAuth(c.env, normalizedPubkey, returnUrl)
