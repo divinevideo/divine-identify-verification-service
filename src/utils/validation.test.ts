@@ -6,7 +6,9 @@ import {
   isValidIdentity,
   validateClaim,
   validateNip05Name,
+  isPrivateHostname,
 } from './validation'
+import { isSafeUrl } from '../atproto'
 
 describe('isValidPlatform', () => {
   it('accepts valid platforms', () => {
@@ -116,5 +118,38 @@ describe('validateNip05Name', () => {
     expect(validateNip05Name('@nodomain')).toBeNull()
     expect(validateNip05Name('user@')).toBeNull()
     expect(validateNip05Name('user@localhost')).toBeNull()
+  })
+})
+
+// A host is judged the way a fetch reads it: URL parsing lowercases names,
+// keeps a trailing dot, and reads short and hex IPv4 forms as addresses.
+describe('isPrivateHostname', () => {
+  it.each([
+    'localhost', 'LOCALHOST', 'localhost.', 'app.localhost',
+    'printer.local', 'printer.LOCAL', 'printer.local.', 'db.internal', 'db.internal.', 'host.corp',
+    '127.0.0.1', '127.1', '0x7f.1', '2130706433', '0177.0.0.1', '10.1', '0', '8.8.8.8',
+    '[::1]', '::1',
+    '', '.', 'example.com:8080', 'example.com:443', 'example.com:', '@example.com', 'user@example.com',
+    'example.com/path', 'example.com/.', 'example.com\\x', 'example.com?x', 'example.com#x', 'bad host',
+    '127.1..', '2130706433..', '0x7f.1..', '10.1..', 'example.com..', '.example.com', 'a..b.com',
+  ])('treats %j as not fetchable', host => {
+    expect(isPrivateHostname(host)).toBe(true)
+  })
+
+  it.each(['mastodon.social', 'Mastodon.Social', 'social.example.org', 'example.com.'])('allows the public name %j', host => {
+    expect(isPrivateHostname(host)).toBe(false)
+  })
+})
+
+describe('isSafeUrl', () => {
+  it.each([
+    'https://localhost./x', 'https://printer.local./x', 'https://db.internal./x',
+    'https://LOCALHOST/x', 'https://127.1/x', 'https://[::1]/x', 'http://bsky.social/x', 'not a url',
+  ])('refuses %j', url => {
+    expect(isSafeUrl(url)).toBe(false)
+  })
+
+  it.each(['https://bsky.social/xrpc', 'https://pds.example.com', 'https://example.com:8443/x', 'https://münchen.de/', 'https://xn--mnchen-3ya.de/'])('allows %j', url => {
+    expect(isSafeUrl(url)).toBe(true)
   })
 })
