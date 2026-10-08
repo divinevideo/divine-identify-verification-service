@@ -63,7 +63,9 @@ export function isPrivateHostname(hostname: string): boolean {
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true
   // Block localhost variants and internal/common private TLDs
   if (host === 'localhost' || host.endsWith('.localhost')) return true
-  if (host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.corp')) return true
+  if (host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.corp') || host.endsWith('.lan')) return true
+  // home.arpa is reserved for home networks (RFC 8375); the name itself counts too
+  if (host === 'home.arpa' || host.endsWith('.home.arpa')) return true
   return false
 }
 

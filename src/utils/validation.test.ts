@@ -132,6 +132,7 @@ describe('isPrivateHostname', () => {
     '', '.', 'example.com:8080', 'example.com:443', 'example.com:', '@example.com', 'user@example.com',
     'example.com/path', 'example.com/.', 'example.com\\x', 'example.com?x', 'example.com#x', 'bad host',
     '127.1..', '2130706433..', '0x7f.1..', '10.1..', 'example.com..', '.example.com', 'a..b.com',
+    'printer.lan', 'PRINTER.LAN', 'home.arpa', 'nas.home.arpa', 'NAS.Home.Arpa',
     // A bare label is resolved by the local network, not the public DNS
     'internal', 'corp', 'local', 'metadata', 'intranet', 'INTERNAL', 'lan',
     // A trailing dot fails the TLS host check in the Workers runtime
@@ -140,7 +141,7 @@ describe('isPrivateHostname', () => {
     expect(isPrivateHostname(host)).toBe(true)
   })
 
-  it.each(['mastodon.social', 'Mastodon.Social', 'social.example.org'])('allows the public name %j', host => {
+  it.each(['mastodon.social', 'Mastodon.Social', 'social.example.org', 'lan.example.com', 'home.arpa.example.com', 'wlan.example.org'])('allows the public name %j', host => {
     expect(isPrivateHostname(host)).toBe(false)
   })
 })
