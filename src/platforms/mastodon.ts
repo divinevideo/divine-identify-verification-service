@@ -1,4 +1,4 @@
-import type { PlatformVerifier } from './base'
+import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
 import { isPrivateHostname } from '../utils/validation'
 
 export class MastodonVerifier implements PlatformVerifier {
@@ -38,7 +38,7 @@ export class MastodonVerifier implements PlatformVerifier {
 
     const url = `https://${instance}/api/v1/statuses/${encodeURIComponent(proof)}`
 
-    const response = await fetch(url, {
+    const response = await fetchFromPlatform(this.label, url, {
       headers: {
         'Accept': 'application/json',
         'User-Agent': 'divine-identity-verification-service',
@@ -48,6 +48,7 @@ export class MastodonVerifier implements PlatformVerifier {
     if (response.status === 404) {
       return { verified: false, error: 'Mastodon status not found' }
     }
+    throwIfUnanswered(response, this.label)
     if (!response.ok) {
       return { verified: false, error: `Mastodon API error: ${response.status}` }
     }

@@ -1,5 +1,4 @@
-import type { PlatformVerifier } from './base'
-import type { VerificationCode } from '../types'
+import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier, type VerdictCode } from './base'
 
 interface DiscordMessageResponse {
   id: string
@@ -123,7 +122,7 @@ export class DiscordVerifier implements PlatformVerifier {
     identity: string,
     proof: string,
     npub: string,
-  ): Promise<{ verified: boolean; error?: string; code?: VerificationCode }> {
+  ): Promise<{ verified: boolean; error?: string; code?: VerdictCode }> {
     const parsed = parseProof(proof, this.verifyChannelId)
     if (!parsed) {
       return {
@@ -169,7 +168,7 @@ export class DiscordVerifier implements PlatformVerifier {
     identity: string,
     parsed: { kind: 'message_url' | 'message_id'; channelId?: string; messageId: string },
     npub: string,
-  ): Promise<{ verified: boolean; error?: string; code?: VerificationCode }> {
+  ): Promise<{ verified: boolean; error?: string; code?: VerdictCode }> {
     if (!this.botToken) {
       return {
         verified: false,
@@ -192,21 +191,12 @@ export class DiscordVerifier implements PlatformVerifier {
 
     const url = `https://discord.com/api/v10/channels/${channelId}/messages/${parsed.messageId}`
 
-    let response: Response
-    try {
-      response = await fetch(url, {
-        headers: {
-          'Authorization': `Bot ${this.botToken}`,
-          'Accept': 'application/json',
-        },
-      })
-    } catch {
-      return {
-        verified: false,
-        code: 'discord_api_error',
-        error: 'Failed to fetch Discord message',
-      }
-    }
+    const response = await fetchFromPlatform(this.label, url, {
+      headers: {
+        'Authorization': `Bot ${this.botToken}`,
+        'Accept': 'application/json',
+      },
+    })
 
     if (response.status === 403) {
       return {
@@ -240,6 +230,7 @@ export class DiscordVerifier implements PlatformVerifier {
       }
     }
 
+    throwIfUnanswered(response, this.label)
     if (!response.ok) {
       return {
         verified: false,

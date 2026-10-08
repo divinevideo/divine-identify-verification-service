@@ -1,4 +1,4 @@
-import type { PlatformVerifier } from './base'
+import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
 import { DIVINE_IDENTITY_LINK_COLLECTION, matchNostrIdentityLinkRecord } from '../identity-link'
 import { resolveAtprotoIdentityPds } from '../atproto'
 
@@ -26,7 +26,7 @@ export class BlueskyVerifier implements PlatformVerifier {
     const atUri = `at://${identity}/app.bsky.feed.post/${proof}`
     const url = `https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(atUri)}&depth=0`
 
-    const response = await fetch(url, {
+    const response = await fetchFromPlatform(this.label, url, {
       headers: {
         'Accept': 'application/json',
         'User-Agent': 'divine-identity-verification-service',
@@ -36,6 +36,7 @@ export class BlueskyVerifier implements PlatformVerifier {
     if (response.status === 400 || response.status === 404) {
       return { verified: false, error: 'Bluesky post not found' }
     }
+    throwIfUnanswered(response, this.label)
     if (!response.ok) {
       return { verified: false, error: `Bluesky API error: ${response.status}` }
     }

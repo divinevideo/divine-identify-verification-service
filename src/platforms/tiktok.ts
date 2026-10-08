@@ -1,4 +1,4 @@
-import type { PlatformVerifier } from './base'
+import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
 
 interface TikTokOEmbedResponse {
   // Display name (nickname); not unique, so unsuitable for ownership checks.
@@ -93,19 +93,17 @@ function parseTikTokProof(proof: string): TikTokProof {
 // a TikTok video, photo or profile link over https. Never follows a second
 // hop or leaves TikTok.
 async function resolveShareLink(shareUrl: string): Promise<TikTokProof> {
-  let response: Response
-  try {
-    response = await fetch(shareUrl, {
-      redirect: 'manual',
-      headers: { 'User-Agent': 'divine-identity-verification-service' },
-    })
-  } catch {
-    return { kind: 'invalid' }
-  }
+  // When TikTok can't be asked, the link isn't invalid, it just can't be
+  // followed right now: both a network failure and the status check throw.
+  const response = await fetchFromPlatform('TikTok', shareUrl, {
+    redirect: 'manual',
+    headers: { 'User-Agent': 'divine-identity-verification-service' },
+  })
   // Only the status and Location matter; close the body so it isn't left open.
   try {
     await response.body?.cancel()
   } catch {}
+  throwIfUnanswered(response, 'TikTok')
   if (response.status < 300 || response.status > 399) return { kind: 'invalid' }
   const location = response.headers.get('Location')
   if (!location) return { kind: 'invalid' }
@@ -146,14 +144,9 @@ export class TikTokVerifier implements PlatformVerifier {
     const videoUrl = `https://www.tiktok.com/@${encodeURIComponent(identity)}/video/${encodeURIComponent(videoId)}`
     const oembedUrl = `https://www.tiktok.com/oembed?url=${encodeURIComponent(videoUrl)}`
 
-    let response: Response
-    try {
-      response = await fetch(oembedUrl, {
-        headers: { 'User-Agent': 'divine-identity-verification-service' },
-      })
-    } catch {
-      return { verified: false, error: 'Failed to fetch TikTok post' }
-    }
+    const response = await fetchFromPlatform(this.label, oembedUrl, {
+      headers: { 'User-Agent': 'divine-identity-verification-service' },
+    })
 
     // TikTok's oEmbed answers 400 ("Something went wrong") for a post that
     // doesn't exist or isn't public (checked 2026-10-02). 404 is treated the
@@ -161,6 +154,7 @@ export class TikTokVerifier implements PlatformVerifier {
     if (response.status === 400 || response.status === 404) {
       return { verified: false, error: 'TikTok post not found or not public' }
     }
+    throwIfUnanswered(response, this.label)
     if (!response.ok) {
       return { verified: false, error: `TikTok oEmbed error: ${response.status}` }
     }

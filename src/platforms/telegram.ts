@@ -1,4 +1,4 @@
-import type { PlatformVerifier } from './base'
+import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
 
 export class TelegramVerifier implements PlatformVerifier {
   readonly name = 'telegram'
@@ -10,13 +10,14 @@ export class TelegramVerifier implements PlatformVerifier {
     const safePath = proof.split('/').map(s => encodeURIComponent(s)).join('/')
     const url = `https://t.me/${safePath}?embed=1`
 
-    const response = await fetch(url, {
+    const response = await fetchFromPlatform(this.label, url, {
       headers: { 'User-Agent': 'divine-identity-verification-service' },
     })
 
     if (response.status === 404) {
       return { verified: false, error: 'Telegram message not found' }
     }
+    throwIfUnanswered(response, this.label)
     if (!response.ok) {
       return { verified: false, error: `Telegram embed error: ${response.status}` }
     }

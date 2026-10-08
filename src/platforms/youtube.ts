@@ -1,4 +1,4 @@
-import type { PlatformVerifier } from './base'
+import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
 
 interface YouTubeVideoSnippet {
   snippet?: {
@@ -33,15 +33,11 @@ export class YouTubeVerifier implements PlatformVerifier {
 
     const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${encodeURIComponent(proof)}&key=${encodeURIComponent(this.apiKey)}`
 
-    let response: Response
-    try {
-      response = await fetch(url, {
-        headers: { 'Accept': 'application/json' },
-      })
-    } catch {
-      return { verified: false, error: 'Failed to fetch YouTube video' }
-    }
+    const response = await fetchFromPlatform(this.label, url, {
+      headers: { 'Accept': 'application/json' },
+    })
 
+    throwIfUnanswered(response, this.label)
     if (!response.ok) {
       return { verified: false, error: `YouTube API error: ${response.status}` }
     }

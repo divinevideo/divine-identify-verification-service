@@ -1,4 +1,4 @@
-import type { PlatformVerifier } from './base'
+import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
 
 export class TwitterVerifier implements PlatformVerifier {
   readonly name = 'twitter'
@@ -9,13 +9,14 @@ export class TwitterVerifier implements PlatformVerifier {
     const tweetUrl = `https://x.com/${identity}/status/${proof}`
     const oembedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(tweetUrl)}&omit_script=true`
 
-    const response = await fetch(oembedUrl, {
+    const response = await fetchFromPlatform(this.label, oembedUrl, {
       headers: { 'User-Agent': 'divine-identity-verification-service' },
     })
 
     if (response.status === 404) {
       return { verified: false, error: 'Tweet not found' }
     }
+    throwIfUnanswered(response, this.label)
     if (!response.ok) {
       return { verified: false, error: `Twitter oEmbed error: ${response.status}` }
     }

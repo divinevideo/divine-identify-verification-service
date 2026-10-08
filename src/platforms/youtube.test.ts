@@ -105,12 +105,10 @@ describe('YouTubeVerifier', () => {
     expect(result.error).toContain('YouTube API error')
   })
 
-  it('returns error on fetch failure', async () => {
+  it('throws on fetch failure, so the service reports it as temporary', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('timeout')))
 
-    const result = await verifier.verify('UCxxxxxxxxxxxxxxxxxxxxxxxx', 'dQw4w9WgXcQ', npub)
-    expect(result.verified).toBe(false)
-    expect(result.error).toContain('Failed to fetch')
+    await expect(verifier.verify('UCxxxxxxxxxxxxxxxxxxxxxxxx', 'dQw4w9WgXcQ', npub)).rejects.toThrow("couldn't be reached")
   })
 
   it('works with handle-based identity', async () => {

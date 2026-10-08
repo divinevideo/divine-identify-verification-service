@@ -832,7 +832,7 @@ Content-Type: application/json
         <tr><th>Field</th><th>Type</th><th>Description</th></tr>
         <tr><td><code>verified</code></td><td>boolean</td><td><code>true</code> if proof post contains the npub and the author matches</td></tr>
         <tr><td><code>error</code></td><td>string?</td><td>Error message (only when <code>verified</code> is <code>false</code>)</td></tr>
-        <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable rejection reason. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.</td></tr>
+        <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable reason the claim isn't verified. <code>temporarily_unavailable</code> means the claim couldn't be checked right now (the platform didn't answer, or the per-person or per-platform check limit was hit), not that it was rejected: try again in a few minutes. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.</td></tr>
         <tr><td><code>canonical_proof</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the proof was resolved to a simpler stable form (TikTok: the post number for a link or share link). Publish this instead of the proof you sent.</td></tr>
         <tr><td><code>checked_at</code></td><td>number</td><td>Unix timestamp (seconds)</td></tr>
         <tr><td><code>cached</code></td><td>boolean</td><td><code>true</code> if served from cache</td></tr>
@@ -917,7 +917,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         <tr><td>Per platform</td><td>30 outbound fetches</td><td>1 minute</td></tr>
         <tr><td>Batch max</td><td>10 claims</td><td>per request</td></tr>
       </table>
-      <p style="margin-top:0.75rem;">Verified claims are cached for 24 hours, failures for 15 minutes, platform errors for 5 minutes.</p>
+      <p style="margin-top:0.75rem;">Verified claims are cached for 24 hours, failures for 15 minutes, and platform outages (<code>temporarily_unavailable</code>) for 5 minutes. Answers to the verifier's own rate limits aren't cached.</p>
     </section>
 
     <script>
