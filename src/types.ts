@@ -20,6 +20,7 @@ export type Bindings = {
   TIKTOK_OAUTH_ENABLED?: string
   // Base URL for OAuth callbacks (e.g., https://verify.divine.video)
   OAUTH_REDIRECT_BASE?: string
+  SIGNIN_BINDING?: string
 }
 
 export type OAuthPlatform = 'twitter' | 'bluesky' | 'youtube' | 'tiktok'
@@ -38,6 +39,8 @@ export interface OAuthState {
   // Bluesky: the account and handle the sign-in started with
   did?: string
   handle?: string
+  // SHA-256 (hex) of the binding cookie set at start.
+  bindingHash?: string
 }
 
 export interface OAuthVerification {
@@ -52,6 +55,8 @@ export interface OAuthVerification {
   account_id?: string
   // The linked handle, so unlinking by handle or by DID removes both records.
   handle?: string
+  // Finished in the browser that started it (see src/oauth/binding.ts).
+  bound?: boolean
 }
 
 export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord' | 'youtube' | 'tiktok'
@@ -116,4 +121,13 @@ export interface Nip05VerifyResult {
 export interface PlatformInfo {
   label: string
   supported: boolean
+}
+
+export interface SignInCallbackResult {
+  success: boolean
+  returnUrl: string
+  error?: string
+  identity?: string
+  bound?: boolean
+  refused?: boolean
 }
