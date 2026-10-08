@@ -132,11 +132,13 @@ describe('isPrivateHostname', () => {
     '', '.', 'example.com:8080', 'example.com:443', 'example.com:', '@example.com', 'user@example.com',
     'example.com/path', 'example.com/.', 'example.com\\x', 'example.com?x', 'example.com#x', 'bad host',
     '127.1..', '2130706433..', '0x7f.1..', '10.1..', 'example.com..', '.example.com', 'a..b.com',
+    // A trailing dot fails the TLS host check in the Workers runtime
+    'example.com.', 'mastodon.social.', 'Mastodon.Social.',
   ])('treats %j as not fetchable', host => {
     expect(isPrivateHostname(host)).toBe(true)
   })
 
-  it.each(['mastodon.social', 'Mastodon.Social', 'social.example.org', 'example.com.'])('allows the public name %j', host => {
+  it.each(['mastodon.social', 'Mastodon.Social', 'social.example.org'])('allows the public name %j', host => {
     expect(isPrivateHostname(host)).toBe(false)
   })
 })
@@ -150,7 +152,7 @@ describe('isPrivateHostname with input that is not a string', () => {
 
 describe('isSafeUrl', () => {
   it.each([
-    'https://localhost./x', 'https://printer.local./x', 'https://db.internal./x',
+    'https://localhost./x', 'https://printer.local./x', 'https://db.internal./x', 'https://pds.example.com./x',
     'https://LOCALHOST/x', 'https://127.1/x', 'https://[::1]/x', 'http://bsky.social/x', 'not a url',
   ])('refuses %j', url => {
     expect(isSafeUrl(url)).toBe(false)

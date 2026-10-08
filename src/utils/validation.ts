@@ -35,7 +35,8 @@ export function isValidIdentity(identity: string): boolean {
 /**
  * Check if a hostname is a private/internal address that should not be fetched.
  * The host is read the way a fetch reads it: URL parsing lowercases it, keeps a
- * trailing dot, and reads short and hex IPv4 forms (127.1, 0x7f.1) as addresses.
+ * trailing dot (which is refused), and reads short and hex IPv4 forms (127.1, 0x7f.1)
+ * as addresses.
  * Anything other than a bare hostname is refused.
  */
 export function isPrivateHostname(hostname: string): boolean {
@@ -49,11 +50,12 @@ export function isPrivateHostname(hostname: string): boolean {
   } catch {
     return true
   }
+  const host = url.hostname
   // An empty label stops the parser reading a short IPv4 form as an address
-  // (127.1.. stays as written), so a host with one is refused. One trailing
-  // dot is only the fully qualified spelling of the same name.
-  if (url.hostname.startsWith('.') || url.hostname.includes('..')) return true
-  const host = url.hostname.endsWith('.') ? url.hostname.slice(0, -1) : url.hostname
+  // (127.1.. stays as written), so a host with one is refused. That includes
+  // the empty label a trailing dot leaves: the Workers runtime fails the TLS
+  // host check on such a name, so it is refused here with a clear error.
+  if (host.startsWith('.') || host.endsWith('.') || host.includes('..')) return true
   // Only domain names are fetched: block every IPv4 address (IPv6 has a colon)
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true
   // Block localhost variants and internal/common private TLDs
