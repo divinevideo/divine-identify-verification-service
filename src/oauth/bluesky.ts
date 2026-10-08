@@ -1,8 +1,7 @@
 import type { Bindings, OAuthState } from '../types'
 import { generatePKCE, generateRandomString, generateDPoPKeyPair, importDPoPPrivateKey, createDPoPProof } from './crypto'
-import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
-import { buildNostrIdentityLinkRecord, DIVINE_IDENTITY_LINK_COLLECTION } from '../identity-link'
-import { hexToNpub } from '../utils/npub'
+import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification, getOAuthVerification, oauthVerificationKey } from './state'
+import { forgetHandleLookup } from './signin-account'
 import { getHandleFromDidDocument, getPdsEndpoint, isSafeUrl, resolveDidDocument, resolveHandle } from '../atproto'
 
 // The authorization server a PDS (resource server) declares.
@@ -69,92 +68,6 @@ async function resolveAuthServer(handle: string): Promise<{
     authorizationEndpoint: authMeta.authorization_endpoint,
     tokenEndpoint: authMeta.token_endpoint,
     pushedAuthorizationRequestEndpoint: authMeta.pushed_authorization_request_endpoint,
-  }
-}
-
-function linkRecordRkey(npub: string): string {
-  // Deterministic key keeps one mutable record per user and proof type.
-  return `nostr-${npub.toLowerCase()}`
-}
-
-async function postWithDpop(
-  endpointUrl: string,
-  accessToken: string,
-  dpopPrivateJwk: JsonWebKey,
-  dpopPublicJwk: JsonWebKey,
-  body: unknown
-): Promise<Response> {
-  const privateKey = await importDPoPPrivateKey(dpopPrivateJwk)
-
-  const attempt = async (tokenType: 'DPoP' | 'Bearer', nonce?: string) => {
-    const proof = await createDPoPProof(privateKey, dpopPublicJwk, 'POST', endpointUrl, nonce)
-    return fetch(endpointUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `${tokenType} ${accessToken}`,
-        'DPoP': proof,
-      },
-      body: JSON.stringify(body),
-    })
-  }
-
-  let response = await attempt('DPoP')
-
-  // Handle DPoP nonce challenge.
-  const nonce = response.headers.get('DPoP-Nonce')
-  if (nonce && response.status === 400) {
-    response = await attempt('DPoP', nonce)
-  }
-
-  // Some servers still expect bearer for resource requests.
-  if ((response.status === 401 || response.status === 403) && !response.ok) {
-    response = await attempt('Bearer')
-  }
-
-  return response
-}
-
-async function writeNostrIdentityLinkRecord(
-  did: string,
-  pubkeyHex: string,
-  accessToken: string,
-  dpopPrivateJwk: JsonWebKey,
-  dpopPublicJwk: JsonWebKey
-): Promise<{ uri?: string; error?: string }> {
-  const didDoc = await resolveDidDocument(did)
-  if (!didDoc) return { error: 'Unable to resolve DID document' }
-
-  const pdsEndpoint = getPdsEndpoint(didDoc)
-  if (!pdsEndpoint) return { error: 'Unable to resolve ATProto PDS endpoint' }
-
-  const npub = hexToNpub(pubkeyHex)
-  const record = buildNostrIdentityLinkRecord(npub)
-  const rkey = linkRecordRkey(npub)
-
-  const response = await postWithDpop(
-    `${pdsEndpoint}/xrpc/com.atproto.repo.putRecord`,
-    accessToken,
-    dpopPrivateJwk,
-    dpopPublicJwk,
-    {
-      repo: did,
-      collection: DIVINE_IDENTITY_LINK_COLLECTION,
-      rkey,
-      record,
-      validate: false,
-    }
-  )
-
-  if (!response.ok) {
-    return { error: `Identity link write failed (${response.status})` }
-  }
-
-  try {
-    const data = await response.json() as { uri?: string }
-    return { uri: data.uri || `at://${did}/${DIVINE_IDENTITY_LINK_COLLECTION}/${rkey}` }
-  } catch {
-    return { uri: `at://${did}/${DIVINE_IDENTITY_LINK_COLLECTION}/${rkey}` }
   }
 }
 
@@ -407,7 +320,7 @@ async function processBlueskyToken(
   state: OAuthState,
   env: Bindings,
 ): Promise<{ success: boolean; returnUrl: string; error?: string; identity?: string }> {
-  let tokenData: { sub?: string; access_token?: string }
+  let tokenData: { sub?: string }
   try {
     tokenData = await tokenResp.json() as typeof tokenData
   } catch {
@@ -428,18 +341,24 @@ async function processBlueskyToken(
     return { success: false, returnUrl: state.returnUrl, error: 'Bluesky account not confirmed' }
   }
 
-  // Best effort: persist a durable identity-link record in the user's AT repo.
-  if (tokenData.access_token && state.dpopPrivateJwk && state.dpopPublicJwk) {
-    const linkWrite = await writeNostrIdentityLinkRecord(
-      did,
-      state.pubkey,
-      tokenData.access_token,
-      state.dpopPrivateJwk,
-      state.dpopPublicJwk
-    )
-    if (linkWrite.error) {
-      console.warn('Bluesky identity-link write failed:', linkWrite.error)
+  // Tidying up after earlier sign-ins is best effort; the new link is saved
+  // either way, and one step failing doesn't skip the other.
+  try {
+    await forgetHandleLookup(env, handle)
+  } catch (err) {
+    console.warn('Bluesky sign-in: earlier handle lookup not cleared:', err)
+  }
+  try {
+    // A handle change leaves a record under the old handle. Remove it while it
+    // still belongs to this account, so it can't verify again if that handle
+    // ever points back here.
+    const previous = await getOAuthVerification(env.CACHE_KV, 'bluesky', did, state.pubkey)
+    if (previous?.handle && previous.handle.toLowerCase() !== handle.toLowerCase()) {
+      const old = await getOAuthVerification(env.CACHE_KV, 'bluesky', previous.handle, state.pubkey)
+      if (old?.account_id === did) await env.CACHE_KV.delete(oauthVerificationKey('bluesky', previous.handle, state.pubkey))
     }
+  } catch (err) {
+    console.warn('Bluesky sign-in: earlier handle record not removed:', err)
   }
 
   const checkedAt = Math.floor(Date.now() / 1000)
@@ -452,18 +371,20 @@ async function processBlueskyToken(
     verified: true,
     method: 'oauth',
     checked_at: checkedAt,
+    account_id: did,
+    handle,
   })
   // Also index by DID so clients can verify either handle or DID identities.
-  if (did !== handle) {
-    await storeOAuthVerification(env.CACHE_KV, {
-      platform: 'bluesky',
-      identity: did,
-      pubkey: state.pubkey,
-      verified: true,
-      method: 'oauth',
-      checked_at: checkedAt,
-    })
-  }
+  await storeOAuthVerification(env.CACHE_KV, {
+    platform: 'bluesky',
+    identity: did,
+    pubkey: state.pubkey,
+    verified: true,
+    method: 'oauth',
+    checked_at: checkedAt,
+    account_id: did,
+    handle,
+  })
 
   return { success: true, returnUrl: state.returnUrl, identity: handle }
 }

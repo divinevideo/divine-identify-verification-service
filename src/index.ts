@@ -893,7 +893,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=alice.bsky.social</pre>
 
-      <div class="note">OAuth verification is also checked as a fallback during proof-post verification for ${listInProse(oauthPlatformNames)}.${tiktokOAuthHistoryNote}</div>
+      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">

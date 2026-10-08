@@ -47,6 +47,11 @@ export interface OAuthVerification {
   verified: true
   method: 'oauth'
   checked_at: number
+  // The provider's permanent account ID (a Bluesky DID), which the handle is
+  // checked against while the record lasts.
+  account_id?: string
+  // The linked handle, so unlinking by handle or by DID removes both records.
+  handle?: string
 }
 
 export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord' | 'youtube' | 'tiktok'

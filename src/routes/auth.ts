@@ -6,6 +6,7 @@ import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/val
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
 import { getOAuthVerification, deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
+import { signInAccountStillMatches } from '../oauth/signin-account'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
@@ -433,7 +434,7 @@ auth.get('/:platform/status', async (c) => {
   const normalizedPubkey = normalizePubkey(pubkey)
   const verification = await getOAuthVerification(c.env.CACHE_KV, platform, identity, normalizedPubkey)
 
-  if (verification) {
+  if (verification && await signInAccountStillMatches(c.env, verification, identity)) {
     return c.json({
       platform,
       identity: verification.identity,
@@ -455,7 +456,7 @@ auth.get('/:platform/status', async (c) => {
 
 const OAUTH_PLATFORMS = new Set(['twitter', 'bluesky', 'youtube', 'tiktok'])
 
-// Revoke OAuth verification cache entry
+// Revoke an OAuth sign-in record (a Bluesky one under both its handle and DID)
 // POST /auth/oauth/revoke { platform, identity, pubkey, event }
 auth.post('/oauth/revoke', async (c) => {
   const clientIp = c.req.header('cf-connecting-ip') || 'unknown'

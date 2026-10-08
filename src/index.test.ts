@@ -299,7 +299,7 @@ describe('verifier twitter oauth gating', () => {
     expect(docs).toContain('<h2>OAuth Verification (Bluesky)</h2>')
     expect(docs).not.toContain('/auth/twitter/')
     expect(docs).toContain('/auth/bluesky/status?pubkey=hex64&amp;identity=alice.bsky.social')
-    expect(docs).toContain('fallback during proof-post verification for Bluesky.')
+    expect(docs).toContain('before cached results and proof posts, for Bluesky.')
     expect(html).toContain('<li><strong>OAuth login</strong> (Bluesky) &mdash;')
   })
 

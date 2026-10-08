@@ -744,3 +744,103 @@ describe('GET /auth/bluesky/start handle', () => {
     expect(upstream).not.toHaveBeenCalled()
   })
 })
+
+async function revoke(env: Bindings, identity: string, event: Awaited<ReturnType<typeof signNip98Event>>) {
+  return app.request('/auth/oauth/revoke', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ platform: 'bluesky', identity, pubkey: event.pubkey, event }),
+  }, env)
+}
+
+describe('unlinking a kept Bluesky sign-in', () => {
+  const DID = 'did:plc:alice111111111111111111'
+  async function linked(env: Bindings, pubkey: string) {
+    const record = (identity: string) => JSON.stringify({ platform: 'bluesky', identity, pubkey, verified: true, method: 'oauth', checked_at: 1, account_id: DID, handle: 'alice.bsky.social' })
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, record('alice.bsky.social'))
+    await env.CACHE_KV.put(`oauth_verified:bluesky:${DID}:${pubkey}`, record(DID))
+  }
+
+  for (const identity of ['alice.bsky.social', DID]) {
+    it(`removes both the handle and the DID record when unlinking by ${identity.startsWith('did:') ? 'DID' : 'handle'}`, async () => {
+      const env = createTestEnv()
+      const event = await signNip98Event(schnorr.utils.randomSecretKey())
+      await linked(env, event.pubkey)
+      forbidUpstreamFetch()
+      const res = await app.request('/auth/oauth/revoke', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: 'bluesky', identity, pubkey: event.pubkey, event }),
+      }, env)
+      expect(res.status).toBe(200)
+      expect(await env.CACHE_KV.get(`oauth_verified:bluesky:alice.bsky.social:${event.pubkey}`)).toBeNull()
+      expect(await env.CACHE_KV.get(`oauth_verified:bluesky:${DID}:${event.pubkey}`)).toBeNull()
+    })
+  }
+
+  it('can be retried when part of an unlink fails', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    await linked(env, event.pubkey)
+    const realDelete = env.CACHE_KV.delete.bind(env.CACHE_KV)
+    let failed = false
+    env.CACHE_KV.delete = async (key: string) => {
+      if (!failed && key.includes(DID)) { failed = true; throw new Error('KV DELETE failed') }
+      return realDelete(key)
+    }
+    forbidUpstreamFetch()
+    expect((await revoke(env, 'alice.bsky.social', event)).status).toBe(500)
+    expect((await revoke(env, 'alice.bsky.social', event)).status).toBe(200)
+    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:alice.bsky.social:${event.pubkey}`)).toBeNull()
+    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:${DID}:${event.pubkey}`)).toBeNull()
+  })
+})
+
+describe('unlinking after the Bluesky handle changed', () => {
+  const DID = 'did:plc:alice111111111111111111'
+  const record = (identity: string, handle: string, pubkey: string) => JSON.stringify({ platform: 'bluesky', identity, pubkey, verified: true, method: 'oauth', checked_at: 1, account_id: DID, handle })
+
+  it('does not remove the newer link when the old handle is unlinked', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${event.pubkey}`, record('alice.bsky.social', 'alice.bsky.social', event.pubkey))
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice2.bsky.social:${event.pubkey}`, record('alice2.bsky.social', 'alice2.bsky.social', event.pubkey))
+    await env.CACHE_KV.put(`oauth_verified:bluesky:${DID}:${event.pubkey}`, record(DID, 'alice2.bsky.social', event.pubkey))
+    forbidUpstreamFetch()
+    expect((await revoke(env, 'alice.bsky.social', event)).status).toBe(200)
+    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:alice.bsky.social:${event.pubkey}`)).toBeNull()
+    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:${DID}:${event.pubkey}`)).not.toBeNull()
+    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:alice2.bsky.social:${event.pubkey}`)).not.toBeNull()
+  })
+
+  it('does not remove a handle now linked to a different account when the DID is unlinked', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    const otherDid = 'did:plc:other222222222222222222'
+    await env.CACHE_KV.put(`oauth_verified:bluesky:${DID}:${event.pubkey}`, record(DID, 'alice.bsky.social', event.pubkey))
+    // alice.bsky.social later moved to another account, which this person linked too
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${event.pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey: event.pubkey, verified: true, method: 'oauth', checked_at: 1, account_id: otherDid, handle: 'alice.bsky.social' }))
+    forbidUpstreamFetch()
+    expect((await revoke(env, DID, event)).status).toBe(200)
+    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:${DID}:${event.pubkey}`)).toBeNull()
+    expect(await env.CACHE_KV.get(`oauth_verified:bluesky:alice.bsky.social:${event.pubkey}`)).not.toBeNull()
+  })
+})
+
+describe('GET /auth/bluesky/status for a kept sign-in', () => {
+  it('is verified while the handle still points to the linked account', async () => {
+    const env = createTestEnv()
+    const pubkey = 'a'.repeat(64)
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey, verified: true, method: 'oauth', checked_at: 1, account_id: 'did:plc:alice111111111111111111', handle: 'alice.bsky.social' }))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ did: 'did:plc:alice111111111111111111' }), { status: 200 })))
+    const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
+    expect(await res.json()).toMatchObject({ verified: true, method: 'oauth' })
+  })
+
+  it('is not verified when the handle now points to a different account', async () => {
+    const env = createTestEnv()
+    const pubkey = 'a'.repeat(64)
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey, verified: true, method: 'oauth', checked_at: 1, account_id: 'did:plc:alice111111111111111111', handle: 'alice.bsky.social' }))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ did: 'did:plc:other222222222222222222' }), { status: 200 })))
+    const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
+    expect((await res.json() as { verified: boolean }).verified).toBe(false)
+  })
+})
