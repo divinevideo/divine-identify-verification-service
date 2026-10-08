@@ -42,7 +42,41 @@ describe('fetchPublic', () => {
     expect(response).toBe(final)
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock.mock.calls[1][0]).toBe('https://moved.example.org/b')
-    expect(fetchMock.mock.calls[1][1]).toEqual({ headers: { Accept: 'application/json' }, redirect: 'manual' })
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ redirect: 'manual' })
+    expect(Object.fromEntries(new Headers(fetchMock.mock.calls[1][1].headers))).toEqual({ accept: 'application/json' })
+  })
+
+  it('drops credentials when a redirect changes the origin', async () => {
+    fetchMock
+      .mockResolvedValueOnce(redirect('https://moved.example.org/b'))
+      .mockResolvedValueOnce(okJson())
+
+    await fetchPublic('https://example.com/a', {
+      headers: { Accept: 'application/json', Authorization: 'Bearer t', Cookie: 'a=b', 'Proxy-Authorization': 'Basic x' },
+    })
+
+    expect(Object.fromEntries(new Headers(fetchMock.mock.calls[0][1].headers))).toMatchObject({ authorization: 'Bearer t', cookie: 'a=b' })
+    expect(Object.fromEntries(new Headers(fetchMock.mock.calls[1][1].headers))).toEqual({ accept: 'application/json' })
+  })
+
+  it('drops credentials from a Headers object too', async () => {
+    fetchMock
+      .mockResolvedValueOnce(redirect('https://moved.example.org/b'))
+      .mockResolvedValueOnce(okJson())
+
+    await fetchPublic('https://example.com/a', { headers: new Headers({ Authorization: 'Bearer t', Accept: 'application/json' }) })
+
+    expect(Object.fromEntries(new Headers(fetchMock.mock.calls[1][1].headers))).toEqual({ accept: 'application/json' })
+  })
+
+  it('keeps credentials when a redirect stays on the same origin', async () => {
+    fetchMock
+      .mockResolvedValueOnce(redirect('/elsewhere'))
+      .mockResolvedValueOnce(okJson())
+
+    await fetchPublic('https://example.com/a', { headers: { Authorization: 'Bearer t' } })
+
+    expect(Object.fromEntries(new Headers(fetchMock.mock.calls[1][1].headers))).toEqual({ authorization: 'Bearer t' })
   })
 
   it('reads a relative Location against the URL that redirected', async () => {
