@@ -897,11 +897,15 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
       el.innerHTML = '<div class="other-identities"><div class="section-title">All Verified Identities</div><div class="identity-loading"><div class="spinner"></div> Verifying ' + claims.length + ' identity claim(s)...</div></div>';
       el.style.display = 'block';
 
-      // Check at most VERIFY_BATCH_SIZE claims per request (the server's limit).
+      // Check at most VERIFY_BATCH_SIZE claims per request (the server's limit),
+      // all batches at once so the wait is the slowest batch, not the sum.
       // A batch that fails is left out; the accounts the others checked still show.
-      var results = [];
+      var batches = [];
       for (var b = 0; b < claims.length; b += VERIFY_BATCH_SIZE) {
-        var batch = claims.slice(b, b + VERIFY_BATCH_SIZE);
+        batches.push(claims.slice(b, b + VERIFY_BATCH_SIZE));
+      }
+      var checked = await Promise.all(batches.map(async function(batch) {
+        var batchResults = [];
         try {
           var resp = await fetch(API + '/verify', {
             method: 'POST',
@@ -909,15 +913,18 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
             body: JSON.stringify({ claims: batch }),
           });
           var data = await resp.json();
-          if (!data || !Array.isArray(data.results)) continue;
+          if (!data || !Array.isArray(data.results)) return batchResults;
           for (var k = 0; k < data.results.length; k++) {
             var claim = batch[k];
             if (!claim) continue;
             data.results[k]._proofUrl = proofUrl(claim.platform, claim.identity, data.results[k].canonical_proof || claim.proof);
-            results.push(data.results[k]);
+            batchResults.push(data.results[k]);
           }
         } catch(e) { /* leave this batch out */ }
-      }
+        return batchResults;
+      }));
+      // Batches keep their order, so the list reads in the order of the tags.
+      var results = [].concat.apply([], checked);
 
       // Also check the NIP-05, which lives in the profile. If its check fails,
       // show it as not verified rather than dropping it.

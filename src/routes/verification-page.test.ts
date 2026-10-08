@@ -180,6 +180,25 @@ describe('verification-link page: all verified identities', () => {
     expect(h.rendered[0][MAX_BATCH_SIZE + 2]).toMatchObject({ identity: `user${accounts - 1}` })
   })
 
+  it('sends the batches together and still lists the accounts in order', async () => {
+    const init = loadInit()
+    const h = harness({ identityEvent: identityEventWith(manyTags()), profile: profileWith({}) })
+    // Hold every answer until all the batches have been sent: a page that sends
+    // them one at a time never gets there.
+    const answer = h.env.fetch as (url: string, init?: { body?: string }) => Promise<{ json: () => Promise<unknown> }>
+    let release!: () => void
+    const allSent = new Promise<void>(resolve => { release = resolve })
+    h.env.fetch = async (url: string, req?: { body?: string }) => {
+      const response = await answer(url, req)
+      if (url === `${API}/verify` && h.verifyBatches.length === 3) release()
+      if (url === `${API}/verify`) await allSent
+      return response
+    }
+    await init(h.env)()
+    expect(h.verifyBatches).toEqual([MAX_BATCH_SIZE, MAX_BATCH_SIZE, 3])
+    expect(rows(h.rendered[0])).toEqual(Array.from({ length: accounts }, (_, i) => `github:user${i}`))
+  })
+
   it('looks on other relays until it has both events, then stops', async () => {
     const init = loadInit()
     const h = harness({
