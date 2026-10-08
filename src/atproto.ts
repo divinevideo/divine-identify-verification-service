@@ -1,19 +1,8 @@
-import { isPrivateHostname } from './utils/validation'
+import { isSafeUrl } from './utils/validation'
 
 export type DidDocument = {
   alsoKnownAs?: string[]
   service?: Array<{ id?: string; serviceEndpoint?: string }>
-}
-
-/** Validate that a URL is HTTPS and points to a public host (SSRF protection). */
-export function isSafeUrl(urlStr: string): boolean {
-  try {
-    const url = new URL(urlStr)
-    if (url.protocol !== 'https:') return false
-    return !isPrivateHostname(url.hostname)
-  } catch {
-    return false
-  }
 }
 
 export async function resolveHandle(handle: string): Promise<string | null> {
