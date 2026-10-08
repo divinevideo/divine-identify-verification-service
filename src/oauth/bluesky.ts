@@ -5,8 +5,22 @@ import { buildNostrIdentityLinkRecord, DIVINE_IDENTITY_LINK_COLLECTION } from '.
 import { hexToNpub } from '../utils/npub'
 import { getHandleFromDidDocument, getPdsEndpoint, isSafeUrl, resolveDidDocument, resolveHandle } from '../atproto'
 
+// The authorization server a PDS (resource server) declares.
+async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
+  const resourceResp = await fetch(`${pdsUrl}/.well-known/oauth-protected-resource`)
+  if (!resourceResp.ok) return null
+  let resourceMeta: { authorization_servers?: string[] }
+  try {
+    resourceMeta = await resourceResp.json() as typeof resourceMeta
+  } catch { return null }
+  const issuer = resourceMeta.authorization_servers?.[0]
+  if (!issuer || !isSafeUrl(issuer)) return null
+  return issuer
+}
+
 // AT Protocol OAuth: discover the authorization server for a handle
 async function resolveAuthServer(handle: string): Promise<{
+  did: string
   issuer: string
   authorizationEndpoint: string
   tokenEndpoint: string
@@ -23,14 +37,8 @@ async function resolveAuthServer(handle: string): Promise<{
   if (!pdsUrl) return null
 
   // 3. Get authorization server from PDS resource metadata
-  const resourceResp = await fetch(`${pdsUrl}/.well-known/oauth-protected-resource`)
-  if (!resourceResp.ok) return null
-  let resourceMeta: { authorization_servers?: string[] }
-  try {
-    resourceMeta = await resourceResp.json() as typeof resourceMeta
-  } catch { return null }
-  const issuer = resourceMeta.authorization_servers?.[0]
-  if (!issuer || !isSafeUrl(issuer)) return null
+  const issuer = await pdsAuthorizationServer(pdsUrl)
+  if (!issuer) return null
 
   // 4. Get authorization server metadata
   const authResp = await fetch(`${issuer}/.well-known/oauth-authorization-server`)
@@ -45,6 +53,9 @@ async function resolveAuthServer(handle: string): Promise<{
     authMeta = await authResp.json() as typeof authMeta
   } catch { return null }
 
+  // The metadata must describe the server it was fetched from
+  if (authMeta.issuer !== issuer) return null
+
   // Validate all discovered endpoints are safe HTTPS URLs
   if (!isSafeUrl(authMeta.authorization_endpoint) ||
       !isSafeUrl(authMeta.token_endpoint) ||
@@ -53,6 +64,7 @@ async function resolveAuthServer(handle: string): Promise<{
   }
 
   return {
+    did,
     issuer: authMeta.issuer,
     authorizationEndpoint: authMeta.authorization_endpoint,
     tokenEndpoint: authMeta.token_endpoint,
@@ -187,6 +199,8 @@ export async function startBlueskyOAuth(
     dpopPublicJwk: publicJwk,
     issuer: authServer.issuer,
     tokenEndpoint: authServer.tokenEndpoint,
+    did: authServer.did,
+    handle: handle.toLowerCase(),
   }
   await storeOAuthState(env.CACHE_KV, stateId, state)
 
@@ -368,6 +382,26 @@ export async function handleBlueskyCallback(
   return await processBlueskyToken(tokenResp, state, env)
 }
 
+async function confirmedHandle(did: string, state: OAuthState): Promise<string | null> {
+  const failed = (check: string) => {
+    console.warn(`Bluesky sign-in not confirmed: ${check}`)
+    return null
+  }
+  if (!state.did || !state.handle) return failed('state')
+  if (did !== state.did) return failed('account')
+  try {
+    const didDoc = await resolveDidDocument(did)
+    if (!didDoc) return failed('did_document')
+    const pdsUrl = getPdsEndpoint(didDoc)
+    if (!pdsUrl || await pdsAuthorizationServer(pdsUrl) !== state.issuer) return failed('authorization_server')
+    // The first handle a DID document lists is the one it claims
+    if (getHandleFromDidDocument(didDoc)?.toLowerCase() !== state.handle) return failed('handle')
+    return state.handle
+  } catch {
+    return failed('lookup')
+  }
+}
+
 async function processBlueskyToken(
   tokenResp: Response,
   state: OAuthState,
@@ -386,16 +420,12 @@ async function processBlueskyToken(
     return { success: false, returnUrl: state.returnUrl, error: 'No DID in token response' }
   }
 
-  // Resolve DID to handle for identity
-  let handle = did
-  try {
-    const didDoc = await resolveDidDocument(did)
-    if (didDoc) {
-      const resolvedHandle = getHandleFromDidDocument(didDoc)
-      if (resolvedHandle) handle = resolvedHandle
-    }
-  } catch {
-    // Use DID as identity if handle resolution fails
+  // Confirm the account, as the AT Protocol OAuth spec requires: it is the one
+  // the sign-in started with, its PDS uses the authorization server the sign-in
+  // went through, and its DID document claims the handle the person entered.
+  const handle = await confirmedHandle(did, state)
+  if (!handle) {
+    return { success: false, returnUrl: state.returnUrl, error: 'Bluesky account not confirmed' }
   }
 
   // Best effort: persist a durable identity-link record in the user's AT repo.
