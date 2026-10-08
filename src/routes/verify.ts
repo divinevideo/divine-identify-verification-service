@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { Bindings, VerifyClaim, VerifyResult, CachedResult } from '../types'
-import { validateClaim, normalizePubkey } from '../utils/validation'
+import { validateClaim, normalizePubkey, VALID_PLATFORMS } from '../utils/validation'
 import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
@@ -842,7 +842,7 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
     // well-formed ['i', 'platform:identity', proof] tag. Events come from
     // relays, so one malformed entry mustn't hide the others.
     function linkedAccountClaims(event) {
-      var supportedPlatforms = ['github','twitter','mastodon','telegram','bluesky','discord','youtube','tiktok'];
+      var supportedPlatforms = ${JSON.stringify(VALID_PLATFORMS)};
       var tags = event && Array.isArray(event.tags) ? event.tags : [];
       var claims = [];
       for (var i = 0; i < tags.length; i++) {

@@ -2,7 +2,7 @@ import type { Platform, VerifyClaim } from '../types'
 import { cacheKey } from './cache'
 import { oauthVerificationKey } from '../oauth/state'
 
-const VALID_PLATFORMS: Platform[] = ['github', 'twitter', 'mastodon', 'telegram', 'bluesky', 'discord', 'youtube', 'tiktok']
+export const VALID_PLATFORMS: readonly Platform[] = ['github', 'twitter', 'mastodon', 'telegram', 'bluesky', 'discord', 'youtube', 'tiktok']
 
 export function isValidPlatform(platform: string): platform is Platform {
   return VALID_PLATFORMS.includes(platform as Platform)

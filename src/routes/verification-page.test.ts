@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_BATCH_SIZE, renderVerifyHtml } from './verify'
 import type { VerifyResult } from '../types'
+import { VALID_PLATFORMS } from '../utils/validation'
 
 // Runs the real script of the page behind a verification link (its init()
 // and the code it reads linked accounts with) against stand-ins for the
@@ -102,6 +103,16 @@ const identityEventWith = (tags: unknown): Event => ({ kind: 10011, tags, conten
 const rows = (results: Array<Record<string, unknown>>) => results.map(r => `${r.platform}:${r.identity}`)
 
 describe('verification-link page: all verified identities', () => {
+  it('checks every platform accepted by the API and skips unknown platforms', async () => {
+    const init = loadInit()
+    const h = harness({
+      identityEvent: identityEventWith([...VALID_PLATFORMS.map(platform => iTag(platform, 'account', 'proof')), iTag('unknown', 'account', 'proof')]),
+      profile: profileWith({}),
+    })
+    await init(h.env)()
+    expect(h.rendered[0].map(result => result.platform)).toEqual(VALID_PLATFORMS)
+  })
+
   it('lists the accounts in the identity event, not only the older profile format', async () => {
     const init = loadInit()
     const h = harness({
