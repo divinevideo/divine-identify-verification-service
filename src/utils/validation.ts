@@ -56,6 +56,9 @@ export function isPrivateHostname(hostname: string): boolean {
   // the empty label a trailing dot leaves: the Workers runtime fails the TLS
   // host check on such a name, so it is refused here with a clear error.
   if (host.startsWith('.') || host.endsWith('.') || host.includes('..')) return true
+  // A public name has at least two labels; a bare one (internal, corp, metadata)
+  // is resolved by the local network's search domain
+  if (!host.includes('.')) return true
   // Only domain names are fetched: block every IPv4 address (IPv6 has a colon)
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true
   // Block localhost variants and internal/common private TLDs
