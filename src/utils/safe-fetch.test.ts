@@ -126,6 +126,16 @@ describe('fetchPublic', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('never follows a redirect on a POST without a body', async () => {
+    const redirected = redirect('https://moved.example.org/b', 307)
+    fetchMock.mockResolvedValueOnce(redirected)
+
+    const response = await fetchPublic('https://example.com/a', { method: 'POST' })
+
+    expect(response).toBe(redirected)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('closes the body of a redirect it follows', async () => {
     let cancelled = false
     const body = new ReadableStream({ cancel() { cancelled = true } })
