@@ -142,7 +142,7 @@ export async function startBlueskyOAuth(
   // AT Protocol OAuth requires DPoP nonce exchange: the auth server rejects
   // the first PAR request with a use_dpop_nonce error and a DPoP-Nonce header.
   // We retry once with the nonce included in the DPoP proof.
-  let parResp = await fetch(authServer.pushedAuthorizationRequestEndpoint, {
+  let parResp = await fetchPublic(authServer.pushedAuthorizationRequestEndpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -161,7 +161,7 @@ export async function startBlueskyOAuth(
         authServer.pushedAuthorizationRequestEndpoint,
         dpopNonce,
       )
-      parResp = await fetch(authServer.pushedAuthorizationRequestEndpoint, {
+      parResp = await fetchPublic(authServer.pushedAuthorizationRequestEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -241,7 +241,7 @@ export async function handleBlueskyCallback(
     state.tokenEndpoint,
   )
 
-  const tokenResp = await fetch(state.tokenEndpoint, {
+  const tokenResp = await fetchPublic(state.tokenEndpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -269,7 +269,7 @@ export async function handleBlueskyCallback(
         dpopNonce,
       )
 
-      const retryResp = await fetch(state.tokenEndpoint, {
+      const retryResp = await fetchPublic(state.tokenEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',

@@ -241,6 +241,33 @@ describe('startBlueskyOAuth - DPoP nonce retry', () => {
     expect(fetchMock.mock.calls[redirectedFetch][1]).toMatchObject({ redirect: 'manual' })
   })
 
+  it.each([
+    ['the first PAR request', []],
+    ['the PAR retry with a nonce', [parNonceRequired('nonce1')]],
+  ])('does not follow a redirect from %s', async (_label, before) => {
+    const discovery = mockDiscoveryChain()
+    const fetchMock = vi.fn()
+    for (const response of [...discovery, ...before]) fetchMock.mockResolvedValueOnce(response)
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, { status: 307, headers: { Location: 'https://elsewhere.example/oauth/par' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const resp = await startBlueskyOAuth(
+      makeEnv(),
+      'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
+      'alice.bsky.social',
+      'https://verifier.divine.video/',
+    )
+
+    expect(resp.status).toBe(502)
+    const body = await resp.json() as { status: number }
+    expect(body.status).toBe(307)
+    const parCalls = discovery.length + before.length + 1
+    expect(fetchMock).toHaveBeenCalledTimes(parCalls)
+    expect(fetchMock.mock.calls[parCalls - 1][1]).toMatchObject({ method: 'POST', redirect: 'manual' })
+  })
+
   it('returns 503 when OAUTH_REDIRECT_BASE is not set', async () => {
     const env = makeEnv({ OAUTH_REDIRECT_BASE: undefined })
     const resp = await startBlueskyOAuth(
