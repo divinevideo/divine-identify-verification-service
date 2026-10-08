@@ -1,3 +1,5 @@
+import { isPrivateHostname } from './utils/validation'
+
 export type DidDocument = {
   alsoKnownAs?: string[]
   service?: Array<{ id?: string; serviceEndpoint?: string }>
@@ -8,12 +10,7 @@ export function isSafeUrl(urlStr: string): boolean {
   try {
     const url = new URL(urlStr)
     if (url.protocol !== 'https:') return false
-    const hostname = url.hostname
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return false
-    if (hostname.startsWith('[') || hostname.includes(':')) return false
-    if (hostname === 'localhost' || hostname.endsWith('.localhost')) return false
-    if (hostname.endsWith('.local') || hostname.endsWith('.internal') || hostname.endsWith('.corp')) return false
-    return true
+    return !isPrivateHostname(url.hostname)
   } catch {
     return false
   }
