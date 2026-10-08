@@ -1,5 +1,6 @@
 import type { PlatformVerifier } from './base'
 import { isPrivateHostname } from '../utils/validation'
+import { fetchPublic } from '../utils/safe-fetch'
 
 export class MastodonVerifier implements PlatformVerifier {
   readonly name = 'mastodon'
@@ -38,7 +39,7 @@ export class MastodonVerifier implements PlatformVerifier {
 
     const url = `https://${instance}/api/v1/statuses/${encodeURIComponent(proof)}`
 
-    const response = await fetch(url, {
+    const response = await fetchPublic(url, {
       headers: {
         'Accept': 'application/json',
         'User-Agent': 'divine-identity-verification-service',

@@ -219,6 +219,28 @@ describe('startBlueskyOAuth - DPoP nonce retry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(6)
   })
 
+  it.each([
+    ['the PDS resource metadata', 2],
+    ['the authorization server metadata', 3],
+  ])('does not follow a redirect from %s to an internal host', async (_label, redirectedFetch) => {
+    const discovery: unknown[] = mockDiscoveryChain().slice(0, redirectedFetch)
+    discovery.push(new Response(null, { status: 302, headers: { Location: 'https://localhost/.well-known/x' } }))
+    const fetchMock = vi.fn()
+    for (const response of discovery) fetchMock.mockResolvedValueOnce(response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const resp = await startBlueskyOAuth(
+      makeEnv(),
+      'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
+      'alice.bsky.social',
+      'https://verifier.divine.video/',
+    )
+
+    expect(resp.status).toBe(400)
+    expect(fetchMock).toHaveBeenCalledTimes(redirectedFetch + 1)
+    expect(fetchMock.mock.calls[redirectedFetch][1]).toMatchObject({ redirect: 'manual' })
+  })
+
   it('returns 503 when OAUTH_REDIRECT_BASE is not set', async () => {
     const env = makeEnv({ OAUTH_REDIRECT_BASE: undefined })
     const resp = await startBlueskyOAuth(

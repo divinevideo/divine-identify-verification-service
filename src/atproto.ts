@@ -1,4 +1,5 @@
 import { isSafeUrl } from './utils/validation'
+import { fetchPublic } from './utils/safe-fetch'
 
 export type DidDocument = {
   alsoKnownAs?: string[]
@@ -34,7 +35,7 @@ export async function resolveDidDocument(did: string): Promise<DidDocument | nul
     if (domain.includes('/') || domain.includes('\\')) return null
     const didWebUrl = `https://${domain}/.well-known/did.json`
     if (!isSafeUrl(didWebUrl)) return null
-    const didResp = await fetch(didWebUrl)
+    const didResp = await fetchPublic(didWebUrl)
     if (!didResp.ok) return null
     try {
       return await didResp.json() as DidDocument

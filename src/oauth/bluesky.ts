@@ -4,10 +4,11 @@ import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerificatio
 import { forgetHandleLookup } from './signin-account'
 import { getHandleFromDidDocument, getPdsEndpoint, resolveDidDocument, resolveHandle } from '../atproto'
 import { isSafeUrl } from '../utils/validation'
+import { fetchPublic } from '../utils/safe-fetch'
 
 // The authorization server a PDS (resource server) declares.
 async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
-  const resourceResp = await fetch(`${pdsUrl}/.well-known/oauth-protected-resource`)
+  const resourceResp = await fetchPublic(`${pdsUrl}/.well-known/oauth-protected-resource`)
   if (!resourceResp.ok) return null
   let resourceMeta: { authorization_servers?: string[] }
   try {
@@ -41,7 +42,7 @@ async function resolveAuthServer(handle: string): Promise<{
   if (!issuer) return null
 
   // 4. Get authorization server metadata
-  const authResp = await fetch(`${issuer}/.well-known/oauth-authorization-server`)
+  const authResp = await fetchPublic(`${issuer}/.well-known/oauth-authorization-server`)
   if (!authResp.ok) return null
   let authMeta: {
     issuer: string
