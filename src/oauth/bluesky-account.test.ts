@@ -45,7 +45,6 @@ function network(sub: string, accounts: Account[]) {
       if (url === `${a.pds}/.well-known/oauth-protected-resource`) {
         return json({ authorization_servers: [a.authServer] })
       }
-      if (url.startsWith(`${a.pds}/xrpc/`)) return json({ uri: `at://${a.did}/link/self` })
     }
     return json({ error: 'not found' }, 404)
   })

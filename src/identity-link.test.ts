@@ -1,18 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { buildNostrIdentityLinkRecord, matchNostrIdentityLinkRecord } from './identity-link'
+import { matchNostrIdentityLinkRecord } from './identity-link'
 
 describe('identity-link', () => {
-  it('builds a valid nostr identity link record', () => {
-    const npub = 'npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg'
-    const record = buildNostrIdentityLinkRecord(npub)
-
-    expect(record.$type).toBe('video.divine.identity.link')
-    expect(record.version).toBe(1)
-    expect(record.target.protocol).toBe('nostr')
-    expect(record.target.id).toBe(npub)
-    expect(record.target.uri).toBe(`nostr:${npub}`)
-  })
-
   it('matches valid nostr identity link records', () => {
     const npub = 'npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg'
     const result = matchNostrIdentityLinkRecord({

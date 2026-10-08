@@ -7,7 +7,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 ## Features
 
 - **Eight platforms** — GitHub, Twitter/X, Bluesky, Mastodon, Telegram, Discord, YouTube, and TikTok, verified through a single API.
-- **Two verification methods** — a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. TikTok uses proof posts while its production OAuth app is pending; existing OAuth results remain valid as a fallback.
+- **Two verification methods** — a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A Bluesky login stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
 - **Batch and single verification** — check up to 10 claims in one request, or verify a single claim over JSON or a shareable URL that returns HTML for browsers and JSON for API clients.
 - **NIP-05 verification** — confirm that a NIP-05 identifier resolves to a given pubkey.
 - **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and upstream platform errors for 5 minutes.
@@ -31,7 +31,7 @@ The service is a single [Hono](https://hono.dev) app running on Cloudflare Worke
 
 Each platform is a verifier in `src/platforms/` behind a shared interface, wired up in `registry.ts`; adding a platform is a matter of adding a verifier rather than reshaping the service. OAuth handlers live in `src/oauth/`, and shared helpers (caching, rate limiting, validation, npub encoding) live in `src/utils/`.
 
-Verification is layered: the Worker checks the KV cache first, then any cached OAuth verification for OAuth-capable platforms, and finally fetches the proof from the platform. Bluesky verification also understands AT Protocol identity-link records (`video.divine.identity.link`) alongside proof posts. Results carry provenance describing how the link was confirmed.
+Verification is layered: the Worker checks any OAuth login record for OAuth-capable platforms first, then the KV cache, and finally fetches the proof from the platform. Bluesky verification also understands AT Protocol identity-link records (`video.divine.identity.link`) alongside proof posts. Results carry provenance describing how the link was confirmed.
 
 The service backs Divine's identity and trust surface: divine-web and Divine mobile call it on demand to render verified badges, and the published verification is written into the user's own signed Nostr identity event (NIP-39), so the proof stays portable and owned by the user rather than by any single platform.
 

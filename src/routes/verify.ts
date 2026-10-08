@@ -7,6 +7,7 @@ import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { getVerifier } from '../platforms/registry'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import { getOAuthVerification } from '../oauth/state'
+import { signInAccountStillMatches } from '../oauth/signin-account'
 
 const verify = new Hono<{ Bindings: Bindings }>()
 
@@ -29,7 +30,37 @@ async function verifySingleClaim(
   }
   const key = cacheKey(normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.proof, normalizedClaim.pubkey)
 
-  // Check cache first
+  // A sign-in record answers first, so a result cached before a fresh sign-in
+  // (a failed check, or one made right after an unlink) can't hide it.
+  if (normalizedClaim.platform === 'twitter' || normalizedClaim.platform === 'bluesky' || normalizedClaim.platform === 'youtube' || normalizedClaim.platform === 'tiktok') {
+    const oauthResult = await getOAuthVerification(env.CACHE_KV, normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.pubkey)
+    if (oauthResult) {
+      if (!(await signInAccountStillMatches(env, oauthResult, normalizedClaim.identity))) {
+        return {
+          platform: normalizedClaim.platform,
+          identity: normalizedClaim.identity,
+          verified: false,
+          error: 'This Bluesky account no longer matches the one that was linked. Link it again.',
+          checked_at: now,
+          cached: false,
+        }
+      }
+      return {
+        platform: normalizedClaim.platform,
+        identity: normalizedClaim.identity,
+        verified: true,
+        method: 'oauth',
+        provenance: {
+          method: 'oauth',
+          evidence: ['oauth_verification_cache'],
+        },
+        checked_at: oauthResult.checked_at,
+        cached: true,
+      }
+    }
+  }
+
+  // Then the result cache
   const cached = await getCached(env.CACHE_KV, key)
   if (cached) {
     return {
@@ -43,25 +74,6 @@ async function verifySingleClaim(
       ...(cached.canonical_proof ? { canonical_proof: cached.canonical_proof } : {}),
       checked_at: cached.checked_at,
       cached: true,
-    }
-  }
-
-  // Check for OAuth verification (backup method for twitter/bluesky/youtube/tiktok)
-  if (normalizedClaim.platform === 'twitter' || normalizedClaim.platform === 'bluesky' || normalizedClaim.platform === 'youtube' || normalizedClaim.platform === 'tiktok') {
-    const oauthResult = await getOAuthVerification(env.CACHE_KV, normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.pubkey)
-    if (oauthResult) {
-      return {
-        platform: normalizedClaim.platform,
-        identity: normalizedClaim.identity,
-        verified: true,
-        method: 'oauth',
-        provenance: {
-          method: 'oauth',
-          evidence: ['oauth_verification_cache'],
-        },
-        checked_at: oauthResult.checked_at,
-        cached: true,
-      }
     }
   }
 

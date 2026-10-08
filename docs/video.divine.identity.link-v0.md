@@ -12,7 +12,7 @@ This record is not Divine-exclusive in behavior. Any verifier can independently 
 
 - Collection: `video.divine.identity.link`
 - Record type: `video.divine.identity.link`
-- Key: `any` (current implementation uses deterministic `nostr-<npub>` rkeys)
+- Key: `any` (the verifier reads these records but no longer writes them: its Bluesky sign-in asks only for the `atproto` scope, which can't create records)
 
 ## Record schema
 

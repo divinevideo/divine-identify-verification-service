@@ -16,50 +16,9 @@ export interface VerificationProvenance {
   gateway?: GatewayProvenance
 }
 
-export interface DivineIdentityLinkRecord {
-  $type: typeof DIVINE_IDENTITY_LINK_TYPE
-  version: 1
-  target: {
-    protocol: string
-    id: string
-    uri?: string
-  }
-  proof: {
-    type: string
-    material?: string
-    challenge?: string
-    createdAt: string
-  }
-  gateway?: GatewayProvenance
-  source?: {
-    app?: string
-  }
-}
-
 export interface NostrIdentityLinkMatch {
   matched: boolean
   gateway?: GatewayProvenance
-}
-
-/** Build a v0 link record for Nostr identity linking. */
-export function buildNostrIdentityLinkRecord(npub: string): DivineIdentityLinkRecord {
-  return {
-    $type: DIVINE_IDENTITY_LINK_TYPE,
-    version: 1,
-    target: {
-      protocol: 'nostr',
-      id: npub,
-      uri: `nostr:${npub}`,
-    },
-    proof: {
-      type: 'oauth',
-      material: 'atproto-oauth',
-      createdAt: new Date().toISOString(),
-    },
-    source: {
-      app: 'divine-identify-verification-service',
-    },
-  }
 }
 
 /**
