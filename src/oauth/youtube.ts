@@ -10,6 +10,7 @@ export async function startYouTubeOAuth(
   env: Bindings,
   pubkey: string,
   returnUrl: string,
+  bindingHash: string,
 ): Promise<Response> {
   if (!env.GOOGLE_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
     return new Response(JSON.stringify({ error: 'YouTube OAuth not configured' }), {
@@ -27,6 +28,7 @@ export async function startYouTubeOAuth(
     codeVerifier: verifier,
     returnUrl,
     createdAt: Date.now(),
+    bindingHash,
   }
 
   await storeOAuthState(env.CACHE_KV, stateId, state)

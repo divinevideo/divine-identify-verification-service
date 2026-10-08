@@ -6,6 +6,7 @@ import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/val
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
 import { getOAuthVerification, deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
+import { createBinding, bindingSetCookie } from '../oauth/binding'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
@@ -203,9 +204,29 @@ auth.post('/nostr/login', async (c) => {
   })
 })
 
+// The start functions return Response.redirect, whose headers can't be
+// changed, so the cookie goes on a copy. Errors get no cookie.
+function withBindingCookie(response: Response, value: string): Response {
+  if (response.status !== 302) return response
+  const headers = new Headers(response.headers)
+  headers.append('Set-Cookie', bindingSetCookie(value))
+  return new Response(null, { status: 302, headers })
+}
+
 // Start OAuth flow
 // GET /auth/:platform/start?pubkey=hex&return_url=https://...&handle=user.bsky.social (handle required for bluesky)
 auth.get('/:platform/start', async (c) => {
+  // The provider always returns to OAUTH_REDIRECT_BASE, and the binding
+  // cookie only comes back to the host that set it, so start there.
+  const base = c.env.OAUTH_REDIRECT_BASE
+  if (base) {
+    const here = new URL(c.req.url)
+    const finishing = new URL(base)
+    if (here.origin !== finishing.origin) {
+      return c.redirect(`${finishing.origin}${here.pathname}${here.search}`, 302)
+    }
+  }
+
   const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
   const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
   if (!ipLimit.allowed) {
@@ -227,10 +248,11 @@ auth.get('/:platform/start', async (c) => {
   }
 
   const normalizedPubkey = normalizePubkey(pubkey)
+  const binding = await createBinding()
 
   switch (platform) {
     case 'twitter':
-      return startTwitterOAuth(c.env, normalizedPubkey, returnUrl)
+      return withBindingCookie(await startTwitterOAuth(c.env, normalizedPubkey, returnUrl, binding.hash), binding.value)
 
     case 'bluesky': {
       // People type handles the way Bluesky shows them, with a leading @.
@@ -238,18 +260,18 @@ auth.get('/:platform/start', async (c) => {
       if (!bareHandle) {
         return c.json({ error: 'Missing handle parameter (e.g., user.bsky.social)' }, 400)
       }
-      return startBlueskyOAuth(c.env, normalizedPubkey, bareHandle, returnUrl)
+      return withBindingCookie(await startBlueskyOAuth(c.env, normalizedPubkey, bareHandle, returnUrl, binding.hash), binding.value)
     }
 
     case 'youtube':
-      return startYouTubeOAuth(c.env, normalizedPubkey, returnUrl)
+      return withBindingCookie(await startYouTubeOAuth(c.env, normalizedPubkey, returnUrl, binding.hash), binding.value)
 
     case 'tiktok': {
       const allowSandbox = getCookie(c, 'tiktok_oauth_review') === '1'
       if (!isTikTokOAuthUsable(c.env, allowSandbox)) {
         return c.json({ error: 'TikTok OAuth not configured' }, 503)
       }
-      return startTikTokOAuth(c.env, normalizedPubkey, returnUrl)
+      return withBindingCookie(await startTikTokOAuth(c.env, normalizedPubkey, returnUrl, binding.hash), binding.value)
     }
 
     default:

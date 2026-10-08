@@ -6,6 +6,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import { startBlueskyOAuth } from './bluesky'
 
+// These tests don't exercise sign-in binding; any hash-shaped string will do.
+const BINDING_HASH = 'b'.repeat(64)
+
 // Minimal env stub with OAUTH_REDIRECT_BASE set
 function makeEnv(overrides: Record<string, unknown> = {}) {
   return {
@@ -121,6 +124,7 @@ describe('startBlueskyOAuth - DPoP nonce retry', () => {
       'alice.bsky.social',
       'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
       'https://verifier.divine.video/',
+      BINDING_HASH,
     )
 
     // Should redirect to Bluesky authorization endpoint
@@ -157,6 +161,7 @@ describe('startBlueskyOAuth - DPoP nonce retry', () => {
       'alice.bsky.social',
       'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
       'https://verifier.divine.video/',
+      BINDING_HASH,
     )
 
     expect(resp.status).toBe(302)
@@ -181,6 +186,7 @@ describe('startBlueskyOAuth - DPoP nonce retry', () => {
       'alice.bsky.social',
       'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
       'https://verifier.divine.video/',
+      BINDING_HASH,
     )
 
     expect(resp.status).toBe(502)
@@ -210,6 +216,7 @@ describe('startBlueskyOAuth - DPoP nonce retry', () => {
       'alice.bsky.social',
       'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
       'https://verifier.divine.video/',
+      BINDING_HASH,
     )
 
     expect(resp.status).toBe(502)
@@ -226,6 +233,7 @@ describe('startBlueskyOAuth - DPoP nonce retry', () => {
       'alice.bsky.social',
       'abcd1234',
       'https://verifier.divine.video/',
+      BINDING_HASH,
     )
 
     expect(resp.status).toBe(503)

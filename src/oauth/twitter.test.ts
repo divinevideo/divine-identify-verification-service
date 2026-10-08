@@ -19,6 +19,8 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
 }
 
 const PUBKEY = 'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234'
+// These tests don't exercise sign-in binding; any hash-shaped string will do.
+const BINDING_HASH = 'b'.repeat(64)
 
 function envWithState(state: Partial<OAuthState> = {}) {
   const stored: OAuthState = {
@@ -50,7 +52,7 @@ describe('startTwitterOAuth', () => {
 
   it('requests the users.read scope that grants username on /2/users/me', async () => {
     const env = makeEnv()
-    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
 
     expect(resp.status).toBe(302)
     const scope = new URL(resp.headers.get('Location')!).searchParams.get('scope')
@@ -60,7 +62,7 @@ describe('startTwitterOAuth', () => {
 
   it('builds the authorize URL with PKCE and the registered redirect URI', async () => {
     const env = makeEnv()
-    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
 
     const params = new URL(resp.headers.get('Location')!).searchParams
     expect(params.get('client_id')).toBe('test-client-id')
@@ -72,13 +74,13 @@ describe('startTwitterOAuth', () => {
 
   it('returns 503 when the client id is not configured', async () => {
     const env = makeEnv({ TWITTER_CLIENT_ID: undefined })
-    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
     expect(resp.status).toBe(503)
   })
 
   it('returns 503 without the client secret, before sending anyone to Twitter', async () => {
     const env = makeEnv({ TWITTER_CLIENT_SECRET: undefined })
-    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
     expect(resp.status).toBe(503)
     expect(resp.headers.get('Location')).toBeNull()
   })

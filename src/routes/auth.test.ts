@@ -530,7 +530,10 @@ describe('GET /auth/:platform/start return address', () => {
       TWITTER_CLIENT_SECRET: 'test-client-secret',
       OAUTH_REDIRECT_BASE: 'http://localhost:8787',
     }
-    const res = await app.request(`/auth/twitter/start?pubkey=${'a'.repeat(64)}&return_url=${encodeURIComponent('http://localhost:5173/?signin=abc#verify-here')}`, {}, env)
+    // Absolute, and matching OAUTH_REDIRECT_BASE: a bare relative path would
+    // default to http://localhost with no port, which now gets redirected to
+    // the finishing host instead of starting the sign-in directly.
+    const res = await app.request(`http://localhost:8787/auth/twitter/start?pubkey=${'a'.repeat(64)}&return_url=${encodeURIComponent('http://localhost:5173/?signin=abc#verify-here')}`, {}, env)
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toMatch(/^https:\/\/twitter\.com\/i\/oauth2\/authorize\?/)
   })
@@ -544,8 +547,11 @@ describe('GET /auth/tiktok/start', () => {
     OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
   }
 
+  // Absolute, and matching OAUTH_REDIRECT_BASE: a bare relative path would
+  // default to http://localhost, which now gets redirected to the finishing
+  // host instead of starting the sign-in directly.
   function startUrl(): string {
-    return `/auth/tiktok/start?pubkey=${pubkey}&return_url=https://verifier.divine.video/`
+    return `https://verifier.divine.video/auth/tiktok/start?pubkey=${pubkey}&return_url=https://verifier.divine.video/`
   }
 
   it('returns 503 when production OAuth is not enabled', async () => {

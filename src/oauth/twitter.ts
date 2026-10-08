@@ -19,6 +19,7 @@ export async function startTwitterOAuth(
   env: Bindings,
   pubkey: string,
   returnUrl: string,
+  bindingHash: string,
 ): Promise<Response> {
   // The explicit checks after isTwitterOAuthUsable let TypeScript see both values are set.
   if (!isTwitterOAuthUsable(env) || !env.TWITTER_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
@@ -37,6 +38,7 @@ export async function startTwitterOAuth(
     codeVerifier: verifier,
     returnUrl,
     createdAt: Date.now(),
+    bindingHash,
   }
 
   await storeOAuthState(env.CACHE_KV, stateId, state)

@@ -27,6 +27,7 @@ export async function startTikTokOAuth(
   env: Bindings,
   pubkey: string,
   returnUrl: string,
+  bindingHash: string,
 ): Promise<Response> {
   if (!env.TIKTOK_CLIENT_KEY || !env.OAUTH_REDIRECT_BASE) {
     return new Response(JSON.stringify({ error: 'TikTok OAuth not configured' }), {
@@ -44,6 +45,7 @@ export async function startTikTokOAuth(
     codeVerifier: verifier,
     returnUrl,
     createdAt: Date.now(),
+    bindingHash,
   }
 
   await storeOAuthState(env.CACHE_KV, stateId, state)

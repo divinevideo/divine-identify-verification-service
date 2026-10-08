@@ -19,6 +19,8 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
 }
 
 const PUBKEY = 'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234'
+// These tests don't exercise sign-in binding; any hash-shaped string will do.
+const BINDING_HASH = 'b'.repeat(64)
 
 // Returns a CACHE_KV stub whose get() resolves the stored TikTok OAuth state.
 function envWithState(state: Partial<OAuthState> = {}) {
@@ -51,7 +53,7 @@ describe('startTikTokOAuth', () => {
 
   it('requests both basic and profile scopes (username needs user.info.profile)', async () => {
     const env = makeEnv()
-    const resp = await startTikTokOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTikTokOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
 
     expect(resp.status).toBe(302)
     const location = resp.headers.get('Location')!
@@ -62,7 +64,7 @@ describe('startTikTokOAuth', () => {
 
   it('builds the authorize URL with PKCE and the registered redirect URI', async () => {
     const env = makeEnv()
-    const resp = await startTikTokOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTikTokOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
 
     const params = new URL(resp.headers.get('Location')!).searchParams
     expect(params.get('client_key')).toBe('test-client-key')
@@ -74,7 +76,7 @@ describe('startTikTokOAuth', () => {
 
   it('returns 503 when the client key is not configured', async () => {
     const env = makeEnv({ TIKTOK_CLIENT_KEY: undefined })
-    const resp = await startTikTokOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTikTokOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
     expect(resp.status).toBe(503)
   })
 })

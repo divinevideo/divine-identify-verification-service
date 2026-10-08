@@ -76,6 +76,7 @@ export async function startBlueskyOAuth(
   pubkey: string,
   handle: string,
   returnUrl: string,
+  bindingHash: string,
 ): Promise<Response> {
   if (!env.OAUTH_REDIRECT_BASE) {
     return new Response(JSON.stringify({ error: 'OAuth not configured' }), {
@@ -114,6 +115,7 @@ export async function startBlueskyOAuth(
     tokenEndpoint: authServer.tokenEndpoint,
     did: authServer.did,
     handle: handle.toLowerCase(),
+    bindingHash,
   }
   await storeOAuthState(env.CACHE_KV, stateId, state)
 
