@@ -7,8 +7,8 @@ import {
   validateClaim,
   validateNip05Name,
   isPrivateHostname,
+  isSafeUrl,
 } from './validation'
-import { isSafeUrl } from '../atproto'
 
 describe('isValidPlatform', () => {
   it('accepts valid platforms', () => {

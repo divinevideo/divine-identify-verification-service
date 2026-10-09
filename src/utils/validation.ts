@@ -60,6 +60,17 @@ export function isPrivateHostname(hostname: string): boolean {
   return false
 }
 
+/** Validate that a URL is HTTPS and points to a public host (SSRF protection). */
+export function isSafeUrl(urlStr: string): boolean {
+  try {
+    const url = new URL(urlStr)
+    if (url.protocol !== 'https:') return false
+    return !isPrivateHostname(url.hostname)
+  } catch {
+    return false
+  }
+}
+
 export interface ValidationError {
   index: number
   error: string

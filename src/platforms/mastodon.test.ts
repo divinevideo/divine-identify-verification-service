@@ -155,4 +155,30 @@ describe('MastodonVerifier', () => {
     expect(result.verified).toBe(false)
     expect(result.error).toContain('Invalid Mastodon instance')
   })
+
+  it('does not follow a redirect from a public instance to an internal host', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(null, { status: 302, headers: { Location: 'https://localhost/api/v1/statuses/109876543210' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await verifier.verify('mastodon.social/@alice', '109876543210', npub)
+    expect(result.verified).toBe(false)
+    expect(result.error).toBe('Mastodon API error: 302')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'manual' })
+  })
+
+  it('follows a redirect to another public host', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(null, { status: 301, headers: { Location: 'https://social.example.org/api/v1/statuses/109876543210' } }),
+      )
+      .mockResolvedValueOnce(Response.json({ account: { acct: 'alice' }, content: `<p>${npub}</p>` }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await verifier.verify('mastodon.social/@alice', '109876543210', npub)
+    expect(result.verified).toBe(true)
+    expect(fetchMock.mock.calls[1][0]).toBe('https://social.example.org/api/v1/statuses/109876543210')
+  })
 })

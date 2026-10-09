@@ -2,11 +2,13 @@ import type { Bindings, OAuthState } from '../types'
 import { generatePKCE, generateRandomString, generateDPoPKeyPair, importDPoPPrivateKey, createDPoPProof } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification, getOAuthVerification, oauthVerificationKey } from './state'
 import { forgetHandleLookup } from './signin-account'
-import { getHandleFromDidDocument, getPdsEndpoint, isSafeUrl, resolveDidDocument, resolveHandle } from '../atproto'
+import { getHandleFromDidDocument, getPdsEndpoint, resolveDidDocument, resolveHandle } from '../atproto'
+import { isSafeUrl } from '../utils/validation'
+import { fetchPublic } from '../utils/safe-fetch'
 
 // The authorization server a PDS (resource server) declares.
 async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
-  const resourceResp = await fetch(`${pdsUrl}/.well-known/oauth-protected-resource`)
+  const resourceResp = await fetchPublic(`${pdsUrl}/.well-known/oauth-protected-resource`)
   if (!resourceResp.ok) return null
   let resourceMeta: { authorization_servers?: string[] }
   try {
@@ -40,7 +42,7 @@ async function resolveAuthServer(handle: string): Promise<{
   if (!issuer) return null
 
   // 4. Get authorization server metadata
-  const authResp = await fetch(`${issuer}/.well-known/oauth-authorization-server`)
+  const authResp = await fetchPublic(`${issuer}/.well-known/oauth-authorization-server`)
   if (!authResp.ok) return null
   let authMeta: {
     issuer: string
@@ -140,7 +142,7 @@ export async function startBlueskyOAuth(
   // AT Protocol OAuth requires DPoP nonce exchange: the auth server rejects
   // the first PAR request with a use_dpop_nonce error and a DPoP-Nonce header.
   // We retry once with the nonce included in the DPoP proof.
-  let parResp = await fetch(authServer.pushedAuthorizationRequestEndpoint, {
+  let parResp = await fetchPublic(authServer.pushedAuthorizationRequestEndpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -159,7 +161,7 @@ export async function startBlueskyOAuth(
         authServer.pushedAuthorizationRequestEndpoint,
         dpopNonce,
       )
-      parResp = await fetch(authServer.pushedAuthorizationRequestEndpoint, {
+      parResp = await fetchPublic(authServer.pushedAuthorizationRequestEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -239,7 +241,7 @@ export async function handleBlueskyCallback(
     state.tokenEndpoint,
   )
 
-  const tokenResp = await fetch(state.tokenEndpoint, {
+  const tokenResp = await fetchPublic(state.tokenEndpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -267,7 +269,7 @@ export async function handleBlueskyCallback(
         dpopNonce,
       )
 
-      const retryResp = await fetch(state.tokenEndpoint, {
+      const retryResp = await fetchPublic(state.tokenEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
