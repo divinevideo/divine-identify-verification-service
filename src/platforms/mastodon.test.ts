@@ -192,3 +192,65 @@ describe('MastodonVerifier', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('https://social.example.org/api/v1/statuses/109876543210')
   })
 })
+
+describe('MastodonVerifier failure answers', () => {
+  const verifier = new MastodonVerifier()
+  const npub = 'npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg'
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function answer(response: Response) {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
+  }
+
+  it('says the post was not found when the server answers 404', async () => {
+    // Every request 404s, so this holds before and after the web-domain lookup exists.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('not found', { status: 404 })))
+    const result = await verifier.verify('mastodon.social/@alice', '109876543210', npub)
+    expect(result).toEqual({ verified: false, error: 'Mastodon status not found' })
+  })
+
+  it('reports a refusal that is not a redirect as an API error', async () => {
+    answer(new Response('forbidden', { status: 403 }))
+    expect(await verifier.verify('mastodon.social/@alice', '1', npub))
+      .toEqual({ verified: false, error: 'Mastodon API error: 403' })
+  })
+
+  it('reports a removed post as an API error', async () => {
+    answer(new Response('gone', { status: 410 }))
+    expect(await verifier.verify('mastodon.social/@alice', '1', npub))
+      .toEqual({ verified: false, error: 'Mastodon API error: 410' })
+  })
+
+  it('refuses an answer that is not JSON', async () => {
+    answer(new Response('<html>oops</html>', { status: 200 }))
+    expect(await verifier.verify('mastodon.social/@alice', '1', npub))
+      .toEqual({ verified: false, error: 'Invalid JSON response from Mastodon' })
+  })
+
+  it('refuses a post with no author', async () => {
+    answer(new Response(JSON.stringify({ content: `<p>${npub}</p>` }), { status: 200 }))
+    expect(await verifier.verify('mastodon.social/@alice', '1', npub))
+      .toEqual({ verified: false, error: 'Status author does not match claimed identity' })
+  })
+
+  it('says the key is missing when the post has no text', async () => {
+    answer(new Response(JSON.stringify({ account: { acct: 'alice' } }), { status: 200 }))
+    expect(await verifier.verify('mastodon.social/@alice', '1', npub))
+      .toEqual({ verified: false, error: 'npub not found in Mastodon status content' })
+  })
+
+  it.each([
+    ['no account after the slash', 'mastodon.social/'],
+    ['only an @ after the slash', 'mastodon.social/@'],
+    ['an underscore in the server name', 'bad_host.example/@alice'],
+  ])('refuses %s without fetching', async (_label, identity) => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await verifier.verify(identity, '1', npub)
+    expect(result).toEqual({ verified: false, error: 'Invalid Mastodon identity format (expected instance/@user or instance/user)' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
