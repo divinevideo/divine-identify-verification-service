@@ -5,6 +5,7 @@ import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { getVerifier } from '../platforms/registry'
+import { PlatformUnavailableError } from '../platforms/base'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import { getOAuthVerification } from '../oauth/state'
 import { signInAccountStillMatches } from '../oauth/signin-account'
@@ -84,7 +85,12 @@ async function verifySingleClaim(
       platform: normalizedClaim.platform,
       identity: normalizedClaim.identity,
       verified: false,
+      // TODO(divinevideo/divine-mobile#9962): divine-mobile recognises rate
+      // limiting by the "Rate limit exceeded" prefix of this and the
+      // per-platform answer below. Keep both texts until the oldest app version
+      // still in use reads `code`; older installs keep matching the text.
       error: 'Rate limit exceeded for this pubkey',
+      code: 'temporarily_unavailable',
       checked_at: now,
       cached: false,
     }
@@ -97,6 +103,7 @@ async function verifySingleClaim(
       identity: normalizedClaim.identity,
       verified: false,
       error: `Rate limit exceeded for ${normalizedClaim.platform}`,
+      code: 'temporarily_unavailable',
       checked_at: now,
       cached: false,
     }
@@ -136,12 +143,23 @@ async function verifySingleClaim(
       cached: false,
     }
   } catch (err) {
-    const error = err instanceof Error ? err.message : 'Unknown verification error'
+    // A throw means the check didn't complete. Usually the platform didn't
+    // answer or couldn't be reached (PlatformUnavailableError); that isn't a
+    // verdict on the proof, so it's remembered briefly and reported as "try
+    // again". Anything else might be a bug here, so it's logged in full, with
+    // its stack.
+    if (err instanceof PlatformUnavailableError) {
+      console.warn(`${normalizedClaim.platform} couldn't be checked:`, err.message)
+    } else {
+      console.error(`${normalizedClaim.platform} check failed:`, err)
+    }
+    const error = `${verifier.label} couldn't be checked right now. Try again in a few minutes.`
+    const code = 'temporarily_unavailable'
 
-    // Cache as platform error (short TTL)
     const cacheResult: CachedResult = {
       verified: false,
       error,
+      code,
       checked_at: now,
       type: 'platform_error',
     }
@@ -152,6 +170,7 @@ async function verifySingleClaim(
       identity: normalizedClaim.identity,
       verified: false,
       error,
+      code,
       checked_at: now,
       cached: false,
     }

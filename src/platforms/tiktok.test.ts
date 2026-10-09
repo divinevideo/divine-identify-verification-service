@@ -192,18 +192,22 @@ describe('TikTokVerifier', () => {
     expect(result.error).toContain('Invalid TikTok username')
   })
 
-  it('returns error on fetch failure', async () => {
+  it('throws on fetch failure, so the service reports it as temporary', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('timeout')))
 
-    const result = await verifier.verify('testuser', '7123456789012345678', npub)
-    expect(result.verified).toBe(false)
-    expect(result.error).toBe('Failed to fetch TikTok post')
+    await expect(verifier.verify('testuser', '7123456789012345678', npub)).rejects.toThrow("couldn't be reached")
   })
 
-  it('returns error on non-ok response', async () => {
+  it('throws when TikTok does not answer', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }))
+
+    await expect(verifier.verify('testuser', '7123456789012345678', npub)).rejects.toThrow('TikTok answered 500')
+  })
+
+  it('returns error on a refusal that is an answer', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
-      status: 500,
+      status: 403,
     }))
 
     const result = await verifier.verify('testuser', '7123456789012345678', npub)
@@ -293,10 +297,9 @@ describe('TikTokVerifier: the links people paste', () => {
     expect(result.error).toBe('Could not open that TikTok share link. Paste the full post link instead.')
   })
 
-  it('explains a share link that cannot be reached', async () => {
+  it('does not call a share link invalid when it cannot be reached', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
-    const result = await verifier.verify('testuser', 'https://vm.tiktok.com/ZMabc123/', npub)
-    expect(result.error).toBe('Could not open that TikTok share link. Paste the full post link instead.')
+    await expect(verifier.verify('testuser', 'https://vm.tiktok.com/ZMabc123/', npub)).rejects.toThrow("couldn't be reached")
   })
 
   it('only follows share links on TikTok\'s own share hosts', async () => {

@@ -1,6 +1,6 @@
 // ABOUTME: GitHub proof-post verifier: reads the gist and checks it for the
 // ABOUTME: claimant's npub, via the JSON API when credentialed and the CDN otherwise.
-import type { PlatformVerifier } from './base'
+import { fetchFromPlatform, isUnanswered, throwIfUnanswered, type PlatformVerifier } from './base'
 
 // Unauthenticated api.github.com allows 60 calls/hour per IP, and a Worker's
 // egress addresses are shared across the whole Cloudflare edge — so that budget
@@ -11,10 +11,13 @@ import type { PlatformVerifier } from './base'
 const RAW_HOST = 'https://gist.githubusercontent.com'
 const API_HOST = 'https://api.github.com'
 
-// Statuses meaning "the API would not answer", as distinct from a verdict about
-// the gist. These fall through to the CDN rather than being reported to the
-// user as though their proof had been rejected.
-const API_UNAVAILABLE = new Set([401, 403, 429, 500, 502, 503, 504])
+// The API "would not answer" when the platform didn't answer at all, or when it
+// refused our credential (401, or 403 once the shared rate budget is spent).
+// These fall through to the CDN rather than being reported to the user as
+// though their proof had been rejected.
+function apiUnavailable(status: number): boolean {
+  return isUnanswered(status) || status === 401 || status === 403
+}
 
 export class GitHubVerifier implements PlatformVerifier {
   readonly name = 'github'
@@ -57,7 +60,7 @@ export class GitHubVerifier implements PlatformVerifier {
     if (response.status === 404) {
       return { verified: false, error: 'Gist not found' }
     }
-    if (API_UNAVAILABLE.has(response.status)) {
+    if (apiUnavailable(response.status)) {
       return null
     }
     if (!response.ok) {
@@ -94,17 +97,17 @@ export class GitHubVerifier implements PlatformVerifier {
     // segments are encoded because both are user input.
     const url = `${RAW_HOST}/${encodeURIComponent(identity)}/${encodeURIComponent(proof)}/raw`
 
-    // Deliberately unguarded: a transport failure is an outage, not a verdict
-    // about the proof. Letting it throw keeps the service layer's
-    // "Platform verification unavailable" path, so a network blip is never
-    // cached as though the user's gist had been rejected.
-    const response = await fetch(url, {
+    // A transport failure is an outage, not a verdict about the proof, so it
+    // throws and takes the service layer's "couldn't be checked right now"
+    // path: a network blip is never cached as though the gist had been rejected.
+    const response = await fetchFromPlatform(this.label, url, {
       headers: { 'User-Agent': 'divine-identity-verification-service' },
     })
 
     if (response.status === 404) {
       return { verified: false, error: 'Gist not found for that account — check the owner and the gist ID' }
     }
+    throwIfUnanswered(response, this.label)
     if (!response.ok) {
       return { verified: false, error: `GitHub error: ${response.status}` }
     }

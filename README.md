@@ -10,7 +10,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 - **Two verification methods** — a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A Bluesky login stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
 - **Batch and single verification** — check up to 10 claims in one request, or verify a single claim over JSON or a shareable URL that returns HTML for browsers and JSON for API clients.
 - **NIP-05 verification** — confirm that a NIP-05 identifier resolves to a given pubkey.
-- **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and upstream platform errors for 5 minutes.
+- **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and platform outages for 5 minutes (answered with the code `temporarily_unavailable`, meaning "try again", not a rejection).
 - **Rate limiting** — per-IP (60/min), per-pubkey (20/min), and per-platform (30/min) windows guard the Worker and upstream APIs.
 - **Interactive landing page** — a self-service verification UI served at `/`, with Nostr login (browser signer, login.divine.video, bunker, or Nostr Connect), Quick Connect OAuth, an advanced proof-post flow, a link manager, and a public lookup tool.
 - **Embeddable** — a postMessage NIP-07 bridge lets the flow run inside a trusted Divine iframe using the host's existing signer, so no second login is required.

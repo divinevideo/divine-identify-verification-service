@@ -296,7 +296,7 @@ describe('DiscordVerifier', () => {
       expect(result.error).toContain('alice')
     })
 
-    it('codes an access refusal and an upstream failure apart', async () => {
+    it('codes an access refusal and other API refusals apart', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: false,
         status: 403,
@@ -308,17 +308,20 @@ describe('DiscordVerifier', () => {
 
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: false,
-        status: 500,
+        status: 401,
         json: async () => ({}),
       }))
-      const upstream = await verifier.verify('alice', messageId, npub)
-      expect(upstream.code).toBe('discord_api_error')
-      expect(upstream.error).toContain('500')
+      const refused = await verifier.verify('alice', messageId, npub)
+      expect(refused.code).toBe('discord_api_error')
+      expect(refused.error).toContain('401')
+    })
+
+    it('throws when Discord does not answer, so the service reports it as temporary', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }))
+      await expect(verifier.verify('alice', messageId, npub)).rejects.toThrow('Discord answered 500')
 
       vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
-      expect((await verifier.verify('alice', messageId, npub)).code).toBe(
-        'discord_api_error',
-      )
+      await expect(verifier.verify('alice', messageId, npub)).rejects.toThrow("couldn't be reached")
     })
 
     it('tells someone who copied the channel link what to copy instead', async () => {

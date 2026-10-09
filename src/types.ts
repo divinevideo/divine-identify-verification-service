@@ -68,6 +68,7 @@ export type VerificationCode =
   | 'discord_author_mismatch'
   | 'discord_message_content_unavailable'
   | 'discord_npub_not_in_message'
+  | 'temporarily_unavailable'
 
 export interface VerifyClaim {
   pubkey: string
@@ -81,7 +82,11 @@ export interface VerifyResult {
   identity: string
   verified: boolean
   error?: string
-  /** Stable machine-readable rejection reason; see PlatformVerifier.verify. */
+  /**
+   * Stable machine-readable reason the claim isn't verified; see
+   * PlatformVerifier.verify. `temporarily_unavailable` means it couldn't be
+   * checked right now, not that it was rejected.
+   */
   code?: VerificationCode
   method?: VerificationMethod
   provenance?: VerificationProvenance
@@ -94,7 +99,11 @@ export interface VerifyResult {
 export interface CachedResult {
   verified: boolean
   error?: string
-  /** Stable machine-readable rejection reason; see PlatformVerifier.verify. */
+  /**
+   * Stable machine-readable reason the claim isn't verified; see
+   * PlatformVerifier.verify. `temporarily_unavailable` means it couldn't be
+   * checked right now, not that it was rejected.
+   */
   code?: VerificationCode
   method?: VerificationMethod
   provenance?: VerificationProvenance
