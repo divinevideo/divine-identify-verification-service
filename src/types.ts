@@ -92,6 +92,8 @@ export interface VerifyResult {
   provenance?: VerificationProvenance
   /** The proof to publish instead of the one sent; see PlatformVerifier.verify. */
   canonical_proof?: string
+  /** The account as found on the server that holds it; see PlatformVerifier.verify. */
+  canonical_identity?: string
   checked_at: number
   cached: boolean
 }
@@ -108,6 +110,7 @@ export interface CachedResult {
   method?: VerificationMethod
   provenance?: VerificationProvenance
   canonical_proof?: string
+  canonical_identity?: string
   checked_at: number
   type: 'verified' | 'failed' | 'platform_error'
 }

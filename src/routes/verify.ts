@@ -73,6 +73,7 @@ async function verifySingleClaim(
       method: cached.method,
       provenance: cached.provenance,
       ...(cached.canonical_proof ? { canonical_proof: cached.canonical_proof } : {}),
+      ...(cached.canonical_identity ? { canonical_identity: cached.canonical_identity } : {}),
       checked_at: cached.checked_at,
       cached: true,
     }
@@ -125,6 +126,7 @@ async function verifySingleClaim(
       method: result.method,
       provenance: result.provenance,
       ...(result.canonicalProof ? { canonical_proof: result.canonicalProof } : {}),
+      ...(result.canonicalIdentity ? { canonical_identity: result.canonicalIdentity } : {}),
       checked_at: now,
       type: result.verified ? 'verified' : 'failed',
     }
@@ -139,6 +141,7 @@ async function verifySingleClaim(
       method: result.method,
       provenance: result.provenance,
       ...(result.canonicalProof ? { canonical_proof: result.canonicalProof } : {}),
+      ...(result.canonicalIdentity ? { canonical_identity: result.canonicalIdentity } : {}),
       checked_at: now,
       cached: false,
     }
