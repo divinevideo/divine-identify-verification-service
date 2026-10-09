@@ -35,6 +35,17 @@ async function storedState(env: Bindings, res: Response) {
   return JSON.parse((await env.CACHE_KV.get(oauthStateKey(stateId))) as string)
 }
 
+// Reports every per-IP rate limit key as already at the limit, so a request
+// that reaches the rate-limit check gets a 429.
+function exhaustedIpRateLimitKV(): KVNamespace {
+  return {
+    get: async (key: string) => (key.startsWith('rl:ip') ? '999' : null),
+    put: async () => {},
+    delete: async () => {},
+    list: async () => ({ keys: [], list_complete: true, caches_used: 0 }),
+  } as unknown as KVNamespace
+}
+
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('GET /auth/:platform/start', () => {
@@ -119,6 +130,14 @@ describe('GET /auth/:platform/start', () => {
     expect(res.status).toBe(503)
     expect(res.headers.get('Set-Cookie')).toBeNull()
   })
+
+  it('redirects to the finishing host before checking the IP rate limit', async () => {
+    const env = twitterEnv({ RATE_LIMIT_KV: exhaustedIpRateLimitKV() })
+    const query = `pubkey=${PUBKEY}`
+    const res = await app.request(`https://verifyer.divine.video/auth/twitter/start?${query}`, {}, env)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toBe(`${BASE}/auth/twitter/start?${query}`)
+  })
 })
 
 describe('GET /auth/twitter/callback', () => {
@@ -161,6 +180,29 @@ describe('GET /auth/twitter/callback', () => {
     expect(logged).not.toContain(value)
     expect(logged).not.toContain('jack')
   })
+
+  it('does not log when a callback fails without throwing (unknown state)', async () => {
+    const env = twitterEnv()
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const res = await app.request(`${BASE}/auth/twitter/callback?code=c&state=unknown-state`, {}, env)
+    expect(res.status).toBe(302)
+    expect(new URL(res.headers.get('Location') as string, BASE).searchParams.get('oauth_error')).toBe('Verification failed')
+    expect(info).not.toHaveBeenCalled()
+  })
+
+  it('does not log when a callback fails without throwing (token exchange answers non-200)', async () => {
+    const env = twitterEnv()
+    const start = await app.request(`${BASE}/auth/twitter/start?pubkey=${PUBKEY}`, {}, env)
+    const value = (start.headers.get('Set-Cookie') as string).split(';')[0].split('=')[1]
+    const stateId = new URL(start.headers.get('Location') as string).searchParams.get('state') as string
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(null, { status: 500 })))
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const res = await app.request(`${BASE}/auth/twitter/callback?code=c&state=${stateId}`,
+      { headers: { Cookie: `__Host-signin_binding=${value}` } }, env)
+    expect(res.status).toBe(302)
+    expect(new URL(res.headers.get('Location') as string, BASE).searchParams.get('oauth_error')).toBe('Verification failed')
+    expect(info).not.toHaveBeenCalled()
+  })
 })
 
 describe('a callback that throws still clears the binding cookie, on every platform', () => {
@@ -196,11 +238,14 @@ describe('a callback that throws still clears the binding cookie, on every platf
 
 describe('a sign-in the provider did not complete', () => {
   it.each(['twitter', 'youtube', 'tiktok', 'bluesky'])('%s: clears the binding cookie and records nothing', async (platform) => {
-    const env = twitterEnv()
+    const put = vi.fn(async (_key: string, _value: string) => {})
+    const cache = { get: async () => null, put, delete: async () => {}, list: async () => ({ keys: [], list_complete: true, caches_used: 0 }) } as unknown as KVNamespace
+    const env = twitterEnv({ CACHE_KV: cache })
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const res = await app.request(`${BASE}/auth/${platform}/callback?error=access_denied&state=missing`, {}, env)
     expect(res.status).toBe(302)
     expect(res.headers.get('Set-Cookie')).toContain('__Host-signin_binding=; Max-Age=0')
+    expect(put.mock.calls.some(([key]) => String(key).startsWith('oauth_verified:'))).toBe(false)
   })
 })
 

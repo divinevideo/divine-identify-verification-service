@@ -196,6 +196,60 @@ describe('startBlueskyOAuth - DPoP nonce retry', () => {
     expect(body.detail).toBe('invalid_client')
   })
 
+  it('logs only the sanitized error code and status when PAR fails with a JSON body, not the rest of it', async () => {
+    const discovery = mockDiscoveryChain()
+    const parBody = JSON.stringify({ error: 'invalid_request', error_description: 'login_hint alice.bsky.social was bad' })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(discovery[0])
+      .mockResolvedValueOnce(discovery[1])
+      .mockResolvedValueOnce(discovery[2])
+      .mockResolvedValueOnce(discovery[3])
+      .mockResolvedValueOnce(parFailed(400, parBody))
+
+    vi.stubGlobal('fetch', fetchMock)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const env = makeEnv()
+    const resp = await startBlueskyOAuth(
+      env,
+      'alice.bsky.social',
+      'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
+      'https://verifier.divine.video/',
+      BINDING_HASH,
+    )
+
+    expect(resp.status).toBe(502)
+    expect(errorSpy).toHaveBeenCalledWith('Bluesky PAR failed:', 400, 'invalid_request')
+    const logged = JSON.stringify(errorSpy.mock.calls)
+    expect(logged).not.toContain('login_hint')
+    expect(logged).not.toContain('alice.bsky.social')
+  })
+
+  it('logs \'other\' when PAR fails with a body that is not JSON', async () => {
+    const discovery = mockDiscoveryChain()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(discovery[0])
+      .mockResolvedValueOnce(discovery[1])
+      .mockResolvedValueOnce(discovery[2])
+      .mockResolvedValueOnce(discovery[3])
+      .mockResolvedValueOnce(parFailed(500, 'not json at all'))
+
+    vi.stubGlobal('fetch', fetchMock)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const env = makeEnv()
+    const resp = await startBlueskyOAuth(
+      env,
+      'alice.bsky.social',
+      'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
+      'https://verifier.divine.video/',
+      BINDING_HASH,
+    )
+
+    expect(resp.status).toBe(502)
+    expect(errorSpy).toHaveBeenCalledWith('Bluesky PAR failed:', 500, 'other')
+  })
+
   it('returns error when retry with nonce also fails', async () => {
     const discovery = mockDiscoveryChain()
     const fetchMock = vi.fn()

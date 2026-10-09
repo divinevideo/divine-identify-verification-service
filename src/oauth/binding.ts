@@ -1,5 +1,5 @@
 // ABOUTME: Ties a sign-in to the browser that started it: a short-lived cookie
-// ABOUTME: set at start, checked when the sign-in finishes. Spec: PR description.
+// ABOUTME: set at start, checked when the sign-in finishes. See #113.
 import type { OAuthState } from '../types'
 
 export const BINDING_COOKIE = '__Host-signin_binding'

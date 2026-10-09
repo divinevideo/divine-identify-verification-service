@@ -185,7 +185,15 @@ export async function startBlueskyOAuth(
   if (!parResp.ok) {
     let detail = ''
     try { detail = await parResp.text() } catch {}
-    console.error('Bluesky PAR failed:', parResp.status, detail)
+    // Log only the authorization server's error code, not its full response
+    // body, the way a provider's sign-in error code is logged in
+    // src/routes/auth.ts.
+    let errorCode = 'other'
+    try {
+      const parsed = JSON.parse(detail) as { error?: unknown }
+      if (typeof parsed.error === 'string' && /^[a-z_]{1,64}$/.test(parsed.error)) errorCode = parsed.error
+    } catch {}
+    console.error('Bluesky PAR failed:', parResp.status, errorCode)
     return new Response(JSON.stringify({ error: 'Bluesky authorization request failed', status: parResp.status, detail }), {
       status: 502,
       headers: { 'Content-Type': 'application/json' },

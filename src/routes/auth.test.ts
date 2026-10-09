@@ -530,9 +530,10 @@ describe('GET /auth/:platform/start return address', () => {
       TWITTER_CLIENT_SECRET: 'test-client-secret',
       OAUTH_REDIRECT_BASE: 'http://localhost:8787',
     }
-    // Absolute, and matching OAUTH_REDIRECT_BASE: a bare relative path would
-    // default to http://localhost with no port, which now gets redirected to
-    // the finishing host instead of starting the sign-in directly.
+    // Absolute, and matching OAUTH_REDIRECT_BASE exactly: a bare relative
+    // path would default to http://localhost with no port, which would also
+    // start directly, but only because localhost is exempt from the
+    // finishing-host redirect, not because it's already on that exact host.
     const res = await app.request(`http://localhost:8787/auth/twitter/start?pubkey=${'a'.repeat(64)}&return_url=${encodeURIComponent('http://localhost:5173/?signin=abc#verify-here')}`, {}, env)
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toMatch(/^https:\/\/twitter\.com\/i\/oauth2\/authorize\?/)
@@ -547,9 +548,10 @@ describe('GET /auth/tiktok/start', () => {
     OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
   }
 
-  // Absolute, and matching OAUTH_REDIRECT_BASE: a bare relative path would
-  // default to http://localhost, which now gets redirected to the finishing
-  // host instead of starting the sign-in directly.
+  // Absolute, and matching OAUTH_REDIRECT_BASE exactly: a bare relative path
+  // would default to http://localhost, which is exempt from the
+  // finishing-host redirect but is not this test's production host, so this
+  // keeps the test on the host it means to exercise.
   function startUrl(): string {
     return `https://verifier.divine.video/auth/tiktok/start?pubkey=${pubkey}&return_url=https://verifier.divine.video/`
   }
