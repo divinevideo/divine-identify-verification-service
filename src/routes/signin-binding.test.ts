@@ -59,25 +59,36 @@ describe('GET /auth/:platform/start', () => {
     expect(res.headers.get('Set-Cookie')).toBeNull()
   })
 
-  it.each([
-    {
-      label: 'different scheme, same hostname',
-      oauthRedirectBase: 'https://verifier.divine.video',
-      requestUrl: `http://verifier.divine.video/auth/twitter/start?pubkey=${PUBKEY}`,
-      location: `https://verifier.divine.video/auth/twitter/start?pubkey=${PUBKEY}`,
-    },
-    {
-      label: 'different port, same hostname',
-      oauthRedirectBase: 'http://localhost:8787',
-      requestUrl: `http://localhost:8788/auth/twitter/start?pubkey=${PUBKEY}`,
-      location: `http://localhost:8787/auth/twitter/start?pubkey=${PUBKEY}`,
-    },
-  ])('sends a start on the same hostname but a different origin ($label) to the finishing origin, unchanged, with no cookie', async ({ oauthRedirectBase, requestUrl, location }) => {
-    const env = twitterEnv({ OAUTH_REDIRECT_BASE: oauthRedirectBase })
-    const res = await app.request(requestUrl, {}, env)
+  it('starts directly, with no redirect, when the request reaches the same host as the finishing base over a different scheme', async () => {
+    const env = twitterEnv({ OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' })
+    const res = await app.request(`http://verifier.divine.video/auth/twitter/start?pubkey=${PUBKEY}`, {}, env)
     expect(res.status).toBe(302)
-    expect(res.headers.get('Location')).toBe(location)
+    expect(res.headers.get('Location')).toMatch(/^https:\/\/twitter\.com\/i\/oauth2\/authorize\?/)
+    expect(res.headers.get('Set-Cookie')).toMatch(/^__Host-signin_binding=/)
+  })
+
+  it('sends a start on the same hostname but a different port to the finishing origin, unchanged, with no cookie', async () => {
+    const env = twitterEnv({ OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' })
+    const res = await app.request(`https://verifier.divine.video:8443/auth/twitter/start?pubkey=${PUBKEY}`, {}, env)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toBe(`https://verifier.divine.video/auth/twitter/start?pubkey=${PUBKEY}`)
     expect(res.headers.get('Set-Cookie')).toBeNull()
+  })
+
+  it('starts directly over a public tunnel, with no redirect, when the request itself reaches the worker on localhost', async () => {
+    const env = twitterEnv({ OAUTH_REDIRECT_BASE: 'https://abc.trycloudflare.com' })
+    const res = await app.request(`http://localhost:8787/auth/twitter/start?pubkey=${PUBKEY}&return_url=${encodeURIComponent('http://localhost:5173/?signin=abc#verify-here')}`, {}, env)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toMatch(/^https:\/\/twitter\.com\/i\/oauth2\/authorize\?/)
+    expect(res.headers.get('Set-Cookie')).toMatch(/^__Host-signin_binding=/)
+  })
+
+  it('starts directly, with no redirect, when the request reaches the tunnel host itself over a different scheme', async () => {
+    const env = twitterEnv({ OAUTH_REDIRECT_BASE: 'https://abc.trycloudflare.com' })
+    const res = await app.request(`http://abc.trycloudflare.com/auth/twitter/start?pubkey=${PUBKEY}`, {}, env)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toMatch(/^https:\/\/twitter\.com\/i\/oauth2\/authorize\?/)
+    expect(res.headers.get('Set-Cookie')).toMatch(/^__Host-signin_binding=/)
   })
 
   it('accepts a return address on the other verifier host after that redirect', async () => {

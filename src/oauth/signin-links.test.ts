@@ -305,6 +305,43 @@ describe('finishing a Bluesky sign-in', () => {
     expect(JSON.parse(store.get(oauthVerificationKey('bluesky', HANDLE, PUBKEY)) ?? '{}').bound).toBe(false)
     expect(JSON.parse(store.get(oauthVerificationKey('bluesky', DID, PUBKEY)) ?? '{}').bound).toBe(false)
   })
+
+  it('records the sign-in as bound after a DPoP nonce retry on the token exchange', async () => {
+    const { env, store } = createEnv()
+    const { publicJwk, privateJwk } = await generateDPoPKeyPair()
+    const { value, hash } = await createBinding()
+    store.set('oauth_state:s1', JSON.stringify({
+      platform: 'bluesky', pubkey: PUBKEY, codeVerifier: 'v', returnUrl: 'https://verifier.divine.video/', createdAt: Date.now(),
+      dpopPrivateJwk: privateJwk, dpopPublicJwk: publicJwk, issuer: 'https://bsky.social', tokenEndpoint: 'https://bsky.social/oauth/token',
+      did: DID, handle: HANDLE, bindingHash: hash,
+    }))
+    let tokenCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === 'https://bsky.social/oauth/token') {
+        tokenCalls++
+        // First call: the auth server demands a DPoP nonce. Second call (the
+        // retry, with the nonce included): succeeds.
+        if (tokenCalls === 1) {
+          return new Response(JSON.stringify({ error: 'use_dpop_nonce' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', 'DPoP-Nonce': 'server-nonce' },
+          })
+        }
+        return json({ sub: DID, access_token: 'token' })
+      }
+      if (url === `https://plc.directory/${DID}`) {
+        return json({ alsoKnownAs: [`at://${HANDLE}`], service: [{ id: '#atproto_pds', serviceEndpoint: 'https://pds.example.com' }] })
+      }
+      if (url === 'https://pds.example.com/.well-known/oauth-protected-resource') return json({ authorization_servers: ['https://bsky.social'] })
+      return json({ uri: 'at://x/y/z' })
+    }))
+    const result = await handleBlueskyCallback(env, 'code', 's1', 'https://bsky.social', value)
+    expect(tokenCalls).toBe(2)
+    expect(result.bound).toBe(true)
+    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', HANDLE, PUBKEY)) ?? '{}').bound).toBe(true)
+    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', DID, PUBKEY)) ?? '{}').bound).toBe(true)
+  })
 })
 
 // A sign-in that started as `startedAs` (the account the person entered) and

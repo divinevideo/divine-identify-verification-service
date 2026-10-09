@@ -217,12 +217,17 @@ function withBindingCookie(response: Response, value: string): Response {
 // GET /auth/:platform/start?pubkey=hex&return_url=https://...&handle=user.bsky.social (handle required for bluesky)
 auth.get('/:platform/start', async (c) => {
   // The provider always returns to OAUTH_REDIRECT_BASE, and the binding
-  // cookie only comes back to the host that set it, so start there.
+  // cookie only comes back to the host that set it, so start there. Compare
+  // host only, not scheme: a request can reach this worker over a different
+  // scheme than the public base (a tunnel in local development, or a proxy
+  // in front of it). A request that already reached the worker on localhost
+  // is treated as local development and never redirected, since the live
+  // verifier is never reached that way.
   const base = c.env.OAUTH_REDIRECT_BASE
   if (base) {
     const here = new URL(c.req.url)
     const finishing = new URL(base)
-    if (here.origin !== finishing.origin) {
+    if (here.host !== finishing.host && !isLocalHostname(here.hostname)) {
       return c.redirect(`${finishing.origin}${here.pathname}${here.search}`, 302)
     }
   }

@@ -68,7 +68,7 @@ Configuration lives in `wrangler.toml`.
 - `TWITTER_CLIENT_ID`, `TWITTER_CLIENT_SECRET` — Twitter/X OAuth 2.0 credentials. Twitter sign-in is offered only when both are set along with `OAUTH_REDIRECT_BASE`; Twitter proof posts work without them.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — Google OAuth 2.0 credentials, used for YouTube login.
 - `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` — TikTok Login Kit credentials.
-- `OAUTH_REDIRECT_BASE` — base URL for OAuth callbacks (for example `https://verifier.divine.video`), also used to validate return URLs against open redirects.
+- `OAUTH_REDIRECT_BASE` — base URL for OAuth callbacks (for example `https://verifier.divine.video`), also used to validate return URLs against open redirects. `/auth/:platform/start` first redirects a request that reaches a different host than this one to this address, except when the request itself reached the worker on localhost.
 
 See `PRD.md` for the full API contract and request/response shapes.
 
