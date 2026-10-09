@@ -4,6 +4,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { Hono } from 'hono'
 import type { Bindings } from '../types'
 import auth from './auth'
+import worker from '../index'
 import { oauthStateKey } from '../oauth/state'
 import { createBinding } from '../oauth/binding'
 import { generateDPoPKeyPair } from '../oauth/crypto'
@@ -236,5 +237,51 @@ describe('a sign-in the provider did not complete', () => {
     const res = await app.request(`${BASE}/auth/${platform}/callback?error=access_denied&state=missing`, {}, env)
     expect(res.status).toBe(302)
     expect(res.headers.get('Set-Cookie')).toContain('__Host-signin_binding=; Max-Age=0')
+  })
+})
+
+describe('which sign-in records count', () => {
+  async function seed(env: Bindings, bound: boolean | undefined) {
+    const rec: Record<string, unknown> = { platform: 'twitter', identity: 'jack', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1 }
+    if (bound !== undefined) rec.bound = bound
+    await env.CACHE_KV.put(`oauth_verified:twitter:jack:${PUBKEY}`, JSON.stringify(rec))
+  }
+  async function single(env: Bindings) {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+    const res = await worker.fetch(new Request(`${BASE}/verify/single`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY }) }), env)
+    return res.json() as Promise<{ verified: boolean; method?: string }>
+  }
+  async function batch(env: Bindings) {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+    const res = await worker.fetch(new Request(`${BASE}/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ claims: [{ platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY }] }) }), env)
+    return res.json() as Promise<{ results: Array<{ verified: boolean; method?: string }> }>
+  }
+  async function status(env: Bindings) {
+    const res = await app.request(`${BASE}/auth/twitter/status?pubkey=${PUBKEY}&identity=jack`, {}, env)
+    return res.json() as Promise<{ verified: boolean }>
+  }
+
+  it.each([[true], [false], [undefined]])('observe: a record (bound=%s) counts', async (bound) => {
+    const env = twitterEnv(); await seed(env, bound)
+    expect((await single(env)).verified).toBe(true)
+    expect((await status(env)).verified).toBe(true)
+  })
+
+  it('enforce: a bound record counts', async () => {
+    const env = twitterEnv({ SIGNIN_BINDING: 'enforce' }); await seed(env, true)
+    expect((await single(env)).verified).toBe(true)
+    expect((await status(env)).verified).toBe(true)
+  })
+
+  it.each([[false], [undefined]])('enforce: a record (bound=%s) no longer counts, including one from before this change', async (bound) => {
+    const env = twitterEnv({ SIGNIN_BINDING: 'enforce' }); await seed(env, bound)
+    expect((await single(env)).method).not.toBe('oauth')
+    expect((await status(env)).verified).toBe(false)
+  })
+
+  it('enforce: an unbound record no longer counts in the batch endpoint', async () => {
+    const env = twitterEnv({ SIGNIN_BINDING: 'enforce' }); await seed(env, false)
+    const { results } = await batch(env)
+    expect(results[0].method).not.toBe('oauth')
   })
 })
