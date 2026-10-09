@@ -92,7 +92,7 @@ export interface VerifyResult {
   provenance?: VerificationProvenance
   /** The proof to publish instead of the one sent; see PlatformVerifier.verify. */
   canonical_proof?: string
-  /** The account as found on the server that holds it; see PlatformVerifier.verify. */
+  /** The account as claimed, named on the server that holds it; see PlatformVerifier.verify. */
   canonical_identity?: string
   checked_at: number
   cached: boolean

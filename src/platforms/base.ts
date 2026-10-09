@@ -85,9 +85,9 @@ export interface PlatformVerifier {
      */
     canonicalProof?: string
     /**
-     * The account as found on the server that holds it, when that differs from
-     * the identity given (a Mastodon server whose handles use another domain
-     * from its website). Only set on success.
+     * The account as claimed, named on the server that holds it, when that
+     * server differs from the one in the identity given (a Mastodon server
+     * whose handles use another domain from its website). Only set on success.
      */
     canonicalIdentity?: string
   }>

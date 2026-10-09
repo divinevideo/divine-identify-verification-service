@@ -413,6 +413,25 @@ describe('MastodonVerifier on servers whose handles use another domain', () => {
     expect(lookup?.[1]).toMatchObject({ redirect: 'manual' })
   })
 
+  it.each([
+    ['redirects', 302],
+    ['answers not found', 404],
+  ])('treats the post as not found when the web domain\'s lookup %s, whatever its body says', async (_label, status) => {
+    const body = JSON.stringify({
+      subject: 'acct:alice@example.com',
+      links: [{ rel: 'self', type: 'application/activity+json', href: 'https://social.example.com/users/alice' }],
+    })
+    const asked = serve({
+      ...SPLIT,
+      'https://social.example.com/.well-known/webfinger': () => new Response(body, {
+        status,
+        headers: { 'Content-Type': 'application/jrd+json', Location: 'https://social.example.com/elsewhere' },
+      }),
+    })
+    expect(await verifier.verify('example.com/@alice', ID, npub)).toEqual({ verified: false, error: 'Mastodon status not found' })
+    expect(asked.some(u => u.startsWith('https://social.example.com/api/'))).toBe(false)
+  })
+
   it('treats the post as not found when the web domain names a different account on itself', async () => {
     const asked = serve({
       ...SPLIT,
