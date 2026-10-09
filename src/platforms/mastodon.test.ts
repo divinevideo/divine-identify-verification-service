@@ -322,6 +322,14 @@ describe('MastodonVerifier on servers whose handles use another domain', () => {
     expect(asked).toHaveLength(2)
   })
 
+  it('stops after one lookup when the claim spells the server in capitals', async () => {
+    const asked = serve({
+      'https://Mastodon.social/.well-known/webfinger': webfinger('acct:alice@mastodon.social', self('https://mastodon.social/users/alice')),
+    })
+    expect(await verifier.verify('Mastodon.social/@alice', ID, npub)).toEqual({ verified: false, error: 'Mastodon status not found' })
+    expect(asked).toHaveLength(2)
+  })
+
   it('follows the handle domain redirecting its lookup to the web domain', async () => {
     serve({
       ...SPLIT,
@@ -343,8 +351,19 @@ describe('MastodonVerifier on servers whose handles use another domain', () => {
     expect(await verifier.verify('Example.com/@Alice', ID, npub)).toEqual({ verified: true, canonicalIdentity: 'social.example.com/@Alice' })
   })
 
+  it('verifies when both answers spell the ActivityPub link type as JSON-LD', async () => {
+    const JSON_LD = 'application/ld+json; profile="https://www.w3.org/ns/activitystreams"'
+    serve({
+      ...SPLIT,
+      'https://example.com/.well-known/webfinger': webfinger('acct:alice@example.com', self('https://social.example.com/users/alice', JSON_LD)),
+      'https://social.example.com/.well-known/webfinger': webfinger('acct:alice@example.com', self('https://social.example.com/users/alice', JSON_LD)),
+    })
+    expect(await verifier.verify('example.com/@alice', ID, npub)).toEqual({ verified: true, canonicalIdentity: 'social.example.com/@alice' })
+  })
+
   it.each([
     ['names a different account', webfinger('acct:bob@example.com', self('https://social.example.com/users/bob'))],
+    ['names an account whose name only ends with the claimed one', webfinger('acct:xalice@example.com', self('https://social.example.com/users/alice'))],
     ['has no subject', webfinger(undefined, self('https://social.example.com/users/alice'))],
     ['has no links', webfinger('acct:alice@example.com', undefined)],
     ['has links that are not a list', webfinger('acct:alice@example.com', { rel: 'self' })],
@@ -378,6 +397,31 @@ describe('MastodonVerifier on servers whose handles use another domain', () => {
     expect(asked.some(u => u.startsWith('https://social.example.com/api/'))).toBe(false)
   })
 
+  it('treats the post as not found when the web domain\'s lookup redirects elsewhere', async () => {
+    const asked = serve({
+      ...SPLIT,
+      'https://social.example.com/.well-known/webfinger': () => new Response(null, {
+        status: 302,
+        headers: { Location: 'https://other.example.net/.well-known/webfinger?resource=acct%3Aalice%40example.com' },
+      }),
+      'https://other.example.net/.well-known/webfinger': webfinger('acct:alice@example.com', self('https://social.example.com/users/alice')),
+    })
+    expect(await verifier.verify('example.com/@alice', ID, npub)).toEqual({ verified: false, error: 'Mastodon status not found' })
+    expect(asked.some(u => u.startsWith('https://other.example.net/'))).toBe(false)
+    expect(asked.some(u => u.startsWith('https://social.example.com/api/'))).toBe(false)
+    const lookup = vi.mocked(fetch).mock.calls.find(([url]) => String(url).startsWith('https://social.example.com/.well-known/'))
+    expect(lookup?.[1]).toMatchObject({ redirect: 'manual' })
+  })
+
+  it('treats the post as not found when the web domain names a different account on itself', async () => {
+    const asked = serve({
+      ...SPLIT,
+      'https://social.example.com/.well-known/webfinger': webfinger('acct:alice@example.com', self('https://social.example.com/users/bob')),
+    })
+    expect(await verifier.verify('example.com/@alice', ID, npub)).toEqual({ verified: false, error: 'Mastodon status not found' })
+    expect(asked.some(u => u.startsWith('https://social.example.com/api/'))).toBe(false)
+  })
+
   it.each([
     ['the handle domain\'s lookup', 'https://example.com/.well-known/webfinger'],
     ['the web domain\'s lookup', 'https://social.example.com/.well-known/webfinger'],
@@ -391,6 +435,24 @@ describe('MastodonVerifier on servers whose handles use another domain', () => {
       if (url.startsWith('https://example.com/api/')) return new Response('not found', { status: 404 })
       throw new TypeError('network down')
     }))
+    await expect(verifier.verify('example.com/@alice', ID, npub)).rejects.toBeInstanceOf(PlatformUnavailableError)
+  })
+
+  it('reports "couldn\'t check" when the web domain\'s lookup cannot reach the server', async () => {
+    const asked = serve({
+      ...SPLIT,
+      'https://social.example.com/.well-known/webfinger': () => { throw new TypeError('network down') },
+    })
+    await expect(verifier.verify('example.com/@alice', ID, npub)).rejects.toBeInstanceOf(PlatformUnavailableError)
+    expect(asked).toEqual([
+      `https://example.com/api/v1/statuses/${ID}`,
+      'https://example.com/.well-known/webfinger?resource=acct%3Aalice%40example.com',
+      'https://social.example.com/.well-known/webfinger?resource=acct%3Aalice%40example.com',
+    ])
+  })
+
+  it('reports "couldn\'t check" when the web domain fails on its side while fetching the post', async () => {
+    serve({ ...SPLIT, 'https://social.example.com/api/v1/statuses/': () => new Response('down', { status: 503 }) })
     await expect(verifier.verify('example.com/@alice', ID, npub)).rejects.toBeInstanceOf(PlatformUnavailableError)
   })
 

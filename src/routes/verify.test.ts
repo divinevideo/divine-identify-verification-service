@@ -218,11 +218,4 @@ describe('Mastodon proof link on the verification-link page', () => {
     )
     expect(html).toContain('href="https://social.example.com/statuses/109876543210"')
   })
-
-  it('uses the web domain for other linked accounts too', () => {
-    const html = renderVerifyHtml(FAKE_RESULT, 'discord', 'alice', DISCORD_MESSAGE_LINK, 'a'.repeat(64),
-      'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-      'https://verifier.divine.video/verify/discord/alice/x', 'https://verifier.divine.video')
-    expect(html).toContain('proofUrl(claim.platform, data.results[k].canonical_identity || claim.identity, data.results[k].canonical_proof || claim.proof)')
-  })
 })

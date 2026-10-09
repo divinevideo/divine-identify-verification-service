@@ -322,7 +322,9 @@ describe('TikTok in the API docs', () => {
     expect(html).toContain("proofInput.placeholder = 'Post link, share link, or post number';")
     expect(html).toContain("helper.textContent = 'Paste a TikTok video or photo link, a share link, or the post number.';")
   })
+})
 
+describe('response fields in the API docs', () => {
   it('documents canonical_proof in the response fields', async () => {
     const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
     expect(html).toContain('<tr><td><code>canonical_proof</code></td><td>string?</td>')
