@@ -1,5 +1,5 @@
-// ABOUTME: Sign-ins count only when finished in the browser that started them:
-// ABOUTME: the cookie set at /start, the check at the callback, and the modes.
+// ABOUTME: Sign-ins can be tied to the browser that started them: the cookie
+// ABOUTME: set at /start, and the bound check made at the callback.
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { Hono } from 'hono'
 import type { Bindings } from '../types'
@@ -123,7 +123,7 @@ describe('GET /auth/twitter/callback', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     const res = await app.request(`${BASE}/auth/twitter/callback?code=c&state=${stateId}`,
       { headers: cookie === undefined ? {} : { Cookie: `__Host-signin_binding=${cookie}` } }, env)
-    return { res, providerCalls, info, record: await env.CACHE_KV.get(`oauth_verified:twitter:jack:${PUBKEY}`) }
+    return { res, providerCalls, info, record: await env.CACHE_KV.get(`oauth_verified:twitter:jack:${PUBKEY}`), stateId, value }
   }
 
   it('records a sign-in finished in the same browser as bound, and clears the cookie', async () => {
@@ -135,67 +135,20 @@ describe('GET /auth/twitter/callback', () => {
   })
 
   it.each([['no cookie', () => undefined], ['another browser\'s cookie', () => 'x'.repeat(43)]])(
-    'observe: %s still links, recorded as unbound', async (_label, send) => {
+    '%s still links, recorded as unbound', async (_label, send) => {
       const { res, record, info } = await startThenFinish(twitterEnv(), send)
       expect(new URL(res.headers.get('Location') as string).searchParams.get('oauth_verified')).toBe('true')
       expect(JSON.parse(record as string).bound).toBe(false)
       expect(info).toHaveBeenCalledWith('twitter sign-in finished: unbound')
     })
 
-  it.each([['no cookie', () => undefined], ['another browser\'s cookie', () => 'x'.repeat(43)]])(
-    'enforce: %s is refused before the code is exchanged, and nothing is recorded', async (_label, send) => {
-      const { res, record, providerCalls, info } = await startThenFinish(twitterEnv({ SIGNIN_BINDING: 'enforce' }), send)
-      const location = new URL(res.headers.get('Location') as string)
-      expect(location.origin + location.pathname + location.hash).toBe(`${BASE}/#verify-here`)
-      expect(location.searchParams.get('oauth_error')).toBe('could not be confirmed in this browser at Twitter')
-      expect(location.searchParams.has('oauth_verified')).toBe(false)
-      expect(providerCalls).not.toHaveBeenCalled()
-      expect(record).toBeNull()
-      expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0')
-      expect(info).toHaveBeenCalledWith('twitter sign-in finished: refused')
-    })
-
-  it('enforce: a sign-in started before this change (no stored hash) is refused', async () => {
-    const env = twitterEnv({ SIGNIN_BINDING: 'enforce' })
-    await env.CACHE_KV.put(oauthStateKey('old'), JSON.stringify({ platform: 'twitter', pubkey: PUBKEY, codeVerifier: 'v', returnUrl: `${BASE}/`, createdAt: Date.now() }))
-    vi.stubGlobal('fetch', vi.fn())
-    vi.spyOn(console, 'info').mockImplementation(() => {})
-    const res = await app.request(`${BASE}/auth/twitter/callback?code=c&state=old`, { headers: { Cookie: '__Host-signin_binding=anything' } }, env)
-    expect(new URL(res.headers.get('Location') as string).searchParams.get('oauth_error')).toBe('could not be confirmed in this browser at Twitter')
-  })
-
-  it('a second sign-in started in the same browser replaces the first one\'s binding', async () => {
-    const env = twitterEnv({ SIGNIN_BINDING: 'enforce' })
-    const first = await app.request(`${BASE}/auth/twitter/start?pubkey=${PUBKEY}`, {}, env)
-    const second = await app.request(`${BASE}/auth/twitter/start?pubkey=${PUBKEY}`, {}, env)
-    const firstState = new URL(first.headers.get('Location') as string).searchParams.get('state') as string
-    const secondValue = (second.headers.get('Set-Cookie') as string).split(';')[0].split('=')[1]
-    vi.stubGlobal('fetch', vi.fn())
-    vi.spyOn(console, 'info').mockImplementation(() => {})
-    const res = await app.request(`${BASE}/auth/twitter/callback?code=c&state=${firstState}`, { headers: { Cookie: `__Host-signin_binding=${secondValue}` } }, env)
-    expect(new URL(res.headers.get('Location') as string, BASE).searchParams.get('oauth_error')).toBe('could not be confirmed in this browser at Twitter')
-  })
-
   it('logs no pubkey, state, cookie or identity', async () => {
-    const { info } = await startThenFinish(twitterEnv(), v => v)
+    const { info, stateId, value } = await startThenFinish(twitterEnv(), v => v)
     const logged = JSON.stringify(info.mock.calls)
     expect(logged).not.toContain(PUBKEY)
+    expect(logged).not.toContain(stateId)
+    expect(logged).not.toContain(value)
     expect(logged).not.toContain('jack')
-  })
-})
-
-describe('enforce refuses before any provider call, on every platform', () => {
-  it.each(['youtube', 'tiktok', 'bluesky'] as const)('%s', async (platform) => {
-    const env = { ...twitterEnv({ SIGNIN_BINDING: 'enforce' }) }
-    await env.CACHE_KV.put(oauthStateKey('s'), JSON.stringify({ platform, pubkey: PUBKEY, codeVerifier: 'v', returnUrl: `${BASE}/`, createdAt: Date.now(), bindingHash: 'f'.repeat(64), issuer: 'https://bsky.social' }))
-    const providerCalls = vi.fn()
-    vi.stubGlobal('fetch', providerCalls)
-    vi.spyOn(console, 'info').mockImplementation(() => {})
-    const extra = platform === 'bluesky' ? '&iss=https%3A%2F%2Fbsky.social' : ''
-    const res = await app.request(`${BASE}/auth/${platform}/callback?code=c&state=s${extra}`, { headers: { Cookie: '__Host-signin_binding=wrong' } }, env)
-    const labels = { youtube: 'YouTube', tiktok: 'TikTok', bluesky: 'Bluesky' }
-    expect(new URL(res.headers.get('Location') as string).searchParams.get('oauth_error')).toBe(`could not be confirmed in this browser at ${labels[platform]}`)
-    expect(providerCalls).not.toHaveBeenCalled()
   })
 })
 
@@ -218,8 +171,8 @@ describe('a callback that throws still clears the binding cookie, on every platf
       })
     }
     await env.CACHE_KV.put(oauthStateKey('throws'), JSON.stringify(state))
-    // The binding check passes (observe mode, matching cookie); the thrown
-    // error comes from the provider call that follows it.
+    // The binding check passes (matching cookie); the thrown error comes
+    // from the provider call that follows it.
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
     vi.spyOn(console, 'info').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -261,27 +214,15 @@ describe('which sign-in records count', () => {
     return res.json() as Promise<{ verified: boolean }>
   }
 
-  it.each([[true], [false], [undefined]])('observe: a record (bound=%s) counts', async (bound) => {
+  it.each([[true], [false], [undefined]])('a record (bound=%s) counts', async (bound) => {
     const env = twitterEnv(); await seed(env, bound)
     expect((await single(env)).verified).toBe(true)
     expect((await status(env)).verified).toBe(true)
   })
 
-  it('enforce: a bound record counts', async () => {
-    const env = twitterEnv({ SIGNIN_BINDING: 'enforce' }); await seed(env, true)
-    expect((await single(env)).verified).toBe(true)
-    expect((await status(env)).verified).toBe(true)
-  })
-
-  it.each([[false], [undefined]])('enforce: a record (bound=%s) no longer counts, including one from before this change', async (bound) => {
-    const env = twitterEnv({ SIGNIN_BINDING: 'enforce' }); await seed(env, bound)
-    expect((await single(env)).method).not.toBe('oauth')
-    expect((await status(env)).verified).toBe(false)
-  })
-
-  it('enforce: an unbound record no longer counts in the batch endpoint', async () => {
-    const env = twitterEnv({ SIGNIN_BINDING: 'enforce' }); await seed(env, false)
+  it('an unbound record counts in the batch endpoint too', async () => {
+    const env = twitterEnv(); await seed(env, false)
     const { results } = await batch(env)
-    expect(results[0].method).not.toBe('oauth')
+    expect(results[0].method).toBe('oauth')
   })
 })

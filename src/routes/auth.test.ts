@@ -595,6 +595,7 @@ describe('GET /auth/twitter/callback return address', () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'tok' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: '1', username: 'jack' } }), { status: 200 })))
+    vi.spyOn(console, 'info').mockImplementation(() => {})
     try {
       const res = await app.request('/auth/twitter/callback?code=abc&state=state-1', {}, env)
       expect(res.status).toBe(302)

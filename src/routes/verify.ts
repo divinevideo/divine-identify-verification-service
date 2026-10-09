@@ -8,7 +8,6 @@ import { getVerifier } from '../platforms/registry'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import { getOAuthVerification } from '../oauth/state'
 import { signInAccountStillMatches } from '../oauth/signin-account'
-import { countsAsSignedIn } from '../oauth/binding'
 
 const verify = new Hono<{ Bindings: Bindings }>()
 
@@ -35,7 +34,7 @@ async function verifySingleClaim(
   // (a failed check, or one made right after an unlink) can't hide it.
   if (normalizedClaim.platform === 'twitter' || normalizedClaim.platform === 'bluesky' || normalizedClaim.platform === 'youtube' || normalizedClaim.platform === 'tiktok') {
     const oauthResult = await getOAuthVerification(env.CACHE_KV, normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.pubkey)
-    if (oauthResult && countsAsSignedIn(env, oauthResult)) {
+    if (oauthResult) {
       if (!(await signInAccountStillMatches(env, oauthResult, normalizedClaim.identity))) {
         return {
           platform: normalizedClaim.platform,

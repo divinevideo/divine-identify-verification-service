@@ -6,7 +6,7 @@ import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/val
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
 import { getOAuthVerification, deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
-import { createBinding, bindingSetCookie, BINDING_COOKIE, BINDING_CLEAR_COOKIE, countsAsSignedIn } from '../oauth/binding'
+import { createBinding, bindingSetCookie, BINDING_COOKIE, BINDING_CLEAR_COOKIE } from '../oauth/binding'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
@@ -286,17 +286,16 @@ const SIGN_IN_LABELS: Record<OAuthPlatform, string> = {
   bluesky: 'Bluesky',
 }
 
-// Every way a sign-in finishes clears the binding cookie. A sign-in that
-// reached the binding check is logged as bound, unbound or refused, with
-// nothing that identifies the person.
+// Every way a sign-in finishes clears the binding cookie. Successful sign-ins
+// are logged as bound or unbound, with nothing that identifies the person.
 function finishSignIn(c: Context<{ Bindings: Bindings }>, platform: OAuthPlatform, result: SignInCallbackResult): Response {
   c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
-  if (result.refused || result.success) {
-    console.info(`${platform} sign-in finished: ${result.refused ? 'refused' : result.bound ? 'bound' : 'unbound'}`)
+  if (result.success) {
+    console.info(`${platform} sign-in finished: ${result.bound ? 'bound' : 'unbound'}`)
   }
   const params: Record<string, string> = result.success
     ? { oauth_verified: 'true', platform, identity: result.identity || '' }
-    : { oauth_error: result.refused ? `could not be confirmed in this browser at ${SIGN_IN_LABELS[platform]}` : 'Verification failed' }
+    : { oauth_error: 'Verification failed' }
   return c.redirect(buildReturnUrl(result.returnUrl, params))
 }
 
@@ -463,7 +462,7 @@ auth.get('/:platform/status', async (c) => {
   const normalizedPubkey = normalizePubkey(pubkey)
   const verification = await getOAuthVerification(c.env.CACHE_KV, platform, identity, normalizedPubkey)
 
-  if (verification && countsAsSignedIn(c.env, verification) && await signInAccountStillMatches(c.env, verification, identity)) {
+  if (verification && await signInAccountStillMatches(c.env, verification, identity)) {
     return c.json({
       platform,
       identity: verification.identity,

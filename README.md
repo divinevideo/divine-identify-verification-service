@@ -7,7 +7,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 ## Features
 
 - **Eight platforms** — GitHub, Twitter/X, Bluesky, Mastodon, Telegram, Discord, YouTube, and TikTok, verified through a single API.
-- **Two verification methods** — a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A sign-in must be finished in the browser that started it. A Bluesky login stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
+- **Two verification methods** — a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A Bluesky login stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
 - **Batch and single verification** — check up to 10 claims in one request, or verify a single claim over JSON or a shareable URL that returns HTML for browsers and JSON for API clients.
 - **NIP-05 verification** — confirm that a NIP-05 identifier resolves to a given pubkey.
 - **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and upstream platform errors for 5 minutes.

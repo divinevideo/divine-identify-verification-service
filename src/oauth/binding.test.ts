@@ -1,15 +1,10 @@
 // ABOUTME: Tests the sign-in binding: the cookie value, its stored hash, the
-// ABOUTME: comparison, the cookie headers, and observe/enforce decisions.
+// ABOUTME: comparison, the cookie headers, and the bound check.
 import { describe, it, expect } from 'vitest'
-import type { Bindings, OAuthState, OAuthVerification } from '../types'
-import {
-  BINDING_CLEAR_COOKIE, bindingMatches, bindingSetCookie, checkSignInBinding,
-  countsAsSignedIn, createBinding, signInBindingMode,
-} from './binding'
+import type { OAuthState } from '../types'
+import { BINDING_CLEAR_COOKIE, bindingMatches, bindingSetCookie, createBinding, isSignInBound } from './binding'
 
-const env = (mode?: string) => ({ SIGNIN_BINDING: mode } as unknown as Bindings)
 const state = (bindingHash?: string) => ({ platform: 'twitter', pubkey: 'a'.repeat(64), codeVerifier: 'v', returnUrl: '/', createdAt: 0, bindingHash } as OAuthState)
-const record = (bound?: boolean) => ({ platform: 'twitter', identity: 'jack', pubkey: 'a'.repeat(64), verified: true, method: 'oauth', checked_at: 0, bound } as OAuthVerification)
 
 describe('createBinding', () => {
   it('makes a 32-byte base64url value and the hex SHA-256 of it', async () => {
@@ -31,12 +26,12 @@ describe('bindingMatches', () => {
   })
 
   it.each([
-    ['no cookie', undefined, undefined],
-    ['an empty cookie', '', undefined],
-    ['a cookie one character off', 'CHANGED', undefined],
-    ['a malformed cookie', '%%%not base64%%%', undefined],
-    ['a very long cookie', 'a'.repeat(4096), undefined],
-  ])('refuses %s', async (_label, cookie, _) => {
+    ['no cookie', undefined],
+    ['an empty cookie', ''],
+    ['a cookie one character off', 'CHANGED'],
+    ['a malformed cookie', '%%%not base64%%%'],
+    ['a very long cookie', 'a'.repeat(4096)],
+  ])('refuses %s', async (_label, cookie) => {
     const { value, hash } = await createBinding()
     const sent = cookie === 'CHANGED' ? value.slice(0, -1) + (value.endsWith('A') ? 'B' : 'A') : cookie
     expect(await bindingMatches(hash, sent)).toBe(false)
@@ -68,32 +63,19 @@ describe('cookie headers', () => {
   })
 })
 
-describe('modes', () => {
-  it.each([[undefined, 'observe'], ['observe', 'observe'], ['enforce', 'enforce'], ['ENFORCE', 'observe'], ['yes', 'observe']])(
-    'SIGNIN_BINDING=%s means %s', (value, mode) => {
-      expect(signInBindingMode(env(value))).toBe(mode)
-    })
-
-  it('observe: a sign-in without the cookie is unbound but allowed', async () => {
+describe('isSignInBound', () => {
+  it('a sign-in without the cookie is unbound', async () => {
     const { hash } = await createBinding()
-    expect(await checkSignInBinding(env('observe'), state(hash), undefined)).toEqual({ bound: false, refuse: false })
+    expect(await isSignInBound(state(hash), undefined)).toBe(false)
   })
 
-  it('enforce: a sign-in without the cookie is refused', async () => {
-    const { hash } = await createBinding()
-    expect(await checkSignInBinding(env('enforce'), state(hash), undefined)).toEqual({ bound: false, refuse: true })
-  })
-
-  it('enforce: a sign-in with the cookie is bound', async () => {
+  it('a sign-in with the matching cookie is bound', async () => {
     const { value, hash } = await createBinding()
-    expect(await checkSignInBinding(env('enforce'), state(hash), value)).toEqual({ bound: true, refuse: false })
+    expect(await isSignInBound(state(hash), value)).toBe(true)
   })
 
-  it('observe counts every sign-in record; enforce counts only bound ones', () => {
-    expect(countsAsSignedIn(env('observe'), record(undefined))).toBe(true)
-    expect(countsAsSignedIn(env('observe'), record(false))).toBe(true)
-    expect(countsAsSignedIn(env('enforce'), record(true))).toBe(true)
-    expect(countsAsSignedIn(env('enforce'), record(false))).toBe(false)
-    expect(countsAsSignedIn(env('enforce'), record(undefined))).toBe(false)
+  it('a sign-in with another browser\'s cookie is unbound', async () => {
+    const { hash } = await createBinding()
+    expect(await isSignInBound(state(hash), 'x'.repeat(43))).toBe(false)
   })
 })

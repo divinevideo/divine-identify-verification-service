@@ -1,16 +1,9 @@
 // ABOUTME: Ties a sign-in to the browser that started it: a short-lived cookie
 // ABOUTME: set at start, checked when the sign-in finishes. Spec: PR description.
-import type { Bindings, OAuthState, OAuthVerification } from '../types'
+import type { OAuthState } from '../types'
 
 export const BINDING_COOKIE = '__Host-signin_binding'
 const ATTRIBUTES = 'Path=/; HttpOnly; Secure; SameSite=Lax'
-
-export type SignInBindingMode = 'observe' | 'enforce'
-
-// TODO(#113): drop observe mode once enforce has been on for a while.
-export function signInBindingMode(env: Bindings): SignInBindingMode {
-  return env.SIGNIN_BINDING === 'enforce' ? 'enforce' : 'observe'
-}
 
 function toHex(bytes: ArrayBuffer): string {
   return [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('')
@@ -37,13 +30,10 @@ export async function bindingMatches(expectedHash: string | undefined, cookieVal
   return diff === 0
 }
 
-export async function checkSignInBinding(
-  env: Bindings,
-  state: OAuthState,
-  cookieValue: string | undefined,
-): Promise<{ bound: boolean; refuse: boolean }> {
-  const bound = await bindingMatches(state.bindingHash, cookieValue)
-  return { bound, refuse: !bound && signInBindingMode(env) === 'enforce' }
+// TODO(#113): the binding and the bound flag it produces are groundwork for
+// #113's fix; they are kept or replaced once that fix lands.
+export async function isSignInBound(state: OAuthState, cookieValue: string | undefined): Promise<boolean> {
+  return bindingMatches(state.bindingHash, cookieValue)
 }
 
 export function bindingSetCookie(value: string): string {
@@ -51,9 +41,3 @@ export function bindingSetCookie(value: string): string {
 }
 
 export const BINDING_CLEAR_COOKIE = `${BINDING_COOKIE}=; Max-Age=0; ${ATTRIBUTES}`
-
-// In enforce mode only a sign-in finished in the browser that started it
-// counts, including over records written before binding existed.
-export function countsAsSignedIn(env: Bindings, record: OAuthVerification): boolean {
-  return signInBindingMode(env) === 'observe' || record.bound === true
-}

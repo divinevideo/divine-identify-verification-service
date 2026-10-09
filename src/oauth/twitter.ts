@@ -1,7 +1,7 @@
 import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
-import { checkSignInBinding } from './binding'
+import { isSignInBound } from './binding'
 
 const TWITTER_AUTH_URL = 'https://twitter.com/i/oauth2/authorize'
 const TWITTER_TOKEN_URL = 'https://api.twitter.com/2/oauth2/token'
@@ -71,10 +71,7 @@ export async function handleTwitterCallback(
 
   await deleteOAuthState(env.CACHE_KV, stateId)
 
-  const binding = await checkSignInBinding(env, state, bindingCookie)
-  if (binding.refuse) {
-    return { success: false, returnUrl: state.returnUrl, refused: true }
-  }
+  const bound = await isSignInBound(state, bindingCookie)
 
   if (!env.TWITTER_CLIENT_ID || !env.TWITTER_CLIENT_SECRET || !env.OAUTH_REDIRECT_BASE) {
     return { success: false, returnUrl: state.returnUrl, error: 'Twitter OAuth not configured' }
@@ -139,8 +136,8 @@ export async function handleTwitterCallback(
     verified: true,
     method: 'oauth',
     checked_at: Math.floor(Date.now() / 1000),
-    bound: binding.bound,
+    bound,
   })
 
-  return { success: true, returnUrl: state.returnUrl, identity, bound: binding.bound }
+  return { success: true, returnUrl: state.returnUrl, identity, bound }
 }

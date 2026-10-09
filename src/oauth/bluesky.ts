@@ -3,7 +3,7 @@ import { generatePKCE, generateRandomString, generateDPoPKeyPair, importDPoPPriv
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification, getOAuthVerification, oauthVerificationKey } from './state'
 import { forgetHandleLookup } from './signin-account'
 import { getHandleFromDidDocument, getPdsEndpoint, isSafeUrl, resolveDidDocument, resolveHandle } from '../atproto'
-import { checkSignInBinding } from './binding'
+import { isSignInBound } from './binding'
 
 // The authorization server a PDS (resource server) declares.
 async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
@@ -74,9 +74,9 @@ async function resolveAuthServer(handle: string): Promise<{
 
 // Bluesky sign-in discovers each account's own authorization server at
 // request time, so the only fixed setting startBlueskyOAuth needs up front is
-// the redirect base it registers as its client_id and callback. The page uses
-// this to decide whether to offer Bluesky sign-in at all, matching what the
-// start step requires.
+// the redirect base it registers as its client_id and callback. /platforms
+// uses this so the page knows whether to offer Bluesky sign-in, and the
+// start step uses it too.
 export function isBlueskyOAuthUsable(env: Bindings): boolean {
   return !!env.OAUTH_REDIRECT_BASE
 }
@@ -231,10 +231,7 @@ export async function handleBlueskyCallback(
 
   await deleteOAuthState(env.CACHE_KV, stateId)
 
-  const binding = await checkSignInBinding(env, state, bindingCookie)
-  if (binding.refuse) {
-    return { success: false, returnUrl: state.returnUrl, refused: true }
-  }
+  const bound = await isSignInBound(state, bindingCookie)
 
   // Verify issuer matches
   if (iss !== state.issuer) {
@@ -304,13 +301,13 @@ export async function handleBlueskyCallback(
         return { success: false, returnUrl: state.returnUrl, error: 'Bluesky token exchange failed' }
       }
 
-      return await processBlueskyToken(retryResp, state, env, binding.bound)
+      return await processBlueskyToken(retryResp, state, env, bound)
     }
 
     return { success: false, returnUrl: state.returnUrl, error: 'Bluesky token exchange failed' }
   }
 
-  return await processBlueskyToken(tokenResp, state, env, binding.bound)
+  return await processBlueskyToken(tokenResp, state, env, bound)
 }
 
 async function confirmedHandle(did: string, state: OAuthState): Promise<string | null> {

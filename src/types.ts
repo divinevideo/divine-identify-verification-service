@@ -20,7 +20,6 @@ export type Bindings = {
   TIKTOK_OAUTH_ENABLED?: string
   // Base URL for OAuth callbacks (e.g., https://verify.divine.video)
   OAUTH_REDIRECT_BASE?: string
-  SIGNIN_BINDING?: string
 }
 
 export type OAuthPlatform = 'twitter' | 'bluesky' | 'youtube' | 'tiktok'
@@ -133,5 +132,4 @@ export interface SignInCallbackResult {
   error?: string
   identity?: string
   bound?: boolean
-  refused?: boolean
 }

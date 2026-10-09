@@ -1,7 +1,7 @@
 import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
-import { checkSignInBinding } from './binding'
+import { isSignInBound } from './binding'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -9,9 +9,9 @@ const YOUTUBE_CHANNELS_URL = 'https://www.googleapis.com/youtube/v3/channels'
 
 // Sign-in only works end to end when every credential is set: the start step
 // needs the client ID and redirect base, and the callback's token exchange
-// also needs the client secret. The page uses this to decide whether to offer
-// YouTube sign-in at all, and the start step uses it so nobody is sent to
-// Google for a sign-in that cannot finish.
+// also needs the client secret. /platforms uses this so the page knows
+// whether to offer YouTube sign-in, and the start step uses it too, so
+// nobody is sent to Google for a sign-in that cannot finish.
 export function isYouTubeOAuthUsable(env: Bindings): boolean {
   return !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET && !!env.OAUTH_REDIRECT_BASE
 }
@@ -72,10 +72,7 @@ export async function handleYouTubeCallback(
 
   await deleteOAuthState(env.CACHE_KV, stateId)
 
-  const binding = await checkSignInBinding(env, state, bindingCookie)
-  if (binding.refuse) {
-    return { success: false, returnUrl: state.returnUrl, refused: true }
-  }
+  const bound = await isSignInBound(state, bindingCookie)
 
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.OAUTH_REDIRECT_BASE) {
     return { success: false, returnUrl: state.returnUrl, error: 'YouTube OAuth not configured' }
@@ -143,8 +140,8 @@ export async function handleYouTubeCallback(
     verified: true,
     method: 'oauth',
     checked_at: Math.floor(Date.now() / 1000),
-    bound: binding.bound,
+    bound,
   })
 
-  return { success: true, returnUrl: state.returnUrl, identity, bound: binding.bound }
+  return { success: true, returnUrl: state.returnUrl, identity, bound }
 }
