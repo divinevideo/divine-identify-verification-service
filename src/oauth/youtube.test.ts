@@ -77,6 +77,22 @@ describe('startYouTubeOAuth', () => {
     const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
     expect(resp.status).toBe(503)
   })
+
+  // The callback's token exchange needs the client secret too, so starting a
+  // sign-in that can never finish would just fail later. isYouTubeOAuthUsable
+  // (also used by /platforms) folds this in, which this test guards against
+  // drifting back out.
+  it('returns 503 when the client secret is not configured', async () => {
+    const env = makeEnv({ GOOGLE_CLIENT_SECRET: undefined })
+    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
+    expect(resp.status).toBe(503)
+  })
+
+  it('returns 503 when OAUTH_REDIRECT_BASE is not configured', async () => {
+    const env = makeEnv({ OAUTH_REDIRECT_BASE: undefined })
+    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
+    expect(resp.status).toBe(503)
+  })
 })
 
 describe('handleYouTubeCallback', () => {

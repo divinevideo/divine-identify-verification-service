@@ -121,6 +121,10 @@ export interface Nip05VerifyResult {
 export interface PlatformInfo {
   label: string
   supported: boolean
+  // Whether sign-in (OAuth) is set up for this platform, matching what
+  // /auth/:platform/start would do. Present only for the platforms that
+  // offer a sign-in path (twitter, bluesky, youtube, tiktok).
+  oauth?: boolean
 }
 
 export interface SignInCallbackResult {

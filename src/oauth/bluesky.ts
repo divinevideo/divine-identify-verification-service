@@ -72,6 +72,15 @@ async function resolveAuthServer(handle: string): Promise<{
   }
 }
 
+// Bluesky sign-in discovers each account's own authorization server at
+// request time, so the only fixed setting startBlueskyOAuth needs up front is
+// the redirect base it registers as its client_id and callback. The page uses
+// this to decide whether to offer Bluesky sign-in at all, matching what the
+// start step requires.
+export function isBlueskyOAuthUsable(env: Bindings): boolean {
+  return !!env.OAUTH_REDIRECT_BASE
+}
+
 export async function startBlueskyOAuth(
   env: Bindings,
   pubkey: string,
@@ -79,7 +88,7 @@ export async function startBlueskyOAuth(
   returnUrl: string,
   bindingHash: string,
 ): Promise<Response> {
-  if (!env.OAUTH_REDIRECT_BASE) {
+  if (!isBlueskyOAuthUsable(env)) {
     return new Response(JSON.stringify({ error: 'OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },

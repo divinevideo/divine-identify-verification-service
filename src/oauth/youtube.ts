@@ -7,13 +7,23 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const YOUTUBE_CHANNELS_URL = 'https://www.googleapis.com/youtube/v3/channels'
 
+// Sign-in only works end to end when every credential is set: the start step
+// needs the client ID and redirect base, and the callback's token exchange
+// also needs the client secret. The page uses this to decide whether to offer
+// YouTube sign-in at all, and the start step uses it so nobody is sent to
+// Google for a sign-in that cannot finish.
+export function isYouTubeOAuthUsable(env: Bindings): boolean {
+  return !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET && !!env.OAUTH_REDIRECT_BASE
+}
+
 export async function startYouTubeOAuth(
   env: Bindings,
   pubkey: string,
   returnUrl: string,
   bindingHash: string,
 ): Promise<Response> {
-  if (!env.GOOGLE_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
+  // The explicit checks after isYouTubeOAuthUsable let TypeScript see both values are set.
+  if (!isYouTubeOAuthUsable(env) || !env.GOOGLE_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
     return new Response(JSON.stringify({ error: 'YouTube OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
