@@ -361,6 +361,14 @@ describe('MastodonVerifier on servers whose handles use another domain', () => {
     expect(await verifier.verify('example.com/@alice', ID, npub)).toEqual({ verified: true, canonicalIdentity: 'social.example.com/@alice' })
   })
 
+  it('skips empty entries in a lookup\'s list of links', async () => {
+    serve({
+      ...SPLIT,
+      'https://example.com/.well-known/webfinger': webfinger('acct:alice@example.com', [null, ...self('https://social.example.com/users/alice')]),
+    })
+    expect(await verifier.verify('example.com/@alice', ID, npub)).toEqual({ verified: true, canonicalIdentity: 'social.example.com/@alice' })
+  })
+
   it.each([
     ['names a different account', webfinger('acct:bob@example.com', self('https://social.example.com/users/bob'))],
     ['names an account whose name only ends with the claimed one', webfinger('acct:xalice@example.com', self('https://social.example.com/users/alice'))],
