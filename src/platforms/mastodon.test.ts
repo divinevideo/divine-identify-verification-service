@@ -368,6 +368,7 @@ describe('MastodonVerifier on servers whose handles use another domain', () => {
     ['has no links', webfinger('acct:alice@example.com', undefined)],
     ['has links that are not a list', webfinger('acct:alice@example.com', { rel: 'self' })],
     ['has only a profile page link', webfinger('acct:alice@example.com', [{ rel: 'http://webfinger.net/rel/profile-page', type: 'text/html', href: 'https://social.example.com/@alice' }])],
+    ['has an ActivityPub link that is not its self link', webfinger('acct:alice@example.com', [{ rel: 'alternate', type: ACTIVITY, href: 'https://social.example.com/users/alice' }])],
     ['has a self link that is not ActivityPub', webfinger('acct:alice@example.com', self('https://social.example.com/users/alice', 'text/html'))],
     ['is not JSON', () => new Response('<html></html>', { status: 200 })],
   ])('treats the post as not found when the handle domain\'s answer %s', async (_label, answer) => {
