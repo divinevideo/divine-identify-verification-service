@@ -138,6 +138,19 @@ describe('BlueskyVerifier', () => {
     expect(result.error).toContain('no Bluesky post proof')
   })
 
+  it('does not follow a redirect from the PDS to an internal host', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(didDocumentResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { Location: 'https://localhost/records' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await verifier.verify(did, '', npub)
+    expect(result.verified).toBe(false)
+    expect(result.error).toContain('no Bluesky post proof')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ redirect: 'manual' })
+  })
+
   it('targets the resolved PDS for identity-link records and the public AppView for proof posts', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(didDocumentResponse())

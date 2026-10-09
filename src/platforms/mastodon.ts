@@ -1,5 +1,6 @@
 import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
 import { isPrivateHostname } from '../utils/validation'
+import { fetchPublic } from '../utils/safe-fetch'
 
 export class MastodonVerifier implements PlatformVerifier {
   readonly name = 'mastodon'
@@ -38,12 +39,13 @@ export class MastodonVerifier implements PlatformVerifier {
 
     const url = `https://${instance}/api/v1/statuses/${encodeURIComponent(proof)}`
 
+    // The instance comes from the claim, so redirects are checked as fetchPublic does.
     const response = await fetchFromPlatform(this.label, url, {
       headers: {
         'Accept': 'application/json',
         'User-Agent': 'divine-identity-verification-service',
       },
-    })
+    }, fetchPublic)
 
     if (response.status === 404) {
       return { verified: false, error: 'Mastodon status not found' }

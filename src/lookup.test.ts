@@ -31,6 +31,10 @@ function iTag(platform: string, identity: string, proof: string) {
 
 function harness(opts: {
   iTags: string[][]
+  // Overrides the identity event's tags, for entries that aren't well-formed.
+  identityTags?: unknown
+  // A profile NIP-05 of any type, for values that aren't text.
+  nip05Raw?: unknown
   nip05?: string
   relays?: string[]
   kind0OnlyOn?: string
@@ -40,22 +44,24 @@ function harness(opts: {
   const statuses: Array<[string, string]> = []
   const rendered: unknown[][] = []
   const verifyBatches: number[] = []
+  const requests: string[] = []
   const env: Record<string, unknown> = {
     API,
     PROFILE_RELAYS: opts.relays ?? ['wss://relay.example'],
     document: {
       getElementById: (id: string) => id === 'lookup-input' ? { value: PUBKEY } : { innerHTML: '' },
     },
-    fetchIdentityEvent: async () => ({ kind: 10011, tags: opts.iTags, content: '' }),
+    fetchIdentityEvent: async () => ({ kind: 10011, tags: opts.identityTags ?? opts.iTags, content: '' }),
     fetchProfileLegacy: async (relay: string) => (opts.noKind0 || (opts.kind0OnlyOn && relay !== opts.kind0OnlyOn))
       ? null
-      : { kind: 0, tags: [], content: JSON.stringify(opts.nip05 ? { nip05: opts.nip05 } : {}) },
+      : { kind: 0, tags: [], content: JSON.stringify(opts.nip05Raw !== undefined ? { nip05: opts.nip05Raw } : opts.nip05 ? { nip05: opts.nip05 } : {}) },
     showStatus: (msg: string, type: string) => { statuses.push([msg, type]) },
     hideStatus: () => {},
     renderResults: (results: unknown[]) => { rendered.push(results) },
     tryParseJSON: (s: string) => { try { return JSON.parse(s) } catch { return null } },
     npubToHex: () => PUBKEY,
     fetch: async (url: string, init?: { body?: string }) => {
+      requests.push(url)
       if (url.startsWith(`${API}/nip05/verify`)) {
         if (opts.nip05Breaks) return { json: async () => { throw new SyntaxError('Unexpected token <') } }
         return { json: async () => ({ verified: true, cached: false }) }
@@ -70,7 +76,7 @@ function harness(opts: {
       throw new Error(`unexpected fetch ${url}`)
     },
   }
-  return { env, statuses, rendered, verifyBatches }
+  return { env, statuses, rendered, verifyBatches, requests }
 }
 
 describe('landing page "Look up someone"', () => {
@@ -144,6 +150,55 @@ describe('landing page "Look up someone"', () => {
     expect(h.rendered[0]).toEqual([
       expect.objectContaining({ platform: 'github', identity: 'octocat', verified: true }),
     ])
+  })
+})
+
+describe('landing page "Look up someone" with entries that are not well-formed', () => {
+  it('skips them and shows the other linked accounts', async () => {
+    const doLookup = await loadDoLookup()
+    const h = harness({
+      iTags: [],
+      identityTags: [null, 'i', ['i', 123, 'proof'], ['i', 'github:numeric-proof', 7], ['i', { platform: 'github' }, 'proof'], iTag('github', 'octocat', 'abc123')],
+    })
+
+    await doLookup(h.env)()
+
+    expect(h.statuses.filter(([, type]) => type === 'error')).toEqual([])
+    expect(h.rendered[0]).toEqual([
+      expect.objectContaining({ platform: 'github', identity: 'octocat', verified: true }),
+    ])
+  })
+
+  it('reports no linked accounts, rather than a script error, when the tags are not a list', async () => {
+    const doLookup = await loadDoLookup()
+    const h = harness({ iTags: [], identityTags: { 0: ['i', 'github:octocat', 'abc123'] } })
+
+    await doLookup(h.env)()
+
+    expect(h.statuses).toContainEqual(['No linked identity claims (NIP-39 i-tags) found.', 'error'])
+    expect(h.statuses.some(([msg]) => /is not a function|Cannot read/.test(msg))).toBe(false)
+  })
+})
+
+describe('landing page "Look up someone" with a NIP-05 that isn\'t text', () => {
+  it('leaves it out of the results, without checking it', async () => {
+    const doLookup = await loadDoLookup()
+    const h = harness({ iTags: [iTag('github', 'octocat', 'abc123')], nip05Raw: 42 })
+
+    await doLookup(h.env)()
+
+    expect(h.rendered[0]).toEqual([expect.objectContaining({ platform: 'github', identity: 'octocat' })])
+    expect(h.requests.some(url => url.includes('/nip05/verify'))).toBe(false)
+  })
+
+  it('doesn\'t check it when the profile has no linked accounts either', async () => {
+    const doLookup = await loadDoLookup()
+    const h = harness({ iTags: [], nip05Raw: 42 })
+
+    await doLookup(h.env)()
+
+    expect(h.statuses).toContainEqual(['No linked identity claims (NIP-39 i-tags) found.', 'error'])
+    expect(h.requests.some(url => url.includes('/nip05/verify'))).toBe(false)
   })
 })
 

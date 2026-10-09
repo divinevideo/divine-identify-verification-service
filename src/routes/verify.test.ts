@@ -204,6 +204,6 @@ describe('TikTok proof link on the verification-link page', () => {
     const html = renderVerifyHtml(FAKE_RESULT, 'discord', 'alice', DISCORD_MESSAGE_LINK, 'a'.repeat(64),
       'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'https://verifier.divine.video/verify/discord/alice/x', 'https://verifier.divine.video')
-    expect(html).toContain('proofUrl(claims[k].platform, claims[k].identity, data.results[k].canonical_proof || claims[k].proof)')
+    expect(html).toContain('proofUrl(claim.platform, claim.identity, data.results[k].canonical_proof || claim.proof)')
   })
 })

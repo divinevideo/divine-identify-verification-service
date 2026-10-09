@@ -23,10 +23,16 @@ export function isUnanswered(status: number): boolean {
 /**
  * fetch() for a platform check. A network failure means the platform couldn't
  * be asked, so it becomes a PlatformUnavailableError rather than a verdict.
+ * Pass fetchPublic as `fetcher` when the host came from user input.
  */
-export async function fetchFromPlatform(label: string, url: string, init?: RequestInit): Promise<Response> {
+export async function fetchFromPlatform(
+  label: string,
+  url: string,
+  init?: RequestInit,
+  fetcher: (url: string, init?: RequestInit) => Promise<Response> = fetch,
+): Promise<Response> {
   try {
-    return await fetch(url, init)
+    return await fetcher(url, init)
   } catch (err) {
     // Only the error's name: its message could carry the request URL, and some
     // platforms (YouTube) take an API key in the query string.

@@ -939,7 +939,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     const KEYCAST_HASH_KEY = 'verifyer_keycast_hash_v1';
     const NOSTR_TOOLS_NIP46_URL = 'https://esm.sh/nostr-tools@2.23.3/nip46?bundle';
     const NOSTR_TOOLS_PURE_URL = 'https://esm.sh/nostr-tools@2.23.3/pure?bundle';
-    const PROFILE_RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
+    const PROFILE_RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.primal.net'];
     const VERIFY_BATCH_SIZE = ${MAX_BATCH_SIZE};
     // NIP-46 traffic needs relays that accept kind 24133 events.
     const REMOTE_SIGNER_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.snort.social', 'wss://relay.primal.net'];
@@ -2324,13 +2324,15 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
           return;
         }
 
-        // Extract i-tags (NIP-39 identity claims)
-        const iTags = (source.tags || []).filter(t => t[0] === 'i' && t[1] && t[2]);
+        // Extract i-tags (NIP-39 identity claims). Events come from relays, so
+        // skip anything that isn't a well-formed ['i', 'platform:identity', proof] tag.
+        const iTags = (Array.isArray(source.tags) ? source.tags : []).filter(t =>
+          Array.isArray(t) && t[0] === 'i' && typeof t[1] === 'string' && typeof t[2] === 'string' && t[1] && t[2]);
         if (iTags.length === 0) {
           showStatus('No linked identity claims (NIP-39 i-tags) found.', 'error');
           // Check NIP-05 if present in kind 0 profile
           const profileContent = legacyProfile ? tryParseJSON(legacyProfile.content) : null;
-          if (profileContent && profileContent.nip05) {
+          if (profileContent && typeof profileContent.nip05 === 'string' && profileContent.nip05) {
             const nip05Resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(profileContent.nip05) + '&pubkey=' + pubkey);
             const nip05Result = await nip05Resp.json();
             showStatus('No NIP-39 claims, but found NIP-05:', 'loading');
@@ -2378,7 +2380,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
 
         // Also check NIP-05, which lives in the kind 0 profile.
         const content = legacyProfile ? tryParseJSON(legacyProfile.content) : null;
-        if (content && content.nip05) {
+        if (content && typeof content.nip05 === 'string' && content.nip05) {
           // The NIP-05 row is extra: if its check fails, show that row as not
           // verified rather than hiding the accounts that did verify.
           let nip05Row;
