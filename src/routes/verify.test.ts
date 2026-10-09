@@ -204,6 +204,18 @@ describe('TikTok proof link on the verification-link page', () => {
     const html = renderVerifyHtml(FAKE_RESULT, 'discord', 'alice', DISCORD_MESSAGE_LINK, 'a'.repeat(64),
       'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'https://verifier.divine.video/verify/discord/alice/x', 'https://verifier.divine.video')
-    expect(html).toContain('proofUrl(claim.platform, claim.identity, data.results[k].canonical_proof || claim.proof)')
+    expect(html).toContain('proofUrl(claim.platform, data.results[k].canonical_identity || claim.identity, data.results[k].canonical_proof || claim.proof)')
+  })
+})
+
+describe('Mastodon proof link on the verification-link page', () => {
+  it('links the post on the server\'s web domain when the verifier found it there', () => {
+    const html = renderVerifyHtml(
+      { platform: 'mastodon', identity: 'example.com/@alice', verified: true, canonical_identity: 'social.example.com/@alice', checked_at: 1700000000, cached: false },
+      'mastodon', 'example.com/@alice', '109876543210', 'a'.repeat(64),
+      'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+      'https://verifier.divine.video/verify/mastodon/x/y', 'https://verifier.divine.video',
+    )
+    expect(html).toContain('href="https://social.example.com/statuses/109876543210"')
   })
 })

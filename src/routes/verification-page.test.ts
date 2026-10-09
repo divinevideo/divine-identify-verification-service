@@ -50,6 +50,7 @@ function harness(opts: {
   failBatch?: number
   nip05Breaks?: boolean
   canonicalProof?: string
+  canonicalIdentity?: string
   // Extra ticks before a relay answers the identity-event query.
   slowIdentityAnswer?: number
 }) {
@@ -90,7 +91,7 @@ function harness(opts: {
         // Mirror the server's batch limit.
         if (claims.length > MAX_BATCH_SIZE) return { json: async () => ({ error: `Maximum ${MAX_BATCH_SIZE} claims per request` }) }
         if (opts.failBatch === verifyBatches.length) throw new TypeError('Failed to fetch')
-        return { json: async () => ({ results: claims.map(c => ({ ...c, verified: true, cached: false, ...(opts.canonicalProof ? { canonical_proof: opts.canonicalProof } : {}) })) }) }
+        return { json: async () => ({ results: claims.map(c => ({ ...c, verified: true, cached: false, ...(opts.canonicalProof ? { canonical_proof: opts.canonicalProof } : {}), ...(opts.canonicalIdentity ? { canonical_identity: opts.canonicalIdentity } : {}) })) }) }
       }
       throw new Error(`unexpected fetch ${url}`)
     },
@@ -280,6 +281,17 @@ describe('verification-link page: all verified identities', () => {
     })
     await init(h.env)()
     expect(h.rendered[0][0]).toMatchObject({ _proofUrl: 'https://proof.example/tiktok/alice/7380000000000000000' })
+  })
+
+  it('links each account\'s proof on the server the verifier found it on', async () => {
+    const init = loadInit()
+    const h = harness({
+      identityEvent: identityEventWith([iTag('mastodon', 'example.com/@alice', '109876543210')]),
+      profile: profileWith({}),
+      canonicalIdentity: 'social.example.com/@alice',
+    })
+    await init(h.env)()
+    expect(h.rendered[0][0]).toMatchObject({ _proofUrl: 'https://proof.example/mastodon/social.example.com/@alice/109876543210' })
   })
 
   it('leaves out a NIP-05 that isn\'t text, without checking it', async () => {
