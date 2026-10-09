@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { Bindings, VerifyClaim, VerifyResult, CachedResult } from '../types'
-import { validateClaim, normalizePubkey } from '../utils/validation'
+import { validateClaim, normalizePubkey, VALID_PLATFORMS } from '../utils/validation'
 import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
@@ -652,13 +652,16 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
     var CURRENT_IDENTITY = '${esc(identity)}';
     var API = '${esc(apiOrigin)}';
     var RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
+    var VERIFY_BATCH_SIZE = ${MAX_BATCH_SIZE};
     var PLATFORM_LABELS = ${JSON.stringify(PLATFORM_LABELS)};
     var DISCORD_MESSAGE_LINK_HOSTS = ${JSON.stringify(MESSAGE_LINK_HOSTS)};
 
     function esc(s) {
       var d = document.createElement('div');
       d.textContent = s || '';
-      return d.innerHTML;
+      // Reading innerHTML back escapes &, < and > but not quotes, and these
+      // values also go into quoted attributes.
+      return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function proofUrl(platform, identity, proof) {
@@ -718,15 +721,15 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
       return icons[platform] || '';
     }
 
-    // Fetch profile from Nostr relays
-    function fetchProfile(relayUrl, pubkey) {
+    // Fetch a person's latest event of one kind from a relay
+    function fetchEventByKind(relayUrl, pubkey, kind) {
       return new Promise(function(resolve, reject) {
-        var timeout = setTimeout(function() { ws.close(); reject(new Error('timeout')); }, 8000);
         var ws;
-        try { ws = new WebSocket(relayUrl); } catch(e) { reject(e); return; }
+        var timeout = setTimeout(function() { if (ws) ws.close(); reject(new Error('timeout')); }, 8000);
+        try { ws = new WebSocket(relayUrl); } catch(e) { clearTimeout(timeout); reject(e); return; }
         var subId = 'vp_' + Math.random().toString(36).slice(2, 8);
         ws.onopen = function() {
-          ws.send(JSON.stringify(['REQ', subId, { kinds: [0], authors: [pubkey], limit: 1 }]));
+          ws.send(JSON.stringify(['REQ', subId, { kinds: [kind], authors: [pubkey], limit: 1 }]));
         };
         ws.onmessage = function(msg) {
           try {
@@ -744,6 +747,9 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
           } catch(e) {}
         };
         ws.onerror = function() { clearTimeout(timeout); reject(new Error('ws error')); };
+        // A relay that hangs up without answering has nothing for us; don't
+        // make the caller wait out the timeout.
+        ws.onclose = function() { clearTimeout(timeout); reject(new Error('ws closed')); };
       });
     }
 
@@ -756,11 +762,13 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
       var el = document.getElementById('profile-header');
       if (!profile) { el.style.display = 'none'; return; }
       var content = tryParseJSON(profile.content);
-      if (!content) { el.style.display = 'none'; return; }
+      if (!content || typeof content !== 'object') { el.style.display = 'none'; return; }
 
-      var name = content.display_name || content.displayName || content.name || NPUB.slice(0, 12) + '...';
-      var avatar = content.picture || content.image || '';
-      var nip05 = content.nip05 || '';
+      // Profiles come from relays, so a field may not be text; only text is used.
+      function text(v) { return typeof v === 'string' ? v : ''; }
+      var name = text(content.display_name) || text(content.displayName) || text(content.name) || NPUB.slice(0, 12) + '...';
+      var avatar = text(content.picture) || text(content.image);
+      var nip05 = text(content.nip05);
       var divineNip05 = '';
 
       // Check if they have a divine.video NIP-05
@@ -845,39 +853,55 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
       el.style.display = 'block';
     }
 
-    // Main: fetch profile and other identities
-    async function init() {
-      var profile = null;
-      for (var i = 0; i < RELAYS.length; i++) {
-        try {
-          profile = await fetchProfile(RELAYS[i], PUBKEY);
-          if (profile) break;
-        } catch(e) { /* try next */ }
-      }
-
-      renderProfile(profile);
-
-      if (!profile) return;
-
-      // Extract i-tags for other identity claims
-      var iTags = (profile.tags || []).filter(function(t) {
-        return t[0] === 'i' && t[1] && t[2];
-      });
-
-      if (iTags.length === 0) return;
-
-      var supportedPlatforms = ['github','twitter','mastodon','telegram','bluesky','discord','youtube','tiktok'];
+    // The linked accounts on an event, skipping anything that isn't a
+    // well-formed ['i', 'platform:identity', proof] tag. Events come from
+    // relays, so one malformed entry mustn't hide the others.
+    function linkedAccountClaims(event) {
+      var supportedPlatforms = ${JSON.stringify(VALID_PLATFORMS)};
+      var tags = event && Array.isArray(event.tags) ? event.tags : [];
       var claims = [];
-      for (var j = 0; j < iTags.length; j++) {
-        var parts = iTags[j][1].split(':');
-        var plat = parts[0];
-        var ident = parts.slice(1).join(':');
-        var proof = iTags[j][2];
-        if (supportedPlatforms.indexOf(plat) !== -1) {
-          claims.push({ platform: plat, identity: ident, proof: proof, pubkey: PUBKEY });
-        }
+      for (var i = 0; i < tags.length; i++) {
+        var t = tags[i];
+        if (!Array.isArray(t) || t[0] !== 'i' || typeof t[1] !== 'string' || typeof t[2] !== 'string' || !t[1] || !t[2]) continue;
+        var parts = t[1].split(':');
+        if (supportedPlatforms.indexOf(parts[0]) === -1) continue;
+        claims.push({ platform: parts[0], identity: parts.slice(1).join(':'), proof: t[2], pubkey: PUBKEY });
       }
+      return claims;
+    }
 
+    // Main: fetch the profile and the linked accounts, and check them
+    async function init() {
+      var identityEvent = null;
+      var profile = null;
+      var headerShown = false;
+      function orNull() { return null; }
+      // Show the header as soon as a profile arrives, without waiting for the
+      // identity event or for the other relays.
+      function showHeader(found) {
+        if (found && !headerShown) {
+          renderProfile(found);
+          headerShown = true;
+        }
+        return found;
+      }
+      for (var i = 0; i < RELAYS.length; i++) {
+        // Ask each relay for both events at once; a relay that fails or has
+        // neither just leaves them for the next one.
+        var found = await Promise.all([
+          identityEvent || fetchEventByKind(RELAYS[i], PUBKEY, 10011).catch(orNull),
+          profile || fetchEventByKind(RELAYS[i], PUBKEY, 0).catch(orNull).then(showHeader),
+        ]);
+        identityEvent = found[0];
+        profile = found[1];
+        // Keep going until both are found: the linked accounts live in the
+        // identity event, the name, picture and NIP-05 in the profile.
+        if (identityEvent && profile) break;
+      }
+      if (!headerShown) renderProfile(null);
+
+      // Older profiles kept the linked accounts on the profile itself.
+      var claims = linkedAccountClaims(identityEvent || profile);
       if (claims.length === 0) return;
 
       // Show loading state
@@ -885,43 +909,55 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
       el.innerHTML = '<div class="other-identities"><div class="section-title">All Verified Identities</div><div class="identity-loading"><div class="spinner"></div> Verifying ' + claims.length + ' identity claim(s)...</div></div>';
       el.style.display = 'block';
 
-      // Batch verify all claims
-      try {
-        var resp = await fetch(API + '/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ claims: claims }),
-        });
-        var data = await resp.json();
-        if (data.results) {
-          // Attach proof URLs
+      // Check at most VERIFY_BATCH_SIZE claims per request (the server's limit),
+      // all batches at once so the wait is the slowest batch, not the sum.
+      // A batch that fails is left out; the accounts the others checked still show.
+      var batches = [];
+      for (var b = 0; b < claims.length; b += VERIFY_BATCH_SIZE) {
+        batches.push(claims.slice(b, b + VERIFY_BATCH_SIZE));
+      }
+      var checked = await Promise.all(batches.map(async function(batch) {
+        var batchResults = [];
+        try {
+          var resp = await fetch(API + '/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ claims: batch }),
+          });
+          var data = await resp.json();
+          if (!data || !Array.isArray(data.results)) return batchResults;
           for (var k = 0; k < data.results.length; k++) {
-            data.results[k]._proofUrl = proofUrl(claims[k].platform, claims[k].identity, data.results[k].canonical_proof || claims[k].proof);
+            var claim = batch[k];
+            if (!claim) continue;
+            data.results[k]._proofUrl = proofUrl(claim.platform, claim.identity, data.results[k].canonical_proof || claim.proof);
+            batchResults.push(data.results[k]);
           }
+        } catch(e) { /* leave this batch out */ }
+        return batchResults;
+      }));
+      // Batches keep their order, so the list reads in the order of the tags.
+      var results = [].concat.apply([], checked);
 
-          // Also check NIP-05 if present
-          var content = tryParseJSON(profile.content);
-          if (content && content.nip05) {
-            try {
-              var n5resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(content.nip05) + '&pubkey=' + PUBKEY);
-              var n5data = await n5resp.json();
-              data.results.unshift({
-                platform: 'nip05',
-                identity: content.nip05,
-                verified: n5data.verified,
-                error: n5data.error,
-                cached: n5data.cached,
-                _proofUrl: null
-              });
-            } catch(e) { /* skip nip05 */ }
-          }
-
-          renderOtherIdentities(data.results);
+      // Also check the NIP-05, which lives in the profile. If its check fails,
+      // show it as not verified rather than dropping it.
+      var content = profile ? tryParseJSON(profile.content) : null;
+      var nip05 = content && typeof content.nip05 === 'string' ? content.nip05 : '';
+      if (results.length > 0 && nip05) {
+        try {
+          var n5resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(nip05) + '&pubkey=' + PUBKEY);
+          var n5data = await n5resp.json();
+          results.unshift({ platform: 'nip05', identity: nip05, verified: n5data.verified, error: n5data.error, cached: n5data.cached, _proofUrl: null });
+        } catch(e) {
+          results.unshift({ platform: 'nip05', identity: nip05, verified: false, error: 'NIP-05 check failed', cached: false, _proofUrl: null });
         }
-      } catch(e) {
+      }
+
+      if (results.length === 0) {
         el.innerHTML = '';
         el.style.display = 'none';
+        return;
       }
+      renderOtherIdentities(results);
     }
 
     init();
