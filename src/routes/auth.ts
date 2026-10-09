@@ -1,12 +1,12 @@
 import { Hono } from 'hono'
 import { getCookie } from 'hono/cookie'
 import type { Context } from 'hono'
-import type { Bindings, OAuthPlatform } from '../types'
+import type { Bindings, OAuthPlatform, SignInCallbackResult } from '../types'
 import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
 import { getOAuthVerification, deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
-import { createBinding, bindingSetCookie } from '../oauth/binding'
+import { createBinding, bindingSetCookie, BINDING_COOKIE, BINDING_CLEAR_COOKIE } from '../oauth/binding'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
@@ -286,6 +286,20 @@ const SIGN_IN_LABELS: Record<OAuthPlatform, string> = {
   bluesky: 'Bluesky',
 }
 
+// Every way a sign-in finishes clears the binding cookie. A sign-in that
+// reached the binding check is logged as bound, unbound or refused, with
+// nothing that identifies the person.
+function finishSignIn(c: Context<{ Bindings: Bindings }>, platform: OAuthPlatform, result: SignInCallbackResult): Response {
+  c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
+  if (result.refused || result.success) {
+    console.info(`${platform} sign-in finished: ${result.refused ? 'refused' : result.bound ? 'bound' : 'unbound'}`)
+  }
+  const params: Record<string, string> = result.success
+    ? { oauth_verified: 'true', platform, identity: result.identity || '' }
+    : { oauth_error: result.refused ? `could not be confirmed in this browser at ${SIGN_IN_LABELS[platform]}` : 'Verification failed' }
+  return c.redirect(buildReturnUrl(result.returnUrl, params))
+}
+
 // A sign-in the provider did not complete comes back with `error` and, per
 // RFC 6749 4.1.2.1, the `state` we sent. Send the person back to where the
 // sign-in started, like the success path does, instead of leaving them on a
@@ -348,14 +362,12 @@ auth.get('/twitter/callback', async (c) => {
   }
 
   try {
-    const result = await handleTwitterCallback(c.env, code, state)
-    const redirectUrl = buildReturnUrl(result.returnUrl, result.success
-      ? { oauth_verified: 'true', platform: 'twitter', identity: result.identity || '' }
-      : { oauth_error: 'Verification failed' }
-    )
-    return c.redirect(redirectUrl)
+    const bindingCookie = getCookie(c, BINDING_COOKIE)
+    const result = await handleTwitterCallback(c.env, code, state, bindingCookie)
+    return finishSignIn(c, 'twitter', result)
   } catch (err) {
     console.error('Twitter callback error:', err instanceof Error ? err.message : err)
+    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -373,14 +385,12 @@ auth.get('/youtube/callback', async (c) => {
   }
 
   try {
-    const result = await handleYouTubeCallback(c.env, code, state)
-    const redirectUrl = buildReturnUrl(result.returnUrl, result.success
-      ? { oauth_verified: 'true', platform: 'youtube', identity: result.identity || '' }
-      : { oauth_error: 'Verification failed' }
-    )
-    return c.redirect(redirectUrl)
+    const bindingCookie = getCookie(c, BINDING_COOKIE)
+    const result = await handleYouTubeCallback(c.env, code, state, bindingCookie)
+    return finishSignIn(c, 'youtube', result)
   } catch (err) {
     console.error('YouTube callback error:', err instanceof Error ? err.message : err)
+    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -398,14 +408,12 @@ auth.get('/tiktok/callback', async (c) => {
   }
 
   try {
-    const result = await handleTikTokCallback(c.env, code, state)
-    const redirectUrl = buildReturnUrl(result.returnUrl, result.success
-      ? { oauth_verified: 'true', platform: 'tiktok', identity: result.identity || '' }
-      : { oauth_error: 'Verification failed' }
-    )
-    return c.redirect(redirectUrl)
+    const bindingCookie = getCookie(c, BINDING_COOKIE)
+    const result = await handleTikTokCallback(c.env, code, state, bindingCookie)
+    return finishSignIn(c, 'tiktok', result)
   } catch (err) {
     console.error('TikTok callback error:', err instanceof Error ? err.message : err)
+    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -424,14 +432,12 @@ auth.get('/bluesky/callback', async (c) => {
   }
 
   try {
-    const result = await handleBlueskyCallback(c.env, code, state, iss)
-    const redirectUrl = buildReturnUrl(result.returnUrl, result.success
-      ? { oauth_verified: 'true', platform: 'bluesky', identity: result.identity || '' }
-      : { oauth_error: 'Verification failed' }
-    )
-    return c.redirect(redirectUrl)
+    const bindingCookie = getCookie(c, BINDING_COOKIE)
+    const result = await handleBlueskyCallback(c.env, code, state, iss, bindingCookie)
+    return finishSignIn(c, 'bluesky', result)
   } catch (err) {
     console.error('Bluesky callback error:', err instanceof Error ? err.message : err)
+    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })

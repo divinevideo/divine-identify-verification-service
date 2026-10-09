@@ -70,7 +70,7 @@ async function signInReturning(sub: string, accounts: Account[]) {
   }))
   vi.stubGlobal('fetch', network(sub, accounts))
   const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-  const result = await handleBlueskyCallback(env, 'code', 'state1', ISSUER)
+  const result = await handleBlueskyCallback(env, 'code', 'state1', ISSUER, undefined)
   const recorded = [...cache.store.keys()].filter(k => k.startsWith('oauth_verified:bluesky:'))
   return { result, recorded }
 }

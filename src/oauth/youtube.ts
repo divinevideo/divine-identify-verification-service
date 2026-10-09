@@ -1,6 +1,7 @@
-import type { Bindings, OAuthState } from '../types'
+import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
+import { checkSignInBinding } from './binding'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -52,13 +53,19 @@ export async function handleYouTubeCallback(
   env: Bindings,
   code: string,
   stateId: string,
-): Promise<{ success: boolean; returnUrl: string; error?: string; identity?: string }> {
+  bindingCookie: string | undefined,
+): Promise<SignInCallbackResult> {
   const state = await getOAuthState(env.CACHE_KV, stateId)
   if (!state || state.platform !== 'youtube') {
     return { success: false, returnUrl: '/', error: 'Invalid or expired OAuth state' }
   }
 
   await deleteOAuthState(env.CACHE_KV, stateId)
+
+  const binding = await checkSignInBinding(env, state, bindingCookie)
+  if (binding.refuse) {
+    return { success: false, returnUrl: state.returnUrl, refused: true }
+  }
 
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.OAUTH_REDIRECT_BASE) {
     return { success: false, returnUrl: state.returnUrl, error: 'YouTube OAuth not configured' }
@@ -126,7 +133,8 @@ export async function handleYouTubeCallback(
     verified: true,
     method: 'oauth',
     checked_at: Math.floor(Date.now() / 1000),
+    bound: binding.bound,
   })
 
-  return { success: true, returnUrl: state.returnUrl, identity }
+  return { success: true, returnUrl: state.returnUrl, identity, bound: binding.bound }
 }

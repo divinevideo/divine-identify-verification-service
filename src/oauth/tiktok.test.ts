@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 
 import { startTikTokOAuth, handleTikTokCallback } from './tiktok'
 import { oauthStateKey } from './state'
+import { createBinding } from './binding'
 import type { OAuthState } from '../types'
 
 function makeEnv(overrides: Record<string, unknown> = {}) {
@@ -91,7 +92,7 @@ describe('handleTikTokCallback', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
-    const result = await handleTikTokCallback(env, 'auth-code', 'state123')
+    const result = await handleTikTokCallback(env, 'auth-code', 'state123', undefined)
 
     expect(result.success).toBe(true)
     expect(result.identity).toBe('creator')
@@ -101,6 +102,36 @@ describe('handleTikTokCallback', () => {
     expect(fetchMock.mock.calls[1][0]).toContain('fields=display_name,username')
   })
 
+  it('records the sign-in as bound when the callback cookie matches the binding hash stored at start', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+      .mockResolvedValueOnce(jsonResponse({ data: { user: { username: 'creator', display_name: 'Creator' } } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { value, hash } = await createBinding()
+    const env = envWithState({ bindingHash: hash })
+    const result = await handleTikTokCallback(env, 'auth-code', 'state123', value)
+
+    expect(result.bound).toBe(true)
+    const [, storedValue] = env.CACHE_KV.put.mock.calls[0]
+    expect(JSON.parse(storedValue).bound).toBe(true)
+  })
+
+  it('records the sign-in as unbound when the callback cookie does not match the binding hash stored at start', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+      .mockResolvedValueOnce(jsonResponse({ data: { user: { username: 'creator', display_name: 'Creator' } } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { hash } = await createBinding()
+    const env = envWithState({ bindingHash: hash })
+    const result = await handleTikTokCallback(env, 'auth-code', 'state123', 'wrong-cookie-value')
+
+    expect(result.bound).toBe(false)
+    const [, storedValue] = env.CACHE_KV.put.mock.calls[0]
+    expect(JSON.parse(storedValue).bound).toBe(false)
+  })
+
   it('fails when TikTok omits the username (e.g. user.info.profile scope not granted)', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
@@ -108,7 +139,7 @@ describe('handleTikTokCallback', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
-    const result = await handleTikTokCallback(env, 'auth-code', 'state123')
+    const result = await handleTikTokCallback(env, 'auth-code', 'state123', undefined)
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/username/i)
@@ -117,7 +148,7 @@ describe('handleTikTokCallback', () => {
 
   it('rejects an unknown or expired state', async () => {
     const env = makeEnv() // CACHE_KV.get resolves null
-    const result = await handleTikTokCallback(env, 'auth-code', 'state123')
+    const result = await handleTikTokCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/state/i)
   })
@@ -129,7 +160,7 @@ describe('handleTikTokCallback', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
-    const result = await handleTikTokCallback(env, 'auth-code', 'state123')
+    const result = await handleTikTokCallback(env, 'auth-code', 'state123', undefined)
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/token exchange/i)
@@ -141,7 +172,7 @@ describe('handleTikTokCallback', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
-    const result = await handleTikTokCallback(env, 'auth-code', 'state123')
+    const result = await handleTikTokCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/invalid response.*token/i)
     expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
@@ -154,7 +185,7 @@ describe('handleTikTokCallback', () => {
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new Error('bad json') } } as unknown as Response)
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
-    const result = await handleTikTokCallback(env, 'auth-code', 'state123')
+    const result = await handleTikTokCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/invalid response.*user/i)
     expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
@@ -164,7 +195,7 @@ describe('handleTikTokCallback', () => {
   it('fails the callback when OAuth is not configured (missing client secret)', async () => {
     const env = envWithState()
     env.TIKTOK_CLIENT_SECRET = undefined
-    const result = await handleTikTokCallback(env, 'auth-code', 'state123')
+    const result = await handleTikTokCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/not configured/i)
     // State is consumed before the config check; no verification stored.

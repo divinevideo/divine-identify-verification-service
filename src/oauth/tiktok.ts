@@ -1,6 +1,7 @@
-import type { Bindings, OAuthState } from '../types'
+import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
+import { checkSignInBinding } from './binding'
 
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/'
 const TIKTOK_TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/'
@@ -68,13 +69,19 @@ export async function handleTikTokCallback(
   env: Bindings,
   code: string,
   stateId: string,
-): Promise<{ success: boolean; returnUrl: string; error?: string; identity?: string }> {
+  bindingCookie: string | undefined,
+): Promise<SignInCallbackResult> {
   const state = await getOAuthState(env.CACHE_KV, stateId)
   if (!state || state.platform !== 'tiktok') {
     return { success: false, returnUrl: '/', error: 'Invalid or expired OAuth state' }
   }
 
   await deleteOAuthState(env.CACHE_KV, stateId)
+
+  const binding = await checkSignInBinding(env, state, bindingCookie)
+  if (binding.refuse) {
+    return { success: false, returnUrl: state.returnUrl, refused: true }
+  }
 
   if (!env.TIKTOK_CLIENT_KEY || !env.TIKTOK_CLIENT_SECRET || !env.OAUTH_REDIRECT_BASE) {
     return { success: false, returnUrl: state.returnUrl, error: 'TikTok OAuth not configured' }
@@ -143,7 +150,8 @@ export async function handleTikTokCallback(
     verified: true,
     method: 'oauth',
     checked_at: Math.floor(Date.now() / 1000),
+    bound: binding.bound,
   })
 
-  return { success: true, returnUrl: state.returnUrl, identity }
+  return { success: true, returnUrl: state.returnUrl, identity, bound: binding.bound }
 }

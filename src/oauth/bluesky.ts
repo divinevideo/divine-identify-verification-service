@@ -1,8 +1,9 @@
-import type { Bindings, OAuthState } from '../types'
+import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString, generateDPoPKeyPair, importDPoPPrivateKey, createDPoPProof } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification, getOAuthVerification, oauthVerificationKey } from './state'
 import { forgetHandleLookup } from './signin-account'
 import { getHandleFromDidDocument, getPdsEndpoint, isSafeUrl, resolveDidDocument, resolveHandle } from '../atproto'
+import { checkSignInBinding } from './binding'
 
 // The authorization server a PDS (resource server) declares.
 async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
@@ -212,13 +213,19 @@ export async function handleBlueskyCallback(
   code: string,
   stateId: string,
   iss: string,
-): Promise<{ success: boolean; returnUrl: string; error?: string; identity?: string }> {
+  bindingCookie: string | undefined,
+): Promise<SignInCallbackResult> {
   const state = await getOAuthState(env.CACHE_KV, stateId)
   if (!state || state.platform !== 'bluesky') {
     return { success: false, returnUrl: '/', error: 'Invalid or expired OAuth state' }
   }
 
   await deleteOAuthState(env.CACHE_KV, stateId)
+
+  const binding = await checkSignInBinding(env, state, bindingCookie)
+  if (binding.refuse) {
+    return { success: false, returnUrl: state.returnUrl, refused: true }
+  }
 
   // Verify issuer matches
   if (iss !== state.issuer) {
@@ -288,13 +295,13 @@ export async function handleBlueskyCallback(
         return { success: false, returnUrl: state.returnUrl, error: 'Bluesky token exchange failed' }
       }
 
-      return await processBlueskyToken(retryResp, state, env)
+      return await processBlueskyToken(retryResp, state, env, binding.bound)
     }
 
     return { success: false, returnUrl: state.returnUrl, error: 'Bluesky token exchange failed' }
   }
 
-  return await processBlueskyToken(tokenResp, state, env)
+  return await processBlueskyToken(tokenResp, state, env, binding.bound)
 }
 
 async function confirmedHandle(did: string, state: OAuthState): Promise<string | null> {
@@ -321,7 +328,8 @@ async function processBlueskyToken(
   tokenResp: Response,
   state: OAuthState,
   env: Bindings,
-): Promise<{ success: boolean; returnUrl: string; error?: string; identity?: string }> {
+  bound: boolean,
+): Promise<SignInCallbackResult> {
   let tokenData: { sub?: string }
   try {
     tokenData = await tokenResp.json() as typeof tokenData
@@ -375,6 +383,7 @@ async function processBlueskyToken(
     checked_at: checkedAt,
     account_id: did,
     handle,
+    bound,
   })
   // Also index by DID so clients can verify either handle or DID identities.
   await storeOAuthVerification(env.CACHE_KV, {
@@ -386,9 +395,10 @@ async function processBlueskyToken(
     checked_at: checkedAt,
     account_id: did,
     handle,
+    bound,
   })
 
-  return { success: true, returnUrl: state.returnUrl, identity: handle }
+  return { success: true, returnUrl: state.returnUrl, identity: handle, bound }
 }
 
 export function blueskyClientMetadata(baseUrl: string): object {
