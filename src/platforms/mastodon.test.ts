@@ -150,6 +150,16 @@ describe('MastodonVerifier', () => {
     expect(result.error).toContain('Invalid Mastodon identity')
   })
 
+  it('refuses a server spelled with a trailing dot without fetching it', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await verifier.verify('mastodon.social./@alice', '109876543210', npub)
+    expect(result.verified).toBe(false)
+    expect(result.error).toBe('Invalid Mastodon instance hostname')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('rejects private/internal hostnames', async () => {
     const result = await verifier.verify('localhost/@alice', '109876543210', npub)
     expect(result.verified).toBe(false)
