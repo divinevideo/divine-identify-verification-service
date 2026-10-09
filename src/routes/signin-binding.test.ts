@@ -441,6 +441,6 @@ describe('which sign-in records count', () => {
   it('an unbound record counts in the batch endpoint too', async () => {
     const env = twitterEnv(); await seed(env, false)
     const { results } = await batch(env)
-    expect(results[0].method).toBe('oauth')
+    expect(results[0]).toMatchObject({ verified: true, method: 'oauth' })
   })
 })
