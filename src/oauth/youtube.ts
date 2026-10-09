@@ -1,17 +1,29 @@
-import type { Bindings, OAuthState } from '../types'
+import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
+import { isSignInBound } from './binding'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const YOUTUBE_CHANNELS_URL = 'https://www.googleapis.com/youtube/v3/channels'
 
+// Sign-in only works end to end when every credential is set: the start step
+// needs the client ID and redirect base, and the callback's token exchange
+// also needs the client secret. /platforms uses this so the page knows
+// whether to offer YouTube sign-in, and the start step uses it too, so
+// nobody is sent to Google for a sign-in that cannot finish.
+export function isYouTubeOAuthUsable(env: Bindings): boolean {
+  return !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET && !!env.OAUTH_REDIRECT_BASE
+}
+
 export async function startYouTubeOAuth(
   env: Bindings,
   pubkey: string,
   returnUrl: string,
+  bindingHash: string,
 ): Promise<Response> {
-  if (!env.GOOGLE_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
+  // The explicit checks after isYouTubeOAuthUsable let TypeScript see both values are set.
+  if (!isYouTubeOAuthUsable(env) || !env.GOOGLE_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
     return new Response(JSON.stringify({ error: 'YouTube OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
@@ -27,6 +39,7 @@ export async function startYouTubeOAuth(
     codeVerifier: verifier,
     returnUrl,
     createdAt: Date.now(),
+    bindingHash,
   }
 
   await storeOAuthState(env.CACHE_KV, stateId, state)
@@ -50,13 +63,16 @@ export async function handleYouTubeCallback(
   env: Bindings,
   code: string,
   stateId: string,
-): Promise<{ success: boolean; returnUrl: string; error?: string; identity?: string }> {
+  bindingCookie: string | undefined,
+): Promise<SignInCallbackResult> {
   const state = await getOAuthState(env.CACHE_KV, stateId)
   if (!state || state.platform !== 'youtube') {
     return { success: false, returnUrl: '/', error: 'Invalid or expired OAuth state' }
   }
 
   await deleteOAuthState(env.CACHE_KV, stateId)
+
+  const bound = await isSignInBound(state, bindingCookie)
 
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.OAUTH_REDIRECT_BASE) {
     return { success: false, returnUrl: state.returnUrl, error: 'YouTube OAuth not configured' }
@@ -124,7 +140,8 @@ export async function handleYouTubeCallback(
     verified: true,
     method: 'oauth',
     checked_at: Math.floor(Date.now() / 1000),
+    bound,
   })
 
-  return { success: true, returnUrl: state.returnUrl, identity }
+  return { success: true, returnUrl: state.returnUrl, identity, bound }
 }

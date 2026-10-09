@@ -24,7 +24,7 @@ The service is a single [Hono](https://hono.dev) app running on Cloudflare Worke
 - `POST /verify/single` and `POST /api/verify` — single-claim verification (the `/api/verify` alias exists for divine-web compatibility).
 - `GET /verify/:platform/*` — URL-based verification; returns HTML for browsers, JSON with `?format=json`.
 - `GET /nip05/verify` — NIP-05 lookup.
-- `GET /platforms` — list platforms currently available to clients; deployment configuration controls YouTube and TikTok availability.
+- `GET /platforms` — list platforms currently available to clients; deployment configuration controls YouTube and TikTok availability. Sign-in platforms also report an `oauth` field for whether sign-in is set up.
 - `GET /health` and `GET /api/health` — health checks.
 - `/auth/*` — OAuth authorization and callbacks, Nostr login, Bluesky client metadata, OAuth status, and revoke.
 - `GET /` — the interactive landing page (returns JSON when the client asks for it).
@@ -68,7 +68,7 @@ Configuration lives in `wrangler.toml`.
 - `TWITTER_CLIENT_ID`, `TWITTER_CLIENT_SECRET` — Twitter/X OAuth 2.0 credentials. Twitter sign-in is offered only when both are set along with `OAUTH_REDIRECT_BASE`; Twitter proof posts work without them.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — Google OAuth 2.0 credentials, used for YouTube login.
 - `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` — TikTok Login Kit credentials.
-- `OAUTH_REDIRECT_BASE` — base URL for OAuth callbacks (for example `https://verifier.divine.video`), also used to validate return URLs against open redirects.
+- `OAUTH_REDIRECT_BASE` — base URL for OAuth callbacks (for example `https://verifier.divine.video`), also used to validate return URLs against open redirects. `/auth/:platform/start` first redirects a request that reaches a different host than this one to this address, except when the request itself reached the worker on localhost.
 
 See `PRD.md` for the full API contract and request/response shapes.
 

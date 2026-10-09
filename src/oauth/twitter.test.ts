@@ -19,6 +19,8 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
 }
 
 const PUBKEY = 'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234'
+// These tests don't exercise sign-in binding; any hash-shaped string will do.
+const BINDING_HASH = 'b'.repeat(64)
 
 function envWithState(state: Partial<OAuthState> = {}) {
   const stored: OAuthState = {
@@ -50,7 +52,7 @@ describe('startTwitterOAuth', () => {
 
   it('requests the users.read scope that grants username on /2/users/me', async () => {
     const env = makeEnv()
-    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
 
     expect(resp.status).toBe(302)
     const scope = new URL(resp.headers.get('Location')!).searchParams.get('scope')
@@ -60,7 +62,7 @@ describe('startTwitterOAuth', () => {
 
   it('builds the authorize URL with PKCE and the registered redirect URI', async () => {
     const env = makeEnv()
-    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
 
     const params = new URL(resp.headers.get('Location')!).searchParams
     expect(params.get('client_id')).toBe('test-client-id')
@@ -72,13 +74,13 @@ describe('startTwitterOAuth', () => {
 
   it('returns 503 when the client id is not configured', async () => {
     const env = makeEnv({ TWITTER_CLIENT_ID: undefined })
-    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
     expect(resp.status).toBe(503)
   })
 
   it('returns 503 without the client secret, before sending anyone to Twitter', async () => {
     const env = makeEnv({ TWITTER_CLIENT_SECRET: undefined })
-    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/')
+    const resp = await startTwitterOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
     expect(resp.status).toBe(503)
     expect(resp.headers.get('Location')).toBeNull()
   })
@@ -97,7 +99,7 @@ describe('handleTwitterCallback', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
-    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123', undefined)
 
     expect(result.success).toBe(true)
     expect(result.identity).toBe('CreatorX')
@@ -120,7 +122,7 @@ describe('handleTwitterCallback', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
-    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123', undefined)
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/username/i)
@@ -129,7 +131,7 @@ describe('handleTwitterCallback', () => {
 
   it('rejects an unknown or expired state', async () => {
     const env = makeEnv() // CACHE_KV.get resolves null
-    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/state/i)
   })
@@ -140,7 +142,7 @@ describe('handleTwitterCallback', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
-    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123', undefined)
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/token exchange/i)
@@ -149,7 +151,7 @@ describe('handleTwitterCallback', () => {
   it('rejects state that was stored for a different platform', async () => {
     // Guards against cross-platform OAuth state confusion (the state.platform check).
     const env = envWithState({ platform: 'youtube' })
-    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/state/i)
     // Wrong-platform state must NOT be consumed (handler returns before deleteOAuthState).
@@ -161,7 +163,7 @@ describe('handleTwitterCallback', () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ token_type: 'Bearer' }))
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
-    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/access token/i)
     // The user-info request is never reached.
@@ -174,7 +176,7 @@ describe('handleTwitterCallback', () => {
       .mockResolvedValueOnce(jsonResponse({}, false, 500))
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
-    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/user info/i)
     expect(env.CACHE_KV.put).not.toHaveBeenCalled()
@@ -186,7 +188,7 @@ describe('handleTwitterCallback', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
-    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/invalid response.*token/i)
     expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
@@ -199,7 +201,7 @@ describe('handleTwitterCallback', () => {
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new Error('bad json') } } as unknown as Response)
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
-    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/invalid response.*user/i)
     expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
@@ -209,7 +211,7 @@ describe('handleTwitterCallback', () => {
   it('fails the callback when OAuth is not configured (missing client secret)', async () => {
     const env = envWithState()
     env.TWITTER_CLIENT_SECRET = undefined
-    const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+    const result = await handleTwitterCallback(env, 'auth-code', 'state123', undefined)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/not configured/i)
     // State is consumed before the config check; no verification stored.

@@ -5,6 +5,7 @@ import { cacheKey } from '../utils/cache'
 import { oauthVerificationKey, storeOAuthVerification } from './state'
 import { handleBlueskyCallback } from './bluesky'
 import { generateDPoPKeyPair } from './crypto'
+import { createBinding } from './binding'
 
 // An account linked by signing in to Bluesky stays verified for 30 days, or
 // until it is unlinked (#58).
@@ -242,16 +243,139 @@ describe('finishing a Bluesky sign-in', () => {
       if (url === 'https://pds.example.com/.well-known/oauth-protected-resource') return json({ authorization_servers: ['https://bsky.social'] })
       return json({ uri: 'at://x/y/z' })
     }))
-    const result = await handleBlueskyCallback(env, 'code', 's1', 'https://bsky.social')
+    const result = await handleBlueskyCallback(env, 'code', 's1', 'https://bsky.social', undefined)
     expect(result).toMatchObject({ success: true, identity: HANDLE })
     expect(requests.some(u => u.includes('/xrpc/com.atproto.repo.'))).toBe(false)
     const saved = JSON.parse(store.get(oauthVerificationKey('bluesky', HANDLE, PUBKEY)) ?? '{}')
     expect(saved.account_id).toBe(DID)
     expect(saved.handle).toBe(HANDLE)
-    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', DID, PUBKEY)) ?? '{}').handle).toBe(HANDLE)
+    expect(saved.bound).toBe(false)
+    const savedByDid = JSON.parse(store.get(oauthVerificationKey('bluesky', DID, PUBKEY)) ?? '{}')
+    expect(savedByDid.handle).toBe(HANDLE)
+    expect(savedByDid.bound).toBe(false)
     for (const identity of [HANDLE, DID]) {
       expect(kv.put.mock.calls.find(c => c[0] === oauthVerificationKey('bluesky', identity, PUBKEY))?.[2]).toEqual({ expirationTtl: 30 * 86400 })
     }
+  })
+
+  it('records the sign-in as bound when the callback cookie matches the binding hash stored at start', async () => {
+    const { env, store } = createEnv()
+    const { publicJwk, privateJwk } = await generateDPoPKeyPair()
+    const { value, hash } = await createBinding()
+    store.set('oauth_state:s1', JSON.stringify({
+      platform: 'bluesky', pubkey: PUBKEY, codeVerifier: 'v', returnUrl: 'https://verifier.divine.video/', createdAt: Date.now(),
+      dpopPrivateJwk: privateJwk, dpopPublicJwk: publicJwk, issuer: 'https://bsky.social', tokenEndpoint: 'https://bsky.social/oauth/token',
+      did: DID, handle: HANDLE, bindingHash: hash,
+    }))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === 'https://bsky.social/oauth/token') return json({ sub: DID, access_token: 'token' })
+      if (url === `https://plc.directory/${DID}`) {
+        return json({ alsoKnownAs: [`at://${HANDLE}`], service: [{ id: '#atproto_pds', serviceEndpoint: 'https://pds.example.com' }] })
+      }
+      if (url === 'https://pds.example.com/.well-known/oauth-protected-resource') return json({ authorization_servers: ['https://bsky.social'] })
+      return json({ uri: 'at://x/y/z' })
+    }))
+    const result = await handleBlueskyCallback(env, 'code', 's1', 'https://bsky.social', value)
+    expect(result.bound).toBe(true)
+    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', HANDLE, PUBKEY)) ?? '{}').bound).toBe(true)
+    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', DID, PUBKEY)) ?? '{}').bound).toBe(true)
+  })
+
+  it('records the sign-in as unbound when the callback cookie does not match the binding hash stored at start', async () => {
+    const { env, store } = createEnv()
+    const { publicJwk, privateJwk } = await generateDPoPKeyPair()
+    const { hash } = await createBinding()
+    store.set('oauth_state:s1', JSON.stringify({
+      platform: 'bluesky', pubkey: PUBKEY, codeVerifier: 'v', returnUrl: 'https://verifier.divine.video/', createdAt: Date.now(),
+      dpopPrivateJwk: privateJwk, dpopPublicJwk: publicJwk, issuer: 'https://bsky.social', tokenEndpoint: 'https://bsky.social/oauth/token',
+      did: DID, handle: HANDLE, bindingHash: hash,
+    }))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === 'https://bsky.social/oauth/token') return json({ sub: DID, access_token: 'token' })
+      if (url === `https://plc.directory/${DID}`) {
+        return json({ alsoKnownAs: [`at://${HANDLE}`], service: [{ id: '#atproto_pds', serviceEndpoint: 'https://pds.example.com' }] })
+      }
+      if (url === 'https://pds.example.com/.well-known/oauth-protected-resource') return json({ authorization_servers: ['https://bsky.social'] })
+      return json({ uri: 'at://x/y/z' })
+    }))
+    const result = await handleBlueskyCallback(env, 'code', 's1', 'https://bsky.social', 'wrong-cookie-value')
+    expect(result.bound).toBe(false)
+    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', HANDLE, PUBKEY)) ?? '{}').bound).toBe(false)
+    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', DID, PUBKEY)) ?? '{}').bound).toBe(false)
+  })
+
+  it('records the sign-in as bound after a DPoP nonce retry on the token exchange', async () => {
+    const { env, store } = createEnv()
+    const { publicJwk, privateJwk } = await generateDPoPKeyPair()
+    const { value, hash } = await createBinding()
+    store.set('oauth_state:s1', JSON.stringify({
+      platform: 'bluesky', pubkey: PUBKEY, codeVerifier: 'v', returnUrl: 'https://verifier.divine.video/', createdAt: Date.now(),
+      dpopPrivateJwk: privateJwk, dpopPublicJwk: publicJwk, issuer: 'https://bsky.social', tokenEndpoint: 'https://bsky.social/oauth/token',
+      did: DID, handle: HANDLE, bindingHash: hash,
+    }))
+    let tokenCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === 'https://bsky.social/oauth/token') {
+        tokenCalls++
+        // First call: the auth server demands a DPoP nonce. Second call (the
+        // retry, with the nonce included): succeeds.
+        if (tokenCalls === 1) {
+          return new Response(JSON.stringify({ error: 'use_dpop_nonce' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', 'DPoP-Nonce': 'server-nonce' },
+          })
+        }
+        return json({ sub: DID, access_token: 'token' })
+      }
+      if (url === `https://plc.directory/${DID}`) {
+        return json({ alsoKnownAs: [`at://${HANDLE}`], service: [{ id: '#atproto_pds', serviceEndpoint: 'https://pds.example.com' }] })
+      }
+      if (url === 'https://pds.example.com/.well-known/oauth-protected-resource') return json({ authorization_servers: ['https://bsky.social'] })
+      return json({ uri: 'at://x/y/z' })
+    }))
+    const result = await handleBlueskyCallback(env, 'code', 's1', 'https://bsky.social', value)
+    expect(tokenCalls).toBe(2)
+    expect(result.bound).toBe(true)
+    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', HANDLE, PUBKEY)) ?? '{}').bound).toBe(true)
+    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', DID, PUBKEY)) ?? '{}').bound).toBe(true)
+  })
+
+  it('records the sign-in as unbound after a DPoP nonce retry on the token exchange, with no cookie sent', async () => {
+    const { env, store } = createEnv()
+    const { publicJwk, privateJwk } = await generateDPoPKeyPair()
+    const { hash } = await createBinding()
+    store.set('oauth_state:s1', JSON.stringify({
+      platform: 'bluesky', pubkey: PUBKEY, codeVerifier: 'v', returnUrl: 'https://verifier.divine.video/', createdAt: Date.now(),
+      dpopPrivateJwk: privateJwk, dpopPublicJwk: publicJwk, issuer: 'https://bsky.social', tokenEndpoint: 'https://bsky.social/oauth/token',
+      did: DID, handle: HANDLE, bindingHash: hash,
+    }))
+    let tokenCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === 'https://bsky.social/oauth/token') {
+        tokenCalls++
+        if (tokenCalls === 1) {
+          return new Response(JSON.stringify({ error: 'use_dpop_nonce' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', 'DPoP-Nonce': 'server-nonce' },
+          })
+        }
+        return json({ sub: DID, access_token: 'token' })
+      }
+      if (url === `https://plc.directory/${DID}`) {
+        return json({ alsoKnownAs: [`at://${HANDLE}`], service: [{ id: '#atproto_pds', serviceEndpoint: 'https://pds.example.com' }] })
+      }
+      if (url === 'https://pds.example.com/.well-known/oauth-protected-resource') return json({ authorization_servers: ['https://bsky.social'] })
+      return json({ uri: 'at://x/y/z' })
+    }))
+    const result = await handleBlueskyCallback(env, 'code', 's1', 'https://bsky.social', undefined)
+    expect(tokenCalls).toBe(2)
+    expect(result.bound).toBe(false)
+    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', HANDLE, PUBKEY)) ?? '{}').bound).toBe(false)
+    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', DID, PUBKEY)) ?? '{}').bound).toBe(false)
   })
 })
 
@@ -279,7 +403,7 @@ async function signIn(
     if (url === 'https://pds.example.com/.well-known/oauth-protected-resource') return json({ authorization_servers: ['https://bsky.social'] })
     throw new Error(`unexpected fetch ${url}`)
   }))
-  return handleBlueskyCallback(env, 'code', 's2', 'https://bsky.social')
+  return handleBlueskyCallback(env, 'code', 's2', 'https://bsky.social', undefined)
 }
 
 function linkRecord(identity: string, accountId: string, handle: string) {

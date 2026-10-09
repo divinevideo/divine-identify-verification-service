@@ -8,6 +8,8 @@ import { generateDPoPKeyPair } from './crypto'
 // the handle the person typed.
 
 const PUBKEY = 'ab'.repeat(32)
+// These tests don't exercise sign-in binding; any hash-shaped string will do.
+const BINDING_HASH = 'b'.repeat(64)
 const ISSUER = 'https://bsky.social'
 const HANDLE = 'alice.bsky.social'
 const DID = 'did:plc:alice111111111111111111'
@@ -68,7 +70,7 @@ async function signInReturning(sub: string, accounts: Account[], fetchMock: type
   }))
   vi.stubGlobal('fetch', fetchMock)
   const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-  const result = await handleBlueskyCallback(env, 'code', 'state1', ISSUER)
+  const result = await handleBlueskyCallback(env, 'code', 'state1', ISSUER, undefined)
   const recorded = [...cache.store.keys()].filter(k => k.startsWith('oauth_verified:bluesky:'))
   return { result, recorded }
 }
@@ -170,7 +172,7 @@ describe('Bluesky sign-in discovery', () => {
     vi.stubGlobal('fetch', discovery())
     const cache = kv()
     const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, 'Alice.Bsky.Social', 'https://verifier.divine.video/')
+    const response = await startBlueskyOAuth(env, PUBKEY, 'Alice.Bsky.Social', 'https://verifier.divine.video/', BINDING_HASH)
     expect(response.status).toBe(302)
     const [saved] = [...cache.store.entries()].filter(([k]) => k.startsWith('oauth_state:'))
     expect(JSON.parse(saved[1])).toMatchObject({ did: DID, handle: HANDLE, issuer: ISSUER })
@@ -179,7 +181,7 @@ describe('Bluesky sign-in discovery', () => {
   it('refuses an authorization server whose metadata names a different issuer', async () => {
     vi.stubGlobal('fetch', discovery('https://auth.elsewhere.example'))
     const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/')
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
     expect(response.status).toBe(400)
   })
 })

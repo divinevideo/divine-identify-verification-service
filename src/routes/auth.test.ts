@@ -530,7 +530,11 @@ describe('GET /auth/:platform/start return address', () => {
       TWITTER_CLIENT_SECRET: 'test-client-secret',
       OAUTH_REDIRECT_BASE: 'http://localhost:8787',
     }
-    const res = await app.request(`/auth/twitter/start?pubkey=${'a'.repeat(64)}&return_url=${encodeURIComponent('http://localhost:5173/?signin=abc#verify-here')}`, {}, env)
+    // Absolute, and matching OAUTH_REDIRECT_BASE exactly: a bare relative
+    // path would default to http://localhost with no port, which would also
+    // start directly, but only because localhost is exempt from the
+    // finishing-host redirect, not because it's already on that exact host.
+    const res = await app.request(`http://localhost:8787/auth/twitter/start?pubkey=${'a'.repeat(64)}&return_url=${encodeURIComponent('http://localhost:5173/?signin=abc#verify-here')}`, {}, env)
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toMatch(/^https:\/\/twitter\.com\/i\/oauth2\/authorize\?/)
   })
@@ -544,8 +548,12 @@ describe('GET /auth/tiktok/start', () => {
     OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
   }
 
+  // Absolute, and matching OAUTH_REDIRECT_BASE exactly: a bare relative path
+  // would default to http://localhost, which is exempt from the
+  // finishing-host redirect but is not this test's production host, so this
+  // keeps the test on the host it means to exercise.
   function startUrl(): string {
-    return `/auth/tiktok/start?pubkey=${pubkey}&return_url=https://verifier.divine.video/`
+    return `https://verifier.divine.video/auth/tiktok/start?pubkey=${pubkey}&return_url=https://verifier.divine.video/`
   }
 
   it('returns 503 when production OAuth is not enabled', async () => {
@@ -589,6 +597,7 @@ describe('GET /auth/twitter/callback return address', () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'tok' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: '1', username: 'jack' } }), { status: 200 })))
+    vi.spyOn(console, 'info').mockImplementation(() => {})
     try {
       const res = await app.request('/auth/twitter/callback?code=abc&state=state-1', {}, env)
       expect(res.status).toBe(302)

@@ -1,10 +1,11 @@
-import type { Bindings, OAuthState } from '../types'
+import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString, generateDPoPKeyPair, importDPoPPrivateKey, createDPoPProof } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification, getOAuthVerification, oauthVerificationKey } from './state'
 import { forgetHandleLookup } from './signin-account'
 import { getHandleFromDidDocument, getPdsEndpoint, resolveDidDocument, resolveHandle } from '../atproto'
 import { isSafeUrl } from '../utils/validation'
 import { fetchPublic } from '../utils/safe-fetch'
+import { isSignInBound } from './binding'
 
 // The AT Protocol OAuth spec requires both metadata documents to answer
 // "HTTP 200 (not 2xx or redirect)", so these two fetches follow no redirect: a
@@ -77,13 +78,23 @@ async function resolveAuthServer(handle: string): Promise<{
   }
 }
 
+// Bluesky sign-in discovers each account's own authorization server at
+// request time, so the only fixed setting startBlueskyOAuth needs up front is
+// the redirect base it registers as its client_id and callback. /platforms
+// uses this so the page knows whether to offer Bluesky sign-in, and the
+// start step uses it too.
+export function isBlueskyOAuthUsable(env: Bindings): boolean {
+  return !!env.OAUTH_REDIRECT_BASE
+}
+
 export async function startBlueskyOAuth(
   env: Bindings,
   pubkey: string,
   handle: string,
   returnUrl: string,
+  bindingHash: string,
 ): Promise<Response> {
-  if (!env.OAUTH_REDIRECT_BASE) {
+  if (!isBlueskyOAuthUsable(env)) {
     return new Response(JSON.stringify({ error: 'OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
@@ -120,6 +131,7 @@ export async function startBlueskyOAuth(
     tokenEndpoint: authServer.tokenEndpoint,
     did: authServer.did,
     handle: handle.toLowerCase(),
+    bindingHash,
   }
   await storeOAuthState(env.CACHE_KV, stateId, state)
 
@@ -179,7 +191,15 @@ export async function startBlueskyOAuth(
   if (!parResp.ok) {
     let detail = ''
     try { detail = await parResp.text() } catch {}
-    console.error('Bluesky PAR failed:', parResp.status, detail)
+    // Log only the authorization server's error code, not its full response
+    // body, the way a provider's sign-in error code is logged in
+    // src/routes/auth.ts.
+    let errorCode = 'other'
+    try {
+      const parsed = JSON.parse(detail) as { error?: unknown }
+      if (typeof parsed.error === 'string' && /^[a-z_]{1,64}$/.test(parsed.error)) errorCode = parsed.error
+    } catch {}
+    console.error('Bluesky PAR failed:', parResp.status, errorCode)
     return new Response(JSON.stringify({ error: 'Bluesky authorization request failed', status: parResp.status, detail }), {
       status: 502,
       headers: { 'Content-Type': 'application/json' },
@@ -216,13 +236,16 @@ export async function handleBlueskyCallback(
   code: string,
   stateId: string,
   iss: string,
-): Promise<{ success: boolean; returnUrl: string; error?: string; identity?: string }> {
+  bindingCookie: string | undefined,
+): Promise<SignInCallbackResult> {
   const state = await getOAuthState(env.CACHE_KV, stateId)
   if (!state || state.platform !== 'bluesky') {
     return { success: false, returnUrl: '/', error: 'Invalid or expired OAuth state' }
   }
 
   await deleteOAuthState(env.CACHE_KV, stateId)
+
+  const bound = await isSignInBound(state, bindingCookie)
 
   // Verify issuer matches
   if (iss !== state.issuer) {
@@ -292,13 +315,13 @@ export async function handleBlueskyCallback(
         return { success: false, returnUrl: state.returnUrl, error: 'Bluesky token exchange failed' }
       }
 
-      return await processBlueskyToken(retryResp, state, env)
+      return await processBlueskyToken(retryResp, state, env, bound)
     }
 
     return { success: false, returnUrl: state.returnUrl, error: 'Bluesky token exchange failed' }
   }
 
-  return await processBlueskyToken(tokenResp, state, env)
+  return await processBlueskyToken(tokenResp, state, env, bound)
 }
 
 async function confirmedHandle(did: string, state: OAuthState): Promise<string | null> {
@@ -325,7 +348,8 @@ async function processBlueskyToken(
   tokenResp: Response,
   state: OAuthState,
   env: Bindings,
-): Promise<{ success: boolean; returnUrl: string; error?: string; identity?: string }> {
+  bound: boolean,
+): Promise<SignInCallbackResult> {
   let tokenData: { sub?: string }
   try {
     tokenData = await tokenResp.json() as typeof tokenData
@@ -379,6 +403,7 @@ async function processBlueskyToken(
     checked_at: checkedAt,
     account_id: did,
     handle,
+    bound,
   })
   // Also index by DID so clients can verify either handle or DID identities.
   await storeOAuthVerification(env.CACHE_KV, {
@@ -390,9 +415,10 @@ async function processBlueskyToken(
     checked_at: checkedAt,
     account_id: did,
     handle,
+    bound,
   })
 
-  return { success: true, returnUrl: state.returnUrl, identity: handle }
+  return { success: true, returnUrl: state.returnUrl, identity: handle, bound }
 }
 
 export function blueskyClientMetadata(baseUrl: string): object {
