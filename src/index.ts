@@ -893,6 +893,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=alice.bsky.social</pre>
 
+      <p>A sign-in must be finished in the browser that started it. One that returns in a different browser comes back with <code>oauth_error=could not be confirmed in this browser at &lt;Platform&gt;</code> instead of a verified result.</p>
+
       <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.${tiktokOAuthHistoryNote}</div>
     </section>
 
@@ -900,7 +902,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       <h2>Other Endpoints</h2>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/platforms</code></h3>
-        <p>List platforms currently available to clients. TikTok reports unsupported while production OAuth rollout is gated; proof-post verification remains available directly.</p>
+        <p>List platforms currently available to clients. TikTok reports unsupported while production OAuth rollout is gated; proof-post verification remains available directly. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field: <code>true</code> when sign-in is set up for that platform, <code>false</code> when only a proof post works.</p>
       </div>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/health</code></h3>
@@ -2145,7 +2147,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     // Only messages the verifier's sign-in callbacks actually send are shown.
     function signInErrorMessage(reason) {
       if (reason === 'Verification failed') return 'Sign-in was not completed: the account could not be verified.';
-      if (/^(cancelled or declined|could not be completed) at (Twitter|YouTube|TikTok|Bluesky)$/.test(reason)) return 'Sign-in was not completed: ' + reason;
+      if (/^(cancelled or declined|could not be completed|could not be confirmed in this browser) at (Twitter|YouTube|TikTok|Bluesky)$/.test(reason)) return 'Sign-in was not completed: ' + reason;
       return 'Sign-in was not completed.';
     }
 
