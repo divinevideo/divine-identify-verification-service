@@ -5,7 +5,7 @@ import { Hono } from 'hono'
 import type { Bindings } from '../types'
 import auth from './auth'
 import worker from '../index'
-import { oauthStateKey } from '../oauth/state'
+import { oauthStateKey, oauthVerificationKey } from '../oauth/state'
 import { createBinding } from '../oauth/binding'
 import { generateDPoPKeyPair } from '../oauth/crypto'
 
@@ -202,6 +202,168 @@ describe('GET /auth/twitter/callback', () => {
     expect(res.status).toBe(302)
     expect(new URL(res.headers.get('Location') as string, BASE).searchParams.get('oauth_error')).toBe('Verification failed')
     expect(info).not.toHaveBeenCalled()
+  })
+})
+
+describe('binding wiring through the real routes, every sign-in platform', () => {
+  const PLATFORMS = ['twitter', 'youtube', 'tiktok', 'bluesky'] as const
+  type Platform = typeof PLATFORMS[number]
+
+  const BLUESKY_HANDLE = 'alice.bsky.social'
+  const BLUESKY_DID = 'did:plc:alice111111111111111111'
+  const BLUESKY_ISSUER = 'https://bsky.social'
+  const BLUESKY_PDS = 'https://pds.example.com'
+
+  function jsonResponse(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  async function sha256Hex(value: string): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+    return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  function platformEnv(platform: Platform): Bindings {
+    switch (platform) {
+      case 'youtube': return twitterEnv({ GOOGLE_CLIENT_ID: 'gid', GOOGLE_CLIENT_SECRET: 'gsecret' })
+      case 'tiktok': return twitterEnv({ TIKTOK_CLIENT_KEY: 'tkey', TIKTOK_CLIENT_SECRET: 'tsecret', TIKTOK_OAUTH_ENABLED: 'true' })
+      default: return twitterEnv()
+    }
+  }
+
+  function startQuery(platform: Platform): string {
+    return platform === 'bluesky' ? `pubkey=${PUBKEY}&handle=${encodeURIComponent(BLUESKY_HANDLE)}` : `pubkey=${PUBKEY}`
+  }
+
+  function callbackQueryExtra(platform: Platform): string {
+    return platform === 'bluesky' ? `&iss=${encodeURIComponent(BLUESKY_ISSUER)}` : ''
+  }
+
+  // Bluesky's /start resolves the handle, the DID document, the PDS resource
+  // metadata and the authorization server metadata, then pushes the
+  // authorization request, before it ever redirects. Unlike the other
+  // platforms, its final redirect carries no `state` query param (AT
+  // Protocol OAuth sends it inside the pushed authorization request
+  // instead), so this also captures it from the PAR request body, into
+  // `capture.stateId`, for the test to read afterwards.
+  function blueskyStartFetch(capture: { stateId?: string }) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('com.atproto.identity.resolveHandle')) return jsonResponse({ did: BLUESKY_DID })
+      if (url === `https://plc.directory/${BLUESKY_DID}`) {
+        return jsonResponse({ alsoKnownAs: [`at://${BLUESKY_HANDLE}`], service: [{ id: '#atproto_pds', serviceEndpoint: BLUESKY_PDS }] })
+      }
+      if (url === `${BLUESKY_PDS}/.well-known/oauth-protected-resource`) return jsonResponse({ authorization_servers: [BLUESKY_ISSUER] })
+      if (url === `${BLUESKY_ISSUER}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: BLUESKY_ISSUER,
+          authorization_endpoint: `${BLUESKY_ISSUER}/oauth/authorize`,
+          token_endpoint: `${BLUESKY_ISSUER}/oauth/token`,
+          pushed_authorization_request_endpoint: `${BLUESKY_ISSUER}/oauth/par`,
+        })
+      }
+      if (url === `${BLUESKY_ISSUER}/oauth/par`) {
+        if (init?.body instanceof URLSearchParams) capture.stateId = init.body.get('state') ?? undefined
+        return jsonResponse({ request_uri: 'urn:ietf:params:oauth:request_uri:test' })
+      }
+      throw new Error(`unexpected fetch during Bluesky start: ${url}`)
+    })
+  }
+
+  // Bluesky's callback exchanges the code for a token, then re-confirms the
+  // account the way the AT Protocol OAuth spec requires: the same DID,
+  // through the same authorization server, still claiming the same handle.
+  function blueskyCallbackFetch() {
+    return vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === `${BLUESKY_ISSUER}/oauth/token`) return jsonResponse({ sub: BLUESKY_DID, access_token: 'token' })
+      if (url === `https://plc.directory/${BLUESKY_DID}`) {
+        return jsonResponse({ alsoKnownAs: [`at://${BLUESKY_HANDLE}`], service: [{ id: '#atproto_pds', serviceEndpoint: BLUESKY_PDS }] })
+      }
+      if (url === `${BLUESKY_PDS}/.well-known/oauth-protected-resource`) return jsonResponse({ authorization_servers: [BLUESKY_ISSUER] })
+      throw new Error(`unexpected fetch during Bluesky callback: ${url}`)
+    })
+  }
+
+  function callbackFetchFor(platform: Platform) {
+    switch (platform) {
+      case 'twitter':
+        return vi.fn()
+          .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+          .mockResolvedValueOnce(jsonResponse({ data: { id: '1', username: 'jack' } }))
+      case 'youtube':
+        return vi.fn()
+          .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+          .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'UC1', snippet: { customUrl: 'creator' } }] }))
+      case 'tiktok':
+        return vi.fn()
+          .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+          .mockResolvedValueOnce(jsonResponse({ data: { user: { username: 'creator' } } }))
+      case 'bluesky':
+        return blueskyCallbackFetch()
+    }
+  }
+
+  function recordKeysFor(platform: Platform): string[] {
+    if (platform === 'bluesky') return [oauthVerificationKey('bluesky', BLUESKY_HANDLE, PUBKEY), oauthVerificationKey('bluesky', BLUESKY_DID, PUBKEY)]
+    const identity = platform === 'twitter' ? 'jack' : 'creator'
+    return [oauthVerificationKey(platform, identity, PUBKEY)]
+  }
+
+  // Twitter, YouTube and TikTok carry `state` on the final redirect to the
+  // provider; Bluesky doesn't (see blueskyStartFetch), so its state id is
+  // read from `capture` instead.
+  function stateIdFrom(platform: Platform, start: Response, capture: { stateId?: string }): string {
+    if (platform === 'bluesky') return capture.stateId as string
+    return new URL(start.headers.get('Location') as string).searchParams.get('state') as string
+  }
+
+  // Starts a sign-in for `platform` through the real /start route, then
+  // finishes it through the real callback route, sending whatever cookie
+  // `sendCookie` returns for the one /start set (or none, if it returns
+  // undefined).
+  async function startThenFinish(platform: Platform, env: Bindings, sendCookie: (value: string) => string | undefined) {
+    const capture: { stateId?: string } = {}
+    if (platform === 'bluesky') vi.stubGlobal('fetch', blueskyStartFetch(capture))
+    const start = await app.request(`${BASE}/auth/${platform}/start?${startQuery(platform)}`, {}, env)
+    const cookieHeader = start.headers.get('Set-Cookie') as string
+    const value = cookieHeader.split(';')[0].split('=')[1]
+    const stateId = stateIdFrom(platform, start, capture)
+    const cookie = sendCookie(value)
+    vi.stubGlobal('fetch', callbackFetchFor(platform))
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const res = await app.request(`${BASE}/auth/${platform}/callback?code=c&state=${stateId}${callbackQueryExtra(platform)}`,
+      { headers: cookie === undefined ? {} : { Cookie: `__Host-signin_binding=${cookie}` } }, env)
+    const records = await Promise.all(recordKeysFor(platform).map(key => env.CACHE_KV.get(key)))
+    return { start, res, value, stateId, records }
+  }
+
+  it.each(PLATFORMS)('%s: /start sets the binding cookie and stores the SHA-256 hash of it', async (platform) => {
+    const env = platformEnv(platform)
+    const capture: { stateId?: string } = {}
+    if (platform === 'bluesky') vi.stubGlobal('fetch', blueskyStartFetch(capture))
+    const res = await app.request(`${BASE}/auth/${platform}/start?${startQuery(platform)}`, {}, env)
+    expect(res.status).toBe(302)
+    const cookie = res.headers.get('Set-Cookie') as string
+    expect(cookie).toMatch(/^__Host-signin_binding=[A-Za-z0-9_-]{43}; Max-Age=600; Path=\/; HttpOnly; Secure; SameSite=Lax$/)
+    const value = cookie.split(';')[0].split('=')[1]
+    const stateId = stateIdFrom(platform, res, capture)
+    const state = JSON.parse((await env.CACHE_KV.get(oauthStateKey(stateId))) as string)
+    expect(state.bindingHash).toBe(await sha256Hex(value))
+  })
+
+  it.each(PLATFORMS)('%s: a callback sent with the binding cookie writes bound: true', async (platform) => {
+    const { res, records } = await startThenFinish(platform, platformEnv(platform), v => v)
+    expect(res.status).toBe(302)
+    expect(records.every(r => r !== null)).toBe(true)
+    for (const raw of records) expect(JSON.parse(raw as string).bound).toBe(true)
+  })
+
+  it.each(PLATFORMS)('%s: a callback sent without the binding cookie writes bound: false', async (platform) => {
+    const { res, records } = await startThenFinish(platform, platformEnv(platform), () => undefined)
+    expect(res.status).toBe(302)
+    expect(records.every(r => r !== null)).toBe(true)
+    for (const raw of records) expect(JSON.parse(raw as string).bound).toBe(false)
   })
 })
 

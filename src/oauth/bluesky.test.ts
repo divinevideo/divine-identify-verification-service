@@ -225,6 +225,34 @@ describe('startBlueskyOAuth - DPoP nonce retry', () => {
     expect(logged).not.toContain('alice.bsky.social')
   })
 
+  it('logs \'other\' when PAR fails with a JSON body whose error is not code-shaped', async () => {
+    const discovery = mockDiscoveryChain()
+    const parBody = JSON.stringify({ error: 'alice.bsky.social is bad' })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(discovery[0])
+      .mockResolvedValueOnce(discovery[1])
+      .mockResolvedValueOnce(discovery[2])
+      .mockResolvedValueOnce(discovery[3])
+      .mockResolvedValueOnce(parFailed(400, parBody))
+
+    vi.stubGlobal('fetch', fetchMock)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const env = makeEnv()
+    const resp = await startBlueskyOAuth(
+      env,
+      'alice.bsky.social',
+      'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
+      'https://verifier.divine.video/',
+      BINDING_HASH,
+    )
+
+    expect(resp.status).toBe(502)
+    expect(errorSpy).toHaveBeenCalledWith('Bluesky PAR failed:', 400, 'other')
+    const logged = JSON.stringify(errorSpy.mock.calls)
+    expect(logged).not.toContain('alice.bsky.social')
+  })
+
   it('logs \'other\' when PAR fails with a body that is not JSON', async () => {
     const discovery = mockDiscoveryChain()
     const fetchMock = vi.fn()
