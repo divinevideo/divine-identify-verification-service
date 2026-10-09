@@ -52,7 +52,7 @@ function network(sub: string, accounts: Account[]) {
   })
 }
 
-async function signInReturning(sub: string, accounts: Account[]) {
+async function signInReturning(sub: string, accounts: Account[], fetchMock: typeof fetch = network(sub, accounts)) {
   const { publicJwk, privateJwk } = await generateDPoPKeyPair()
   const cache = kv()
   cache.store.set('oauth_state:state1', JSON.stringify({
@@ -68,7 +68,7 @@ async function signInReturning(sub: string, accounts: Account[]) {
     did: DID,
     handle: HANDLE,
   }))
-  vi.stubGlobal('fetch', network(sub, accounts))
+  vi.stubGlobal('fetch', fetchMock)
   const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
   const result = await handleBlueskyCallback(env, 'code', 'state1', ISSUER, undefined)
   const recorded = [...cache.store.keys()].filter(k => k.startsWith('oauth_verified:bluesky:'))
@@ -76,6 +76,33 @@ async function signInReturning(sub: string, accounts: Account[]) {
 }
 
 const alice: Account = { did: DID, handles: [HANDLE], pds: PDS, authServer: ISSUER }
+
+describe('Bluesky sign-in token exchange', () => {
+  const redirected = () => new Response(null, { status: 307, headers: { Location: 'https://elsewhere.example/oauth/token' } })
+
+  it('does not follow a redirect from the token endpoint', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(redirected())
+
+    const { result, recorded } = await signInReturning(DID, [alice], fetchMock)
+
+    expect(result).toMatchObject({ success: false, error: 'Bluesky token exchange failed' })
+    expect(recorded).toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST', redirect: 'manual' })
+  })
+
+  it('does not follow a redirect from the token retry with a nonce', async () => {
+    const nonceRequired = new Response('{}', { status: 400, headers: { 'DPoP-Nonce': 'nonce1' } })
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(nonceRequired).mockResolvedValueOnce(redirected())
+
+    const { result, recorded } = await signInReturning(DID, [alice], fetchMock)
+
+    expect(result).toMatchObject({ success: false, error: 'Bluesky token exchange failed' })
+    expect(recorded).toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: 'POST', redirect: 'manual' })
+  })
+})
 
 afterEach(() => { vi.unstubAllGlobals() })
 

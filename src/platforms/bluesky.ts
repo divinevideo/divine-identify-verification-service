@@ -1,6 +1,7 @@
 import type { PlatformVerifier } from './base'
 import { DIVINE_IDENTITY_LINK_COLLECTION, matchNostrIdentityLinkRecord } from '../identity-link'
 import { resolveAtprotoIdentityPds } from '../atproto'
+import { fetchPublic } from '../utils/safe-fetch'
 
 export class BlueskyVerifier implements PlatformVerifier {
   readonly name = 'bluesky'
@@ -86,7 +87,7 @@ export class BlueskyVerifier implements PlatformVerifier {
     if (!repo) return null
 
     const url = `${repo.pdsEndpoint}/xrpc/com.atproto.repo.listRecords?repo=${encodeURIComponent(repo.did)}&collection=${encodeURIComponent(DIVINE_IDENTITY_LINK_COLLECTION)}&limit=100`
-    const response = await fetch(url, {
+    const response = await fetchPublic(url, {
       headers: {
         'Accept': 'application/json',
         'User-Agent': 'divine-identity-verification-service',
