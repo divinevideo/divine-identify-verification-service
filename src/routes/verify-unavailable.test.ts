@@ -244,11 +244,10 @@ describe('the verifier\'s own rate limits', () => {
     platformUnreachable()
     const body = await verify(env, 'twitter', CLAIMS.twitter)
     expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable', cached: false })
-    // TODO(divinevideo/divine-mobile#9962): divine-mobile recognises a
-    // rate-limited answer by this prefix (rateLimitErrorPrefix in
-    // identity_claims_repository.dart) and keeps the person's known-good
-    // badges. Remove with the text only once the oldest app version still in
-    // use reads `code` instead; older installs keep matching the text.
+    // TODO(#115): Divine apps built before divine-mobile#9999 recognise a
+    // rate-limited answer by this prefix and keep the person's known-good
+    // badges; newer builds read `code`. Remove with the text only once those
+    // older versions are no longer in use.
     expect(body.error).toMatch(/^Rate limit exceeded/)
     expect(fetch).not.toHaveBeenCalled()
   })
