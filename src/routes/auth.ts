@@ -316,6 +316,7 @@ async function redirectAfterUnfinishedSignIn(
   // a misconfigured app can be told apart from a person saying no. The
   // description and the state id are never logged.
   console.warn(`${platform} sign-in returned an error:`, /^[a-z_]{1,64}$/.test(providerError) ? providerError : 'other')
+  c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
 
   // The page shows this after "Sign-in was not completed: ". `access_denied`
   // means the request was refused, usually by the person; any other code means

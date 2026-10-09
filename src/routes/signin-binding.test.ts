@@ -228,3 +228,13 @@ describe('a callback that throws still clears the binding cookie, on every platf
     expect(res.headers.get('Set-Cookie')).toBe('__Host-signin_binding=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax')
   })
 })
+
+describe('a sign-in the provider did not complete', () => {
+  it.each(['twitter', 'youtube', 'tiktok', 'bluesky'])('%s: clears the binding cookie and records nothing', async (platform) => {
+    const env = twitterEnv()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const res = await app.request(`${BASE}/auth/${platform}/callback?error=access_denied&state=missing`, {}, env)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Set-Cookie')).toContain('__Host-signin_binding=; Max-Age=0')
+  })
+})
