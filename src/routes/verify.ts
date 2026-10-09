@@ -85,10 +85,10 @@ async function verifySingleClaim(
       platform: normalizedClaim.platform,
       identity: normalizedClaim.identity,
       verified: false,
-      // TODO(divinevideo/divine-mobile#9962): divine-mobile recognises rate
+      // TODO(#115): Divine apps built before divine-mobile#9999 recognise rate
       // limiting by the "Rate limit exceeded" prefix of this and the
-      // per-platform answer below. Keep both texts until the oldest app version
-      // still in use reads `code`; older installs keep matching the text.
+      // per-platform answer below; newer builds read `code`. Keep both texts
+      // until those older versions are no longer in use.
       error: 'Rate limit exceeded for this pubkey',
       code: 'temporarily_unavailable',
       checked_at: now,
@@ -670,7 +670,7 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
     var CURRENT_PLATFORM = '${esc(platform)}';
     var CURRENT_IDENTITY = '${esc(identity)}';
     var API = '${esc(apiOrigin)}';
-    var RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
+    var RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.primal.net'];
     var VERIFY_BATCH_SIZE = ${MAX_BATCH_SIZE};
     var PLATFORM_LABELS = ${JSON.stringify(PLATFORM_LABELS)};
     var DISCORD_MESSAGE_LINK_HOSTS = ${JSON.stringify(MESSAGE_LINK_HOSTS)};
