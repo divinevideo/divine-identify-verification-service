@@ -399,9 +399,10 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
   const platformLabel = PLATFORM_LABELS[platform] || platform
   const statusText = verified ? 'Verified' : 'Not Verified'
   const checkedAt = result.checked_at ? new Date(result.checked_at * 1000).toUTCString() : 'N/A'
-  // A verified share link reports its post number; link the post by that number,
-  // since proofUrl can't build a link from a share link.
-  const proofLink = proofUrl(platform, identity, result.canonical_proof || proof)
+  // A verified share link reports its post number, and a Mastodon account found
+  // on its server's web domain reports that account; link the post by those,
+  // since proofUrl can't build a working link from what was claimed.
+  const proofLink = proofUrl(platform, result.canonical_identity || identity, result.canonical_proof || proof)
   const profileUrl = `https://divine.video/profile/${npub}`
   const ogTitle = verified
     ? `${identity} is verified on ${platformLabel}`
@@ -951,7 +952,7 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
           for (var k = 0; k < data.results.length; k++) {
             var claim = batch[k];
             if (!claim) continue;
-            data.results[k]._proofUrl = proofUrl(claim.platform, claim.identity, data.results[k].canonical_proof || claim.proof);
+            data.results[k]._proofUrl = proofUrl(claim.platform, data.results[k].canonical_identity || claim.identity, data.results[k].canonical_proof || claim.proof);
             batchResults.push(data.results[k]);
           }
         } catch(e) { /* leave this batch out */ }

@@ -327,6 +327,11 @@ describe('TikTok in the API docs', () => {
     const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
     expect(html).toContain('<tr><td><code>canonical_proof</code></td><td>string?</td>')
   })
+
+  it('documents canonical_identity in the response fields', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    expect(html).toContain('<tr><td><code>canonical_identity</code></td><td>string?</td>')
+  })
 })
 
 describe('favicon', () => {
