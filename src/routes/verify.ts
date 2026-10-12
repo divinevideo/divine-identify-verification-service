@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { Bindings, VerifyClaim, VerifyResult, CachedResult } from '../types'
-import { validateClaim, normalizePubkey, VALID_PLATFORMS } from '../utils/validation'
+import { validateClaim, normalizePubkey, fitsStorageKeys, VALID_PLATFORMS } from '../utils/validation'
 import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
@@ -46,11 +46,17 @@ async function verifySingleClaim(
   }
   // People paste handles and links in many shapes. Check and cache the tidy
   // form, but echo the identity as sent: clients match results on it.
-  const tidy = tidyClaim(normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.proof)
+  const tidyForm = tidyClaim(normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.proof)
+  // A tidy account can be longer than the one sent (a Telegram channel in place
+  // of "s"). Validation sized the claim as sent, so when the tidy form's storage
+  // keys wouldn't fit, the claim is checked as sent and stays checkable.
+  const tidy = fitsStorageKeys(normalizedClaim.platform, tidyForm.identity, tidyForm.proof, normalizedClaim.pubkey)
+    ? tidyForm
+    : { identity: normalizedClaim.identity, proof: normalizedClaim.proof }
   // The tidy values to hand back, on a verified answer, when tidying changed something.
   const tidied = {
     ...(tidy.identity !== normalizedClaim.identity ? { canonical_identity: tidy.identity } : {}),
-    ...(tidy.proof && tidy.proof !== normalizedClaim.proof ? { canonical_proof: tidy.proof } : {}),
+    ...(tidy.proof !== normalizedClaim.proof ? { canonical_proof: tidy.proof } : {}),
   }
   const key = cacheKey(normalizedClaim.platform, tidy.identity, tidy.proof, normalizedClaim.pubkey)
 

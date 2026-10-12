@@ -1726,9 +1726,11 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       }
 
       if (platform === 'telegram' && (host === 't.me' || host === 'www.t.me')) {
-        if (path[0] && path[1]) {
-          const channel = path[0].replace(/^@/, '');
-          return { identity: channel, proof: channel + '/' + path[1] };
+        // t.me/s/<channel>/<post> is the same post on Telegram's public preview page.
+        const post = path[0] === 's' ? path.slice(1) : path;
+        if (post[0] && post[1]) {
+          const channel = post[0].replace(/^@/, '');
+          return { identity: channel, proof: channel + '/' + post[1] };
         }
       }
 
@@ -1865,11 +1867,11 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
           // TikTok share link becomes its post number), not the pasted link,
           // unless the person changed the proof while the check ran.
           const proofInput = document.getElementById('proof-proof-input');
-          const usePostNumber = typeof data.canonical_proof === 'string' && data.canonical_proof
+          const useCleanProof = typeof data.canonical_proof === 'string' && data.canonical_proof
             && proofInput.value === normalized.proof;
-          if (usePostNumber) proofInput.value = data.canonical_proof;
+          if (useCleanProof) proofInput.value = data.canonical_proof;
           const method = data.method ? ' via ' + data.method.replace('_', ' ') : '';
-          setStatus('proof-status', 'Success. This account is verified' + method + '.' + (usePostNumber ? ' Publishing will use the post number.' : ''), 'ok');
+          setStatus('proof-status', 'Success. This account is verified' + method + '.' + (useCleanProof ? ' Publishing will use the clean form.' : ''), 'ok');
         } else {
           setStatus('proof-status', data.error || 'Not verified yet.', 'error');
         }

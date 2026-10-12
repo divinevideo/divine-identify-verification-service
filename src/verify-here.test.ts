@@ -49,11 +49,11 @@ describe('Verify this link', () => {
     expect(h.fields['proof-proof-input'].value).toBe('7123456789012345678')
   })
 
-  it('says it will publish the post number', async () => {
+  it('says it will publish the clean form', async () => {
     const load = await loadVerifySingleHere()
     const h = harness({ verified: true, canonical_proof: '7123456789012345678' }, 'https://vm.tiktok.com/ZMabc123/')
     await load(h.env)()
-    expect(h.statuses[h.statuses.length - 1]).toBe('Success. This account is verified. Publishing will use the post number.')
+    expect(h.statuses[h.statuses.length - 1]).toBe('Success. This account is verified. Publishing will use the clean form.')
   })
 
   it('does not overwrite a proof the person changed while the check ran', async () => {

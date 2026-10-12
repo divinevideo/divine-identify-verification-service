@@ -94,9 +94,9 @@ export interface VerifyResult {
   code?: VerificationCode
   method?: VerificationMethod
   provenance?: VerificationProvenance
-  /** The proof to publish instead of the one sent: tidied, or resolved by the platform check. */
+  /** The proof to publish instead of the one sent: tidied, or resolved by the platform check (see PlatformVerifier.verify). */
   canonical_proof?: string
-  /** The account to publish instead of the one sent: tidied, or named on the server that holds it. */
+  /** The account to publish instead of the one sent: tidied, or named on the server that holds it (see PlatformVerifier.verify). */
   canonical_identity?: string
   checked_at: number
   cached: boolean

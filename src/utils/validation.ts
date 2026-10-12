@@ -91,7 +91,8 @@ export interface ValidationError {
 // for sign-in platforms, but it is checked for all: no real handle comes close.
 const KV_MAX_KEY_BYTES = 512
 
-function fitsStorageKeys(platform: string, identity: string, proof: string, pubkey: string): boolean {
+/** Whether the claim's cache and sign-in record keys fit within the storage key limit. */
+export function fitsStorageKeys(platform: string, identity: string, proof: string, pubkey: string): boolean {
   const normalizedPubkey = normalizePubkey(pubkey)
   const keys = [
     cacheKey(platform, identity, proof, normalizedPubkey),

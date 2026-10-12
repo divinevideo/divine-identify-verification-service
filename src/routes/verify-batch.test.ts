@@ -167,6 +167,27 @@ describe('POST /verify: one bad claim no longer fails the whole batch', () => {
     }
   })
 
+  it('keeps a long claim checkable when its tidy form would be too long to store', async () => {
+    const { env } = createEnv()
+    await seedVerified(env, 'github', 'octocat', 'abc123')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+    // As sent, "v|telegram|s|" + 430 + "|" + 64-char pubkey = 508 bytes. Tidied, the
+    // channel becomes the account and the key would be 537 bytes.
+    const proof = `s/${'a'.repeat(32)}/${'1'.repeat(395)}`
+    const res = await postBatch(env, {
+      claims: [
+        { platform: 'telegram', identity: 's', proof, pubkey: PUBKEY },
+        { platform: 'github', identity: 'octocat', proof: 'abc123', pubkey: PUBKEY },
+      ],
+    })
+    expect(res.status).toBe(200)
+    const { results } = await res.json() as BatchResponse
+    expect(results[0]).toMatchObject({ platform: 'telegram', identity: 's', verified: false })
+    expect(results[0]).not.toHaveProperty('canonical_identity')
+    expect(results[0]).not.toHaveProperty('canonical_proof')
+    expect(results[1]).toMatchObject({ platform: 'github', identity: 'octocat', verified: true })
+  })
+
   it('accepts a claim whose storage key is exactly 512 bytes', async () => {
     const { env } = createEnv()
     // "v|github|" + 10 + "|" + 427 + "|" + 64-char pubkey = 512 bytes.

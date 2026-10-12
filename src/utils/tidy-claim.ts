@@ -7,8 +7,10 @@ export interface TidiedClaim {
 }
 
 const TWITTER_HOSTS = ['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com']
-const YOUTUBE_HOSTS = ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com']
-const YOUTUBE_EMBED_HOSTS = ['www.youtube-nocookie.com', 'youtube-nocookie.com']
+const YOUTUBE_HOSTS = ['youtube.com', 'www.youtube.com', 'm.youtube.com']
+// YouTube Music links to a video only as a watch link.
+const YOUTUBE_MUSIC_HOSTS = ['music.youtube.com']
+const YOUTUBE_EMBED_HOSTS = ['www.youtube-nocookie.com']
 const AT_PREFIX = ['twitter', 'bluesky', 'github', 'telegram', 'tiktok']
 
 // A pasted http(s) link, or null. Only links are parsed; other text is left alone.
@@ -32,11 +34,14 @@ function on(url: URL, hosts: string[]): boolean {
 function twitterProof(proof: string): string | null {
   const url = link(proof)
   if (!url || !on(url, TWITTER_HOSTS)) return null
-  // /<user>/status/<id>, /i/status/<id> and /i/web/status/<id>, maybe followed by /photo/1.
+  // /<user>/status/<id>, /i/status/<id> and /i/web/status/<id>, maybe followed
+  // by /photo/<n> or /video/<n> (a post's own media links).
   const segments = parts(url)
   const at = segments[0] === 'i' && segments[1] === 'web' ? 2 : 1
-  const [status, id] = segments.slice(at)
-  return status === 'status' && /^\d+$/.test(id ?? '') ? id : null
+  const [status, id, ...rest] = segments.slice(at)
+  const media = rest.length === 0
+    || (rest.length === 2 && (rest[0] === 'photo' || rest[0] === 'video') && /^\d+$/.test(rest[1]))
+  return status === 'status' && /^\d+$/.test(id ?? '') && media ? id : null
 }
 
 function blueskyProof(proof: string): string | null {
@@ -44,26 +49,41 @@ function blueskyProof(proof: string): string | null {
   if (atUri) return atUri[1]
   const url = link(proof)
   if (!url || !on(url, ['bsky.app'])) return null
-  const [profile, , post, rkey] = parts(url)
-  return profile === 'profile' && post === 'post' && rkey ? rkey : null
+  const segments = parts(url)
+  const [profile, , post, rkey] = segments
+  return segments.length === 4 && profile === 'profile' && post === 'post' ? rkey : null
 }
 
 function githubProof(proof: string): string | null {
   const url = link(proof)
   if (!url || !on(url, ['gist.github.com', 'gist.githubusercontent.com'])) return null
-  // /<user>/<id> or, on gist.github.com, /<id>; a clone (.git) or embed (.js) link names the same gist.
+  // /<user>/<id> or, on gist.github.com, /<id>. The clone link is /<id>.git and
+  // the embed link /<user>/<id>.js; both name the same gist.
   const segments = parts(url)
-  const candidate = (segments.length === 1 && on(url, ['gist.github.com']) ? segments[0] : segments[1] ?? '')
-    .replace(/\.(git|js)$/, '')
+  const candidate = segments.length === 1 && on(url, ['gist.github.com'])
+    ? segments[0].replace(/\.git$/, '')
+    : (segments[1] ?? '').replace(/\.js$/, '')
   return /^[0-9a-f]+$/i.test(candidate) ? candidate : null
 }
 
-const TELEGRAM_HOSTS = ['t.me', 'www.t.me', 'telegram.me', 'www.telegram.me', 'telegram.dog']
+const TELEGRAM_HOSTS = ['t.me', 'www.t.me', 'telegram.me', 'telegram.dog']
+// A channel name: Telegram allows at most 32 characters. A post in tidy form is
+// <channel>/<post>.
+const TELEGRAM_CHANNEL = /^[A-Za-z0-9_]{1,32}$/
+const TELEGRAM_POST = /^[A-Za-z0-9_]{1,32}\/\d+$/
 
 // A public post: exactly <channel>/<post>. Private links (c/...) can't be read
 // publicly, and forum-topic links have a third part, so neither is rewritten.
 function telegramPost(channel: string | undefined, id: string | undefined): string | null {
-  return channel && channel !== 'c' && /^[A-Za-z0-9_]+$/.test(channel) && /^\d+$/.test(id ?? '') ? `${channel}/${id}` : null
+  return channel && channel !== 'c' && TELEGRAM_CHANNEL.test(channel) && /^\d+$/.test(id ?? '') ? `${channel}/${id}` : null
+}
+
+// Whether the proof names a post on Telegram's public preview page: a
+// t.me/s/<channel>/<post> link, or the s/<channel>/<post> left of one.
+function telegramPreview(proof: string): boolean {
+  if (proof.startsWith('s/')) return true
+  const url = link(proof)
+  return !!url && TELEGRAM_HOSTS.includes(url.hostname.toLowerCase()) && parts(url)[0] === 's'
 }
 
 function telegramProof(proof: string): string | null {
@@ -114,14 +134,14 @@ function youtubeProof(proof: string): string | null {
     const [id] = parts(url)
     return VIDEO_ID.test(id ?? '') ? id : null
   }
-  if (!on(url, [...YOUTUBE_HOSTS, ...YOUTUBE_EMBED_HOSTS])) return null
+  if (!on(url, [...YOUTUBE_HOSTS, ...YOUTUBE_MUSIC_HOSTS, ...YOUTUBE_EMBED_HOSTS])) return null
   const [kind, id] = parts(url)
   if (on(url, YOUTUBE_EMBED_HOSTS)) return kind === 'embed' && VIDEO_ID.test(id ?? '') ? id : null
   if (kind === 'watch') {
     const v = url.searchParams.get('v') ?? ''
     return VIDEO_ID.test(v) ? v : null
   }
-  return ['shorts', 'live', 'embed'].includes(kind ?? '') && VIDEO_ID.test(id ?? '') ? id : null
+  return on(url, YOUTUBE_HOSTS) && ['shorts', 'live', 'embed'].includes(kind ?? '') && VIDEO_ID.test(id ?? '') ? id : null
 }
 
 function youtubeIdentity(identity: string): string | null {
@@ -159,8 +179,9 @@ export function tidyClaim(platform: string, identity: string, proof: string): Ti
   const resolvedProof = (tidier && tidier(tidyProof)) || tidyProof
 
   // A t.me/s/<channel> link read as account "s": /s/ is Telegram's public
-  // preview path, not an account, so the channel is the account.
-  if (platform === 'telegram' && tidyIdentity.toLowerCase() === 's' && resolvedProof.includes('/')) {
+  // preview path, not an account, so the channel of the post is the account.
+  if (platform === 'telegram' && tidyIdentity.toLowerCase() === 's'
+    && telegramPreview(tidyProof) && TELEGRAM_POST.test(resolvedProof)) {
     tidyIdentity = resolvedProof.split('/')[0]
   }
 

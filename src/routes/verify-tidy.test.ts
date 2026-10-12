@@ -26,11 +26,11 @@ function tweetBy(author: string, text: string) {
   }), { status: 200 })
 }
 
-async function single(env: unknown, identity: string, proof: string) {
+async function single(env: unknown, identity: string, proof: string, platform = 'twitter') {
   const response = await worker.fetch(new Request('https://verifier.divine.video/verify/single', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ platform: 'twitter', identity, proof, pubkey: PUBKEY }),
+    body: JSON.stringify({ platform, identity, proof, pubkey: PUBKEY }),
   }), env as never)
   return await response.json() as Record<string, unknown>
 }
@@ -108,5 +108,35 @@ describe('claims pasted in other shapes', () => {
     const body = await single(env, '@alice', TWEET)
     expect(body).toMatchObject({ identity: '@alice', verified: true, method: 'oauth', canonical_identity: 'alice' })
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('checks a Bluesky sign-in against the handle without its @', async () => {
+    const env = { CACHE_KV: createMockKV(), RATE_LIMIT_KV: createMockKV() }
+    const did = 'did:plc:alice123example'
+    // Bluesky resolves the handle itself; a handle with an @ doesn't resolve.
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const handle = new URL(url).searchParams.get('handle')
+      return handle === 'alice.bsky.social'
+        ? new Response(JSON.stringify({ did }), { status: 200 })
+        : new Response(JSON.stringify({ error: 'InvalidRequest' }), { status: 400 })
+    }))
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${PUBKEY}`, JSON.stringify({
+      platform: 'bluesky', identity: 'alice.bsky.social', pubkey: PUBKEY, verified: true, method: 'oauth',
+      checked_at: 1700000000, account_id: did, handle: 'alice.bsky.social',
+    }))
+    const body = await single(env, '@alice.bsky.social', '', 'bluesky')
+    expect(body).toMatchObject({
+      identity: '@alice.bsky.social', verified: true, method: 'oauth', canonical_identity: 'alice.bsky.social',
+    })
+  })
+
+  it('returns no clean values for a failed answer served from the cache', async () => {
+    const env = { CACHE_KV: createMockKV(), RATE_LIMIT_KV: createMockKV() }
+    vi.stubGlobal('fetch', vi.fn(async () => tweetBy('alice', 'no key here')))
+    await single(env, '@alice', `https://x.com/alice/status/${TWEET}`)
+    const body = await single(env, '@alice', `https://x.com/alice/status/${TWEET}`)
+    expect(body).toMatchObject({ identity: '@alice', verified: false, cached: true })
+    expect(body).not.toHaveProperty('canonical_identity')
+    expect(body).not.toHaveProperty('canonical_proof')
   })
 })
