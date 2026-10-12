@@ -410,6 +410,11 @@ describe('verifier proof-post form', () => {
     })
   })
 
+  it('does not take the preview path for a Telegram account when the link names no post', async () => {
+    const normalize = await browserNormalizer()
+    expect(normalize('telegram', '', 'https://t.me/s/alicechannel')).toEqual({ identity: '', proof: 'https://t.me/s/alicechannel' })
+  })
+
   // The verifier is the only place a Discord message link is parsed. It needs
   // the whole link, channel included, so the page must not shorten it to an ID
   // or otherwise rewrite it on the way to the API.

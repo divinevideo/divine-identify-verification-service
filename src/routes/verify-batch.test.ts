@@ -170,7 +170,8 @@ describe('POST /verify: one bad claim no longer fails the whole batch', () => {
   it('keeps a long claim checkable when its tidy form would be too long to store', async () => {
     const { env } = createEnv()
     await seedVerified(env, 'github', 'octocat', 'abc123')
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+    const fetchMock = vi.fn(async () => new Response('', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
     // As sent, "v|telegram|s|" + 430 + "|" + 64-char pubkey = 508 bytes. Tidied, the
     // channel becomes the account and the key would be 537 bytes.
     const proof = `s/${'a'.repeat(32)}/${'1'.repeat(395)}`
@@ -183,6 +184,8 @@ describe('POST /verify: one bad claim no longer fails the whole batch', () => {
     expect(res.status).toBe(200)
     const { results } = await res.json() as BatchResponse
     expect(results[0]).toMatchObject({ platform: 'telegram', identity: 's', verified: false })
+    // The check reads the proof as sent, not its tidy form.
+    expect(fetchMock).toHaveBeenCalledWith(`https://t.me/${proof}?embed=1`, expect.anything())
     expect(results[0]).not.toHaveProperty('canonical_identity')
     expect(results[0]).not.toHaveProperty('canonical_proof')
     expect(results[1]).toMatchObject({ platform: 'github', identity: 'octocat', verified: true })

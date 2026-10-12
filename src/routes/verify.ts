@@ -84,7 +84,8 @@ async function verifySingleClaim(
           method: 'oauth',
           evidence: ['oauth_verification_cache'],
         },
-        ...(tidied.canonical_identity ? { canonical_identity: tidied.canonical_identity } : {}),
+        // A sign-in claim can carry a pasted proof too, so both clean values apply.
+        ...cleanValues({}, tidied),
         checked_at: oauthResult.checked_at,
         cached: true,
       }

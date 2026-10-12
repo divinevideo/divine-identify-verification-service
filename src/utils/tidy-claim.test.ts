@@ -114,6 +114,19 @@ describe('tidyClaim', () => {
     expect(tidyClaim('telegram', 's', `s/${channel}/45`)).toEqual({ identity: channel, proof: `${channel}/45` })
   })
 
+  it('reads a pasted www.t.me link', () => {
+    expect(tidyClaim('telegram', 'alicechannel', 'https://www.t.me/alicechannel/45').proof).toBe('alicechannel/45')
+  })
+
+  it('keeps the account "s" when a plain post link names a channel', () => {
+    expect(tidyClaim('telegram', 's', 'https://t.me/alicechannel/45')).toEqual({ identity: 's', proof: 'alicechannel/45' })
+  })
+
+  it('keeps the account "s" for a preview link to a private post', () => {
+    const proof = 'https://t.me/s/c/45'
+    expect(tidyClaim('telegram', 's', proof)).toEqual({ identity: 's', proof })
+  })
+
   it('keeps a Telegram account other than "s" even when the post names another channel', () => {
     expect(tidyClaim('telegram', 'bobchannel', 'https://t.me/alicechannel/45')).toEqual({ identity: 'bobchannel', proof: 'alicechannel/45' })
   })
@@ -156,6 +169,9 @@ describe('tidyClaim', () => {
 
   it.each([
     'https://www.youtube.com/channel/UCshort',
+    `https://www.youtube.com/channel/UC${'a'.repeat(23)}`,
+    `https://www.youtube.com/user/UC${'a'.repeat(22)}`,
+    'https://www.youtube.com/@',
     'https://evil.example/@Alice',
     'https://evil.example/channel/UC1234567890abcdefghijkl',
     'https://music.youtube.com/@Alice',
@@ -206,6 +222,20 @@ describe('tidyClaim', () => {
     ['youtube', 'https://www.youtube-nocookie.com/v/dQw4w9WgXcQ'],
     ['youtube', 'https://youtube-nocookie.com/embed/dQw4w9WgXcQ'],
     ['youtube', 'https://music.youtube.com/shorts/dQw4w9WgXcQ'],
+    ['telegram', 'https://evil.example/s/alicechannel/45'],
+    ['telegram', 's/alicechannel/45/extra'],
+    ['twitter', 'ftp://x.com/alice/status/1'],
+    ['twitter', 'https://x.com/alice/status/1/photo/abc'],
+    ['bluesky', 'x at://did:plc:a/app.bsky.feed.post/3k'],
+    ['bluesky', 'at://a/b/app.bsky.feed.post/3k'],
+    ['mastodon', 'https://akko.wtf/notice/BBFSKRcr9ptxCQUa8G'],
+    ['mastodon', 'https://m.s/x/alice/statuses/1'],
+    ['mastodon', 'https://m.s/users/alice/followers/1'],
+    ['mastodon', 'https://m.s/users/alice/statuses/a_b'],
+    ['youtube', 'https://youtu.be/dQw4w9WgXcQx'],
+    ['youtube', 'https://www.youtube-nocookie.com/embed/short'],
+    ['youtube', 'https://www.youtube.com/shorts/short'],
+    ['github', 'https://gist.github.com/alice/ABCDEF'],
   ])('leaves an unrecognised %s link %s as it is', (platform, proof) => {
     expect(tidyClaim(platform, 'alice', proof).proof).toBe(proof)
   })

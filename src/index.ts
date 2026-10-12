@@ -1870,8 +1870,13 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
           const useCleanProof = typeof data.canonical_proof === 'string' && data.canonical_proof
             && proofInput.value === normalized.proof;
           if (useCleanProof) proofInput.value = data.canonical_proof;
+          // The same for the account (for example a handle pasted with its @).
+          const identityInput = document.getElementById('proof-identity-input');
+          const useCleanIdentity = typeof data.canonical_identity === 'string' && data.canonical_identity
+            && identityInput.value === normalized.identity;
+          if (useCleanIdentity) identityInput.value = data.canonical_identity;
           const method = data.method ? ' via ' + data.method.replace('_', ' ') : '';
-          setStatus('proof-status', 'Success. This account is verified' + method + '.' + (useCleanProof ? ' Publishing will use the clean form.' : ''), 'ok');
+          setStatus('proof-status', 'Success. This account is verified' + method + '.' + (useCleanProof || useCleanIdentity ? ' Publishing will use the clean form.' : ''), 'ok');
         } else {
           setStatus('proof-status', data.error || 'Not verified yet.', 'error');
         }

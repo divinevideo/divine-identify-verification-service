@@ -63,7 +63,7 @@ function githubProof(proof: string): string | null {
   const candidate = segments.length === 1 && on(url, ['gist.github.com'])
     ? segments[0].replace(/\.git$/, '')
     : (segments[1] ?? '').replace(/\.js$/, '')
-  return /^[0-9a-f]+$/i.test(candidate) ? candidate : null
+  return /^[0-9a-f]+$/.test(candidate) ? candidate : null
 }
 
 const TELEGRAM_HOSTS = ['t.me', 'www.t.me', 'telegram.me', 'telegram.dog']

@@ -110,6 +110,20 @@ describe('claims pasted in other shapes', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('returns both clean values for a sign-in claim that carries a pasted post link', async () => {
+    const env = { CACHE_KV: createMockKV(), RATE_LIMIT_KV: createMockKV() }
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await env.CACHE_KV.put(`oauth_verified:twitter:alice:${PUBKEY}`, JSON.stringify({
+      platform: 'twitter', identity: 'alice', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1700000000,
+    }))
+    const body = await single(env, '@alice', `https://x.com/alice/status/${TWEET}`)
+    expect(body).toMatchObject({
+      identity: '@alice', verified: true, method: 'oauth', canonical_identity: 'alice', canonical_proof: TWEET,
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('checks a Bluesky sign-in against the handle without its @', async () => {
     const env = { CACHE_KV: createMockKV(), RATE_LIMIT_KV: createMockKV() }
     const did = 'did:plc:alice123example'
