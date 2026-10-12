@@ -47,11 +47,11 @@ async function verifySingleClaim(
   // People paste handles and links in many shapes. Check and cache the tidy
   // form, but echo the identity as sent: clients match results on it.
   const tidyForm = tidyClaim(normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.proof)
-  // Either tidy value can be longer than the one sent: a Telegram channel copied
-  // into the account in place of "s", or a link whose non-English text is
-  // percent-encoded when it is read. Validation sized the claim as sent, so when
-  // the tidy form's storage keys wouldn't fit, the claim is checked as sent and
-  // stays checkable.
+  // Either tidy value can be longer than the one sent: for example a Telegram
+  // channel copied into the account in place of "s", or a link whose
+  // non-English text is percent-encoded when it is read. Validation sized the
+  // claim as sent, so when the tidy form's storage keys wouldn't fit, the claim
+  // is checked as sent and stays checkable.
   const tidy = fitsStorageKeys(normalizedClaim.platform, tidyForm.identity, tidyForm.proof, normalizedClaim.pubkey)
     ? tidyForm
     : { identity: normalizedClaim.identity, proof: normalizedClaim.proof }

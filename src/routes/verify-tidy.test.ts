@@ -52,6 +52,23 @@ describe('claims pasted in other shapes', () => {
     })
   })
 
+  it('verifies a Mastodon handle typed as @user@server, and returns the account as instance/@user', async () => {
+    const env = { CACHE_KV: createMockKV(), RATE_LIMIT_KV: createMockKV() }
+    const fetchMock = vi.fn(async (_url: string) => new Response(JSON.stringify({
+      account: { acct: 'alice', username: 'alice' },
+      content: `<p>${hexToNpub(PUBKEY)}</p>`,
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const body = await single(env, '@alice@mastodon.social', 'https://mastodon.social/@alice/109876543210', 'mastodon')
+    expect(body).toMatchObject({
+      identity: '@alice@mastodon.social',
+      verified: true,
+      canonical_identity: 'mastodon.social/@alice',
+      canonical_proof: '109876543210',
+    })
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://mastodon.social/api/v1/statuses/109876543210')
+  })
+
   it('checks the tidy form with the platform', async () => {
     const env = { CACHE_KV: createMockKV(), RATE_LIMIT_KV: createMockKV() }
     const fetchMock = vi.fn(async (_url: string) => tweetBy('alice', hexToNpub(PUBKEY)))

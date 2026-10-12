@@ -155,8 +155,35 @@ describe('tidyClaim', () => {
     expect(tidyClaim('mastodon', 'mastodon.social/@alice', proof).proof).toBe(expected)
   })
 
-  it('leaves the Mastodon account as sent', () => {
-    expect(tidyClaim('mastodon', '@alice@mastodon.social', '1').identity).toBe('@alice@mastodon.social')
+  it.each([
+    ['@alice@mastodon.social', 'mastodon.social/@alice'],
+    ['alice@mastodon.social', 'mastodon.social/@alice'],
+    [' @alice@mastodon.social ', 'mastodon.social/@alice'],
+    ['@Alice_1@Social.Example.com', 'Social.Example.com/@Alice_1'],
+    ['@alice.b-c@mastodon.social', 'mastodon.social/@alice.b-c'],
+  ])('reads the Mastodon handle %s as the account %s', (identity, expected) => {
+    expect(tidyClaim('mastodon', identity, '1').identity).toBe(expected)
+  })
+
+  it.each([
+    'mastodon.social/@alice',
+    'mastodon.social/@alice@mastodon.social',
+    '@alice',
+    'alice',
+    '@alice@localhost',
+    '@alice@mastodon.social@other.example',
+    '@@alice@mastodon.social',
+    '@alice@mastodon.social:8080',
+    '@ali ce@mastodon.social',
+    '@.alice@mastodon.social',
+    '@alice.@mastodon.social',
+    '@alice@mastodon.social.',
+  ])('leaves the Mastodon account %s as sent', (identity) => {
+    expect(tidyClaim('mastodon', identity, '1').identity).toBe(identity.trim())
+  })
+
+  it('reads user@server as a Mastodon handle only for Mastodon', () => {
+    expect(tidyClaim('discord', 'alice@example.com', '1').identity).toBe('alice@example.com')
   })
 
   it.each([

@@ -158,6 +158,15 @@ function youtubeIdentity(identity: string): string | null {
   return first?.startsWith('@') && first.length > 1 ? first : null
 }
 
+// A handle as Mastodon shows it, @user@server, in NIP-39's server/@user form.
+// The user part is Mastodon's own username grammar (app/models/account.rb).
+const MASTODON_HANDLE = /^@?([A-Za-z0-9_]+(?:[.-]+[A-Za-z0-9_]+)*)@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)$/
+
+function mastodonIdentity(identity: string): string | null {
+  const handle = identity.match(MASTODON_HANDLE)
+  return handle ? `${handle[2]}/@${handle[1]}` : null
+}
+
 const PROOF_TIDIERS: Record<string, (proof: string) => string | null> = {
   twitter: twitterProof,
   bluesky: blueskyProof,
@@ -180,6 +189,7 @@ export function tidyClaim(platform: string, identity: string, proof: string): Ti
     tidyIdentity = tidyIdentity.slice(1)
   }
   if (platform === 'youtube') tidyIdentity = youtubeIdentity(tidyIdentity) ?? tidyIdentity
+  if (platform === 'mastodon') tidyIdentity = mastodonIdentity(tidyIdentity) ?? tidyIdentity
 
   const tidier = PROOF_TIDIERS[platform]
   const resolvedProof = (tidier && tidier(tidyProof)) || tidyProof
