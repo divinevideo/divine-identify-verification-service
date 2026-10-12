@@ -45,6 +45,9 @@ describe('tidyClaim', () => {
     ['https://x.com/i/web/status/1234567890', '1234567890'],
     ['HTTPS://X.COM/alice/status/1234567890', '1234567890'],
     ['http://x.com/alice/status/1234567890', '1234567890'],
+    ['https://x.com/alice/status/1234567890/', '1234567890'],
+    // Empty path segments are skipped when the link is read.
+    ['https://x.com/alice//status/1234567890', '1234567890'],
   ])('reduces the Twitter link %s to its post number', (proof, expected) => {
     expect(tidyClaim('twitter', 'alice', proof).proof).toBe(expected)
   })
@@ -132,6 +135,18 @@ describe('tidyClaim', () => {
   })
 
   it.each([
+    ['bobchannel', 'https://t.me/s/alicechannel/45'],
+    ['bobchannel', 's/alicechannel/45'],
+    ['bob', 'https://t.me/s/alicechannel/45'],
+  ])('keeps the Telegram account %s when the proof %s is a preview link to another channel', (identity, proof) => {
+    expect(tidyClaim('telegram', identity, proof)).toEqual({ identity, proof: 'alicechannel/45' })
+  })
+
+  it('keeps the account "s" when the proof is a channel whose name starts with s', () => {
+    expect(tidyClaim('telegram', 's', 'sam_channel/5')).toEqual({ identity: 's', proof: 'sam_channel/5' })
+  })
+
+  it.each([
     ['https://mastodon.social/@alice/109876543210', '109876543210'],
     ['https://mastodon.social/users/alice/statuses/109876543210', '109876543210'],
     ['https://mastodon.social/@alice/109876543210/embed', '109876543210'],
@@ -170,6 +185,7 @@ describe('tidyClaim', () => {
   it.each([
     'https://www.youtube.com/channel/UCshort',
     `https://www.youtube.com/channel/UC${'a'.repeat(23)}`,
+    'https://www.youtube.com/channel/XX1234567890abcdefghijkl',
     `https://www.youtube.com/user/UC${'a'.repeat(22)}`,
     'https://www.youtube.com/@',
     'https://evil.example/@Alice',
@@ -236,7 +252,28 @@ describe('tidyClaim', () => {
     ['youtube', 'https://www.youtube-nocookie.com/embed/short'],
     ['youtube', 'https://www.youtube.com/shorts/short'],
     ['github', 'https://gist.github.com/alice/ABCDEF'],
+    ['twitter', 'https://x.com/alice/web/status/1'],
+    ['twitter', 'https://x.com/alice/status/1a'],
+    ['bluesky', 'at://did:plc:a/app.bsky.feed.like/3k'],
+    ['telegram', 'https://t.me/alicechannel/45x'],
+    ['youtube', 'https://www.youtube.com/playlist?v=dQw4w9WgXcQ'],
+    ['github', 'https://gist.github.com/'],
   ])('leaves an unrecognised %s link %s as it is', (platform, proof) => {
+    expect(tidyClaim(platform, 'alice', proof).proof).toBe(proof)
+  })
+
+  it.each([
+    'https://bsky.app/profile/alice.bsky.social/post/3k!abc',
+    'https://bsky.app/profile/alice.bsky.social/post/3k\u00e9abc',
+    'at://did:plc:a/app.bsky.feed.post/3k!abc',
+  ])('leaves a Bluesky link %s whose post key has characters a record key never has as it is', (proof) => {
+    expect(tidyClaim('bluesky', 'alice.bsky.social', proof).proof).toBe(proof)
+  })
+
+  it.each([
+    ['twitter', 'https://'],
+    ['twitter', 'https://exa mple.com/a'],
+  ])('leaves a %s proof that is not a complete link (%s) as it is', (platform, proof) => {
     expect(tidyClaim(platform, 'alice', proof).proof).toBe(proof)
   })
 

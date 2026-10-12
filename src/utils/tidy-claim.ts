@@ -44,14 +44,18 @@ function twitterProof(proof: string): string | null {
   return status === 'status' && /^\d+$/.test(id ?? '') && media ? id : null
 }
 
+// The characters a record key may have (atproto.com/specs/record-key). Both
+// link forms are read with it, so a key outside it is left as sent.
+const RECORD_KEY = /^[A-Za-z0-9._~:-]+$/
+
 function blueskyProof(proof: string): string | null {
-  const atUri = proof.match(/^at:\/\/[^/]+\/app\.bsky\.feed\.post\/([A-Za-z0-9._~:-]+)$/)
-  if (atUri) return atUri[1]
+  const atUri = proof.match(/^at:\/\/[^/]+\/app\.bsky\.feed\.post\/([^/]+)$/)
+  if (atUri) return RECORD_KEY.test(atUri[1]) ? atUri[1] : null
   const url = link(proof)
   if (!url || !on(url, ['bsky.app'])) return null
   const segments = parts(url)
   const [profile, , post, rkey] = segments
-  return segments.length === 4 && profile === 'profile' && post === 'post' ? rkey : null
+  return segments.length === 4 && profile === 'profile' && post === 'post' && RECORD_KEY.test(rkey) ? rkey : null
 }
 
 function githubProof(proof: string): string | null {
@@ -125,6 +129,8 @@ function mastodonProof(proof: string): string | null {
   return null
 }
 
+// Every video id seen is 11 characters; YouTube doesn't document the length,
+// so this is an observed rule, not a documented one.
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
 
 function youtubeProof(proof: string): string | null {

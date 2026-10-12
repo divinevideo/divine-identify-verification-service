@@ -410,6 +410,14 @@ describe('verifier proof-post form', () => {
     })
   })
 
+  it('drops a leading @ from the channel in a pasted Telegram link', async () => {
+    const normalize = await browserNormalizer()
+    expect(normalize('telegram', '', 'https://t.me/@alicechannel/45')).toEqual({
+      identity: 'alicechannel',
+      proof: 'alicechannel/45',
+    })
+  })
+
   it('does not take the preview path for a Telegram account when the link names no post', async () => {
     const normalize = await browserNormalizer()
     expect(normalize('telegram', '', 'https://t.me/s/alicechannel')).toEqual({ identity: '', proof: 'https://t.me/s/alicechannel' })

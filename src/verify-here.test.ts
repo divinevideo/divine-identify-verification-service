@@ -102,6 +102,15 @@ describe('Verify this link', () => {
     expect(h.fields['proof-identity-input'].value).toBe('bob')
   })
 
+  it('fills in the account the verifier reports when the page tidied the typed account first', async () => {
+    const load = await loadVerifySingleHere()
+    const h = harness({ verified: true, canonical_identity: 'alice' }, '7123456789012345678')
+    h.env.normalizeProofInputs = (_platform: string, identity: string, p: string) => ({ identity: identity.trim(), proof: p })
+    h.fields['proof-identity-input'].value = '  @alice  '
+    await load(h.env)()
+    expect(h.fields['proof-identity-input'].value).toBe('alice')
+  })
+
   it('leaves the account alone when verification fails', async () => {
     const load = await loadVerifySingleHere()
     const h = harness({ verified: false, error: 'nope', canonical_identity: 'alice' }, '7123456789012345678')

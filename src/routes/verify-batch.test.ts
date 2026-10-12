@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import type { Bindings, CachedResult } from '../types'
 import verify from './verify'
 import { cacheKey } from '../utils/cache'
+import { hexToNpub } from '../utils/npub'
 
 const app = new Hono<{ Bindings: Bindings }>()
 app.route('/verify', verify)
@@ -40,6 +41,15 @@ function createEnv() {
 async function seedVerified(env: Bindings, platform: string, identity: string, proof: string) {
   const cached: CachedResult = { verified: true, checked_at: 1_700_000_000, type: 'verified' }
   await env.CACHE_KV.put(cacheKey(platform, identity, proof, PUBKEY), JSON.stringify(cached))
+}
+
+const VIDEO = 'dQw4w9WgXcQ'
+
+// The YouTube Data API's answer for a video on a channel, with the given description.
+function youtubeVideo(description: string) {
+  return new Response(JSON.stringify({
+    items: [{ snippet: { channelId: 'UC1234567890abcdefghijkl', description } }],
+  }), { status: 200 })
 }
 
 function forbidFetch() {
@@ -189,6 +199,74 @@ describe('POST /verify: one bad claim no longer fails the whole batch', () => {
     expect(results[0]).not.toHaveProperty('canonical_identity')
     expect(results[0]).not.toHaveProperty('canonical_proof')
     expect(results[1]).toMatchObject({ platform: 'github', identity: 'octocat', verified: true })
+  })
+
+  it('answers a claim whose proof is not a complete link without losing the claim beside it', async () => {
+    const { env } = createEnv()
+    await seedVerified(env, 'github', 'octocat', 'abc123')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+    const res = await postBatch(env, {
+      claims: [
+        { platform: 'twitter', identity: 'alice', proof: 'https://', pubkey: PUBKEY },
+        { platform: 'github', identity: 'octocat', proof: 'abc123', pubkey: PUBKEY },
+      ],
+    })
+    expect(res.status).toBe(200)
+    const { results } = await res.json() as BatchResponse
+    expect(results.map(r => r.verified)).toEqual([false, true])
+  })
+
+  it('verifies a claim checked as sent because its tidy account would be too long to store', async () => {
+    const { env, cacheStore } = createEnv()
+    env.YOUTUBE_API_KEY = 'test-key'
+    const fetchMock = vi.fn(async () => youtubeVideo(`Proof: ${hexToNpub(PUBKEY)}`))
+    vi.stubGlobal('fetch', fetchMock)
+    // As sent, the cache key is 312 bytes. Read as a link, each "é" in the handle
+    // becomes "%C3%A9", and the tidy account alone would be 601 bytes.
+    const identity = `https://www.youtube.com/@${'é'.repeat(100)}`
+    const res = await postBatch(env, {
+      claims: [{ platform: 'youtube', identity, proof: VIDEO, pubkey: PUBKEY }],
+    })
+    expect(res.status).toBe(200)
+    const { results } = await res.json() as BatchResponse
+    expect(results[0]).toMatchObject({ platform: 'youtube', identity, verified: true, cached: false })
+    expect(results[0]).not.toHaveProperty('canonical_identity')
+    expect(results[0]).not.toHaveProperty('canonical_proof')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(cacheStore.has(cacheKey('youtube', identity, VIDEO, PUBKEY))).toBe(true)
+  })
+
+  it('returns no clean values for a claim checked as sent and answered from the cache', async () => {
+    const { env } = createEnv()
+    forbidFetch()
+    const identity = `https://www.youtube.com/@${'é'.repeat(100)}`
+    const proof = `https://youtu.be/${VIDEO}?si=abc`
+    await seedVerified(env, 'youtube', identity, proof)
+    const res = await postBatch(env, {
+      claims: [{ platform: 'youtube', identity, proof, pubkey: PUBKEY }],
+    })
+    expect(res.status).toBe(200)
+    const { results } = await res.json() as BatchResponse
+    expect(results[0]).toMatchObject({ identity, verified: true, cached: true })
+    expect(results[0]).not.toHaveProperty('canonical_identity')
+    expect(results[0]).not.toHaveProperty('canonical_proof')
+  })
+
+  it('checks the tidy form when its storage keys fit, even when the link as sent is longer', async () => {
+    const { env } = createEnv()
+    env.YOUTUBE_API_KEY = 'test-key'
+    const fetchMock = vi.fn(async () => youtubeVideo(`Proof: ${hexToNpub(PUBKEY)}`))
+    vi.stubGlobal('fetch', fetchMock)
+    // Tidied, the account is 421 bytes and the cache key 508. The tidy account
+    // with the link as sent would not fit.
+    const identity = `https://www.youtube.com/@${'é'.repeat(70)}`
+    const res = await postBatch(env, {
+      claims: [{ platform: 'youtube', identity, proof: `https://youtu.be/${VIDEO}?si=abc`, pubkey: PUBKEY }],
+    })
+    expect(res.status).toBe(200)
+    const { results } = await res.json() as BatchResponse
+    expect(results[0]).toMatchObject({ identity, verified: true, canonical_proof: VIDEO })
+    expect(results[0]).toHaveProperty('canonical_identity')
   })
 
   it('accepts a claim whose storage key is exactly 512 bytes', async () => {
