@@ -342,7 +342,7 @@ describe('response fields in the API docs', () => {
 
   it('says canonical_identity also reports a tidied account', async () => {
     const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
-    expect(html).toContain('the account as sent was tidied (for example a leading @ removed, or a Mastodon handle written as <code>server/@user</code>)')
+    expect(html).toContain('the account as sent was tidied (for example a leading @ removed, or a Mastodon handle sent as <code>@user@server</code> returned as <code>server/@user</code>)')
   })
 })
 

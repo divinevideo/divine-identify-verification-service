@@ -161,6 +161,7 @@ describe('tidyClaim', () => {
     [' @alice@mastodon.social ', 'mastodon.social/@alice'],
     ['@Alice_1@Social.Example.com', 'Social.Example.com/@Alice_1'],
     ['@alice.b-c@mastodon.social', 'mastodon.social/@alice.b-c'],
+    ['@a..b@social.example', 'social.example/@a..b'],
   ])('reads the Mastodon handle %s as the account %s', (identity, expected) => {
     expect(tidyClaim('mastodon', identity, '1').identity).toBe(expected)
   })
@@ -184,6 +185,10 @@ describe('tidyClaim', () => {
 
   it('reads user@server as a Mastodon handle only for Mastodon', () => {
     expect(tidyClaim('discord', 'alice@example.com', '1').identity).toBe('alice@example.com')
+  })
+
+  it('reads a YouTube channel link as the account only for YouTube', () => {
+    expect(tidyClaim('twitter', 'https://www.youtube.com/@alice', '1').identity).toBe('https://www.youtube.com/@alice')
   })
 
   it.each([
@@ -285,6 +290,9 @@ describe('tidyClaim', () => {
     ['telegram', 'https://t.me/alicechannel/45x'],
     ['youtube', 'https://www.youtube.com/playlist?v=dQw4w9WgXcQ'],
     ['github', 'https://gist.github.com/'],
+    ['twitter', 'https://x.com/alice/status/1/likes/2'],
+    ['github', 'https://github.com/alice/deadbeef'],
+    ['youtube', 'https://www.youtube.com/v/dQw4w9WgXcQ'],
   ])('leaves an unrecognised %s link %s as it is', (platform, proof) => {
     expect(tidyClaim(platform, 'alice', proof).proof).toBe(proof)
   })
