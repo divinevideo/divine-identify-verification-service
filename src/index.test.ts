@@ -334,6 +334,16 @@ describe('response fields in the API docs', () => {
     const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
     expect(html).toContain('<tr><td><code>canonical_identity</code></td><td>string?</td>')
   })
+
+  it('says canonical_proof also reports a pasted link reduced to its post', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    expect(html).toContain('a pasted post link was reduced to the part the check uses')
+  })
+
+  it('says canonical_identity also reports a tidied account', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    expect(html).toContain('the account as sent was tidied (for example a leading @ removed)')
+  })
 })
 
 describe('favicon', () => {
