@@ -7,8 +7,11 @@ const PUBKEY = 'ab'.repeat(32)
 
 // When a record doesn't count, the check falls through to the proof post,
 // which would fetch from the platform; no network in tests.
-beforeEach(() => { vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('no network in tests') })) })
-afterEach(() => { vi.unstubAllGlobals() })
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('no network in tests') }))
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+})
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 function envWith(vars: Partial<Bindings>, record: Record<string, unknown> | null): Bindings {
   const store = new Map<string, string>()
