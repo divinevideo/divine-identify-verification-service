@@ -1583,11 +1583,14 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       clearStatus('verify-login-status');
       try {
         setButtonLoading('connect-nostr-btn', true, 'Signing in...');
-        if (isBrowserSignerAvailable()) {
-          await connectBrowserSigner();
+        // Without an extension, say so rather than open the Divine login:
+        // that has its own button. Inside the Divine app's frame the page
+        // installs window.nostr itself, so this doesn't apply there.
+        if (!isBrowserSignerAvailable()) {
+          setStatus('verify-login-status', 'No Nostr extension found. Sign in with your Divine login instead, or install one.', 'error');
           return;
         }
-        await connectKeycastSigner();
+        await connectBrowserSigner();
       } catch (e) {
         setStatus('verify-login-status', e.message || 'Could not sign in with Nostr.', 'error');
       } finally {
