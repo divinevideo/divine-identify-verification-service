@@ -1964,22 +1964,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         }
 
         setStatus('publish-status', 'Loading identity event...', 'loading');
-        let identityEvent = null;
-        for (const relay of PROFILE_RELAYS) {
-          try {
-            identityEvent = await fetchIdentityEvent(relay, signerPubkey);
-            if (identityEvent) break;
-          } catch {}
-        }
-        // Fall back to kind 0 for pre-migration profiles
-        if (!identityEvent) {
-          for (const relay of PROFILE_RELAYS) {
-            try {
-              identityEvent = await fetchProfileLegacy(relay, signerPubkey);
-              if (identityEvent) break;
-            } catch {}
-          }
-        }
+        const identityEvent = await fetchNewestLinkedAccountsEvent(signerPubkey);
 
         const tags = Array.isArray(identityEvent?.tags) ? identityEvent.tags.filter(Array.isArray) : [];
         // Only carry forward i-tags (kind 10011 has no content or other tag types)
@@ -2415,6 +2400,29 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       return fetchEventByKind(relayUrl, pubkey, 0);
     }
 
+    // Relays can each hold a different copy of a replaceable event, so ask them
+    // all at once and keep the newest: the latest created_at, and on a tie the
+    // lowest id, as NIP-01 says. A relay that fails is skipped. The wait is the
+    // slowest relay's answer, at most fetchEventByKind's timeout.
+    async function fetchNewestEvent(pubkey, kind) {
+      const copies = await Promise.all(PROFILE_RELAYS.map(relay => fetchEventByKind(relay, pubkey, kind).catch(() => null)));
+      let newest = null;
+      for (const copy of copies) {
+        // Only this person's event of this kind, with what the comparison needs.
+        if (!copy || copy.pubkey !== pubkey || copy.kind !== kind || !Number.isInteger(copy.created_at) || typeof copy.id !== 'string') continue;
+        if (!newest || copy.created_at > newest.created_at || (copy.created_at === newest.created_at && copy.id < newest.id)) {
+          newest = copy;
+        }
+      }
+      return newest;
+    }
+
+    // The linked accounts live in the newest identity event (kind 10011), or for
+    // profiles from before it, in the newest kind 0 profile.
+    async function fetchNewestLinkedAccountsEvent(pubkey) {
+      return (await fetchNewestEvent(pubkey, 10011)) || (await fetchNewestEvent(pubkey, 0));
+    }
+
     function fetchEventByKind(relayUrl, pubkey, kind) {
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 8000);
@@ -2460,21 +2468,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
           return;
         }
 
-        let event = null;
-        for (const relay of PROFILE_RELAYS) {
-          try {
-            event = await fetchIdentityEvent(relay, pubkey);
-            if (event) break;
-          } catch {}
-        }
-        if (!event) {
-          for (const relay of PROFILE_RELAYS) {
-            try {
-              event = await fetchProfileLegacy(relay, pubkey);
-              if (event) break;
-            } catch {}
-          }
-        }
+        const event = await fetchNewestLinkedAccountsEvent(pubkey);
 
         const iTags = event ? (event.tags || []).filter(t => t[0] === 'i' && t[1]) : [];
         if (iTags.length === 0) {
@@ -2581,21 +2575,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         }
 
         // Fetch current identity event (kind 10011, fall back to kind 0)
-        let event = null;
-        for (const relay of PROFILE_RELAYS) {
-          try {
-            event = await fetchIdentityEvent(relay, signerPubkey);
-            if (event) break;
-          } catch {}
-        }
-        if (!event) {
-          for (const relay of PROFILE_RELAYS) {
-            try {
-              event = await fetchProfileLegacy(relay, signerPubkey);
-              if (event) break;
-            } catch {}
-          }
-        }
+        const event = await fetchNewestLinkedAccountsEvent(signerPubkey);
 
         const tags = event ? (event.tags || []).filter(Array.isArray) : [];
         const iTags = tags.filter(tag => tag[0] === 'i');
