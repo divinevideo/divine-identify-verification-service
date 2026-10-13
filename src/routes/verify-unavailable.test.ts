@@ -329,6 +329,7 @@ describe('a platform that does not answer', () => {
       'did:web:%',
       'did:web:%E0%A4%A',
       'did:web:example.com%',
+      'did:web:example.com:user:alice',
       'did:plc:abc',
       `did:plc:${'A'.repeat(24)}`,
       `did:plc:${'a'.repeat(25)}`,
