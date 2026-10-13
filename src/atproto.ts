@@ -82,8 +82,8 @@ async function lookUp(label: string, url: string, fetcher?: Fetcher): Promise<un
 }
 
 export async function resolveHandle(handle: string): Promise<string | null> {
-  const resolved = await lookUp('Bluesky handle lookup', `https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`) as { did?: string } | null
-  return resolved?.did || null
+  const resolved = await lookUp('Bluesky handle lookup', `https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`) as { did?: unknown } | null
+  return typeof resolved?.did === 'string' && resolved.did ? resolved.did : null
 }
 
 export async function resolveDidDocument(did: string): Promise<DidDocument | null> {
@@ -103,8 +103,10 @@ export async function resolveDidDocument(did: string): Promise<DidDocument | nul
 }
 
 export function getPdsEndpoint(didDoc: DidDocument): string | null {
-  const endpoint = didDoc.service?.find(s => s.id === '#atproto_pds')?.serviceEndpoint
-  if (!endpoint || !isSafeUrl(endpoint)) return null
+  const services = Array.isArray(didDoc.service) ? didDoc.service : []
+  // An entry that isn't an object has no id, so `?.` skips it.
+  const endpoint: unknown = services.find(s => s?.id === '#atproto_pds')?.serviceEndpoint
+  if (typeof endpoint !== 'string' || !endpoint || !isSafeUrl(endpoint)) return null
   return endpoint.replace(/\/+$/, '')
 }
 

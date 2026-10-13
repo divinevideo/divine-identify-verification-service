@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import worker from '../index'
 import type { Bindings } from '../types'
 import { hexToNpub } from '../utils/npub'
+import * as identityLink from '../identity-link'
 import { TwitterVerifier } from '../platforms/twitter'
 
 const PUBKEY = 'ab'.repeat(32)
@@ -348,8 +349,10 @@ describe('a platform that does not answer', () => {
       const { env } = createEnv()
       vi.spyOn(console, 'warn').mockImplementation(() => {})
       const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
-      // A record list that isn't a list stands in for a bug in the record check.
-      bluesky({ 'identity-link record lookup': Response.json({ records: 5 }), post: postProving(hexToNpub(PUBKEY)) })
+      // A matcher that throws stands in for a bug in the record check. (A record
+      // list that isn't a list is no longer one: it's "no record found".)
+      vi.spyOn(identityLink, 'matchNostrIdentityLinkRecord').mockImplementation(() => { throw new TypeError('bug in the record check') })
+      bluesky({ 'identity-link record lookup': Response.json({ records: [{ uri: 'at://synthetic', value: {} }] }), post: postProving(hexToNpub(PUBKEY)) })
       const body = await verify(env, 'bluesky', CLAIMS.bluesky)
       expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
       expect(logError).toHaveBeenCalledWith('bluesky check failed:', expect.any(TypeError))
