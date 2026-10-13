@@ -1983,7 +1983,18 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         const iTags = tags.filter(tag => tag[0] === 'i');
         const claimKey = link.platform + ':' + link.identity;
         const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey.toLowerCase()));
-        nextTags.push(['i', claimKey, link.proof]);
+        // A link from a sign-in counts once confirmed: its claim carries a
+        // value tied to this sign-in, and the verifier checks it first (#113).
+        const waiting = findWaitingSignIn(link.platform, link.identity, signerPubkey);
+        // A sign-in for this account started by another Divine account (the
+        // signer came back as someone else) is neither confirmed nor published.
+        if (!waiting && waitingSignIns().some(pending => pending.platform === link.platform
+          && String(pending.identity || '').toLowerCase() === link.identity.toLowerCase())) {
+          throw new Error('The account in Step 1 does not match the account you signed in with.');
+        }
+        nextTags.push(waiting
+          ? ['i', claimKey, link.proof, await confirmBindingFor(waiting.code, waiting.startCheck)]
+          : ['i', claimKey, link.proof]);
 
         const unsignedEvent = {
           kind: 10011,
@@ -1994,12 +2005,20 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         };
 
         setStatus('publish-status', 'Requesting signature from your signer...', 'loading');
-        const signedEvent = await activeSigner.signEvent(unsignedEvent);
+        const signedEvent = (waiting && signedConfirmations[waiting.nonce]) || await activeSigner.signEvent(unsignedEvent);
         if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
           throw new Error('Signer did not return a valid signed event.');
         }
         if (String(signedEvent.pubkey || '').toLowerCase() !== signerPubkey) {
           throw new Error('Signer returned an event for a different pubkey.');
+        }
+
+        if (waiting) {
+          signedConfirmations[waiting.nonce] = signedEvent;
+          setStatus('publish-status', 'Confirming the link...', 'loading');
+          await confirmSignInCode(waiting, signedEvent);
+          delete signedConfirmations[waiting.nonce];
+          forgetPendingSignIn(waiting.nonce);
         }
 
         setStatus('publish-status', 'Publishing identity event to relays...', 'loading');
@@ -2131,6 +2150,48 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     // The most recent sign-in still waiting, to pick up again after a reload.
     function newestWaitingSignIn() {
       return waitingSignIns().sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0))[0] || null;
+    }
+
+    const CONFIRM_REFUSALS = {
+      signin_not_found: 'This sign-in couldn\\'t be confirmed. Sign in again.',
+      signin_used: 'This sign-in was already used. Sign in again.',
+      signin_wrong_account: 'Sign in with the Divine account that started this sign-in.',
+      signin_not_yours: 'This sign-in was started somewhere else, so it wasn\\'t linked.',
+      signin_claim_mismatch: 'This confirmation doesn\\'t match the sign-in. Sign in again.',
+    };
+    // A confirmation already signed, kept so a retry sends the very same event.
+    const signedConfirmations = {};
+
+    // Asks the verifier to count the link. A sign-in it hasn't seen yet (or a
+    // failed request) is tried again for about ten seconds; any other answer
+    // is final.
+    async function confirmSignInCode(waiting, signedEvent) {
+      const deadline = Date.now() + 10000;
+      for (;;) {
+        let resp = null;
+        let data = null;
+        try {
+          resp = await fetch(API + '/auth/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: waiting.code, start_secret: waiting.startSecret, event: signedEvent }),
+          });
+          try { data = await resp.json(); } catch {}
+        } catch {}
+        if (resp && resp.ok && data && data.linked === true) return;
+        const code = data && data.code;
+        const again = !resp || resp.status >= 500 || code === 'signin_not_found';
+        if (!again || Date.now() + 1000 > deadline) {
+          // A final refusal ends this sign-in: forget it, so the next Publish
+          // of this account is an ordinary one instead of the same refusal.
+          if (resp && resp.status < 500 && code && code !== 'signin_not_found') {
+            forgetPendingSignIn(waiting.nonce);
+            delete signedConfirmations[waiting.nonce];
+          }
+          throw new Error(CONFIRM_REFUSALS[code] || CONFIRM_REFUSALS.signin_not_found);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     }
 
     // Brings an element into view. While the page is still loading, the
