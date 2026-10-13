@@ -269,21 +269,30 @@ describe('a finished sign-in started with a start check', () => {
   it('puts the code in the query when set to', async () => {
     const env = baseEnv({ SIGNIN_CODE_PLACEMENT: 'query' })
     const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
-    expect(location.searchParams.get('oauth_confirm')).toMatch(CODE)
+    const code = location.searchParams.get('oauth_confirm') as string
+    expect(code).toMatch(CODE)
     expect(location.hash).toBe('#verify-here')
+    const { getPendingSignIn } = await import('../oauth/confirm')
+    expect(await getPendingSignIn(env.CACHE_KV, code)).toMatchObject({ platform: 'twitter', startCheck: START_CHECK })
   })
 
   it('before the switch: also saves an unconfirmed record and says oauth_verified', async () => {
     const env = baseEnv()
     const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
     expect(location.searchParams.get('oauth_verified')).toBe('true')
-    const record = JSON.parse((await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', PUBKEY))) as string)
-    expect(record.confirmed).toBeUndefined()
+    const raw = await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', PUBKEY))
+    expect(raw).not.toBeNull()
+    expect(JSON.parse(raw as string).confirmed).toBeUndefined()
   })
 
-  it.each(PLATFORMS)('%s: once required, saves no record and does not say oauth_verified', async (platform) => {
+  it.each(PLATFORMS)('%s: once required, still holds the sign-in under a code, but saves no record and does not say oauth_verified', async (platform) => {
     const env = platformEnv(platform, { SIGNIN_CONFIRMATION: 'required' })
     const { location } = await finishWithState(platform, env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
+    const code = new URLSearchParams(location.hash.slice(1)).get('oauth_confirm') as string
+    expect(code).toMatch(CODE)
+    expect(location.hash).toBe(`#oauth_confirm=${code}`)
+    const { getPendingSignIn } = await import('../oauth/confirm')
+    expect(await getPendingSignIn(env.CACHE_KV, code)).toMatchObject({ platform, startCheck: START_CHECK })
     expect(location.searchParams.get('oauth_verified')).toBeNull()
     for (const key of recordKeysFor(platform, PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
   })
