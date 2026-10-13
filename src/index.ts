@@ -1985,7 +1985,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey.toLowerCase()));
         // A link from a sign-in counts once confirmed: its claim carries a
         // value tied to this sign-in, and the verifier checks it first (#113).
-        const waiting = findWaitingSignIn(link.platform, link.identity, signerPubkey);
+        // A post proof publishes as before, whatever sign-in is waiting.
+        const waiting = link.proof === 'oauth' ? findWaitingSignIn(link.platform, link.identity, signerPubkey) : null;
         // A sign-in for this account started by another Divine account (the
         // signer came back as someone else) is neither confirmed nor published.
         if (!waiting && link.proof === 'oauth' && waitingSignIns().some(pending => pending.platform === link.platform
@@ -2211,12 +2212,12 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
           continue;
         }
         if (again || resp.status === 429) throw new Error(CONFIRM_TRY_AGAIN);
-        // A refusal ends this sign-in: forget it, so the next Publish of this
-        // account is an ordinary one instead of the same refusal.
-        if (code) {
-          forgetPendingSignIn(waiting.nonce);
-          delete signedConfirmations[waiting.nonce];
-        }
+        // Any other answer is a refusal (a 4xx, with or without a code), and
+        // resending the same event would be refused again. It ends this
+        // sign-in: forget it, so the next Publish of this account is an
+        // ordinary one instead of the same refusal.
+        forgetPendingSignIn(waiting.nonce);
+        delete signedConfirmations[waiting.nonce];
         throw new Error(CONFIRM_REFUSALS[code] || CONFIRM_REFUSALS.signin_not_found);
       }
     }

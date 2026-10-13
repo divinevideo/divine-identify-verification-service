@@ -219,6 +219,26 @@ describe('publishing a link that is waiting for confirmation', () => {
     expect(h.store.has(PENDING_KEY)).toBe(true)
   })
 
+  it.each<[string, Answer]>([
+    ['the list is too large to send', { status: 413, body: { error: 'Request body too large' } }],
+    ['the request is not JSON', { status: 415, body: { error: 'Content-Type must be application/json' } }],
+    ['of a request it could not read', { status: 400, body: { error: 'Invalid Content-Length' } }],
+    ['it has no confirmation address', { status: 404, body: { error: 'Not Found' } }],
+  ])('treats a refusal because %s as final: says so, forgets the sign-in and the signed event', async (_case, answer) => {
+    const h = await publishHarness({ confirmAnswers: [answer, LINKED] })
+    await h.page.publishIdentityTagToNostr()
+    expect(h.published).toHaveLength(0)
+    expect(h.confirmBodies).toHaveLength(1)
+    expect(h.lastStatus()).toEqual(['publish-status', NOT_CONFIRMED, 'error'])
+    expect(h.store.has(PENDING_KEY)).toBe(false)
+
+    // The next Publish is an ordinary one, signed afresh.
+    await h.page.publishIdentityTagToNostr()
+    expect(h.confirmBodies).toHaveLength(1)
+    expect(h.signCount).toBe(2)
+    expect(h.published).toHaveLength(1)
+  })
+
   it('does not try again on its own when the verifier is busy', async () => {
     const h = await publishHarness({ confirmAnswers: [{ status: 429, body: { error: 'Rate limit exceeded' } }, LINKED] })
     await h.page.publishIdentityTagToNostr()
@@ -351,6 +371,16 @@ describe('publishing a link that is waiting for confirmation', () => {
     expect(h.confirmBodies).toHaveLength(0)
     expect(h.published).toHaveLength(0)
     expect(h.lastStatus()).toEqual(['publish-status', ACCOUNT_MISMATCH, 'error'])
+    expect(h.store.has(PENDING_KEY)).toBe(true)
+  })
+
+  it('publishes a post proof as before while a sign-in for the same account waits, leaving the sign-in alone', async () => {
+    const h = await publishHarness({ confirmAnswers: [LINKED], proof: '1234567890' })
+    await h.page.publishIdentityTagToNostr()
+    expect(h.confirmBodies).toHaveLength(0)
+    expect(h.published).toHaveLength(1)
+    const claim = h.published[0].tags.find(tag => tag[0] === 'i' && tag[1] === 'twitter:example')
+    expect(claim).toEqual(['i', 'twitter:example', '1234567890'])
     expect(h.store.has(PENDING_KEY)).toBe(true)
   })
 

@@ -34,7 +34,7 @@ function scriptBetween(html: string, from: string, to: string): string {
 const DEPS = ['document', 'fetch', 'API', 'DIVINE_RELAY', 'PROFILE_RELAYS', 'WebSocket', 'setTimeout', 'clearTimeout', 'loadNostrTools',
   'publishEventToRelay', 'activeSigner', 'getActivePubkey', 'signerPubkeyHex', 'setStatus', 'clearStatus', 'setButtonLoading',
   'setAccountInputValue', 'updateSignerSummary', 'currentProofContext', 'renderLinkedVerifications', 'buildNip98EventForRevoke',
-  'OAUTH_PLATFORMS_SET', 'findWaitingSignIn']
+  'OAUTH_PLATFORMS_SET']
 
 async function loadPage() {
   const html = await pageHtml()
@@ -152,8 +152,6 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
     renderLinkedVerifications: (iTags: string[][]) => { listed.push(iTags) },
     buildNip98EventForRevoke: async () => ({}),
     OAUTH_PLATFORMS_SET: new Set(['twitter', 'bluesky', 'youtube', 'tiktok']),
-    // No sign-in is waiting, so Publish publishes as before, without confirming.
-    findWaitingSignIn: () => null,
   }
   const errors = () => statuses.filter(([, , type]) => type === 'error')
   // The tags of the event the page published (sent to every relay).
