@@ -444,6 +444,17 @@ describe('POST /auth/:platform/start', () => {
     expect(state.returnUrl).toBe(`${BASE}/`)
   })
 
+  it('with no return address and no OAUTH_REDIRECT_BASE, says sign-in is not set up rather than blaming the return address', async () => {
+    const res = await postStart('twitter', baseEnv({ OAUTH_REDIRECT_BASE: undefined }), { pubkey: PUBKEY, start_check: START_CHECK }, 'https://other.example.com')
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({ error: 'Twitter OAuth not configured' })
+  })
+
+  it('with no OAUTH_REDIRECT_BASE, still refuses a return address it does not allow', async () => {
+    const res = await postStart('twitter', baseEnv({ OAUTH_REDIRECT_BASE: undefined }), startBody('twitter', PUBKEY, START_CHECK, 'https://other.example.com/'))
+    expect(res.status).toBe(400)
+  })
+
   it('still says sign-in is not set up with 503', async () => {
     expect((await postStart('twitter', baseEnv({ TWITTER_CLIENT_ID: undefined }), startBody('twitter', PUBKEY, START_CHECK))).status).toBe(503)
   })

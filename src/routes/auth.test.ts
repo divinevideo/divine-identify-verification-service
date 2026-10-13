@@ -450,6 +450,19 @@ describe('isAllowedReturnUrl', () => {
     expect(isAllowedReturnUrl('https://verifier.divine.video/other')).toBe(false)
   })
 
+  it('refuses near misses of an allowed page', () => {
+    expect(isAllowedReturnUrl('https://divine.video/app/callback/..')).toBe(false)
+    expect(isAllowedReturnUrl('http://divine.video/app/callback')).toBe(false)
+    expect(isAllowedReturnUrl('https://divine.video./app/callback')).toBe(false)
+    expect(isAllowedReturnUrl('https://divine.video:8443/app/callback')).toBe(false)
+  })
+
+  it('refuses an allowed page with a user name or password in the address', () => {
+    expect(isAllowedReturnUrl('https://someone@divine.video/app/callback')).toBe(false)
+    expect(isAllowedReturnUrl('https://:secret@verifier.divine.video/')).toBe(false)
+    expect(isAllowedReturnUrl('http://someone@localhost:5173/x', 'http://localhost:8787')).toBe(false)
+  })
+
   it('rejects untrusted origins (open-redirect guard still holds)', () => {
     expect(isAllowedReturnUrl('https://evil.example.com/')).toBe(false)
     // A trusted host as a subdomain label must not slip through.

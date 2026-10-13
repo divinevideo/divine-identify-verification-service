@@ -137,6 +137,8 @@ export function isAllowedReturnUrl(url: string, oauthRedirectBase?: string, requ
     const parsed = new URL(url)
     // Only web addresses: some other schemes (blob:) report a trusted origin.
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+    // The origin leaves out a user name or password, so refuse them here.
+    if (parsed.username || parsed.password) return false
     const page = parsed.origin + parsed.pathname
     const base = oauthRedirectBase ? new URL(oauthRedirectBase) : null
     if (base && page === `${base.origin}/`) return true
@@ -241,8 +243,11 @@ async function startSignIn(c: Context<{ Bindings: Bindings }>, req: StartRequest
   const base = c.env.OAUTH_REDIRECT_BASE
   const here = `${new URL(c.req.url).origin}/`
   const fallback = !isAllowedReturnUrl(here, base, c.req.url) && base ? `${new URL(base).origin}/` : here
-  const returnUrl = typeof req.returnUrl === 'string' && req.returnUrl ? req.returnUrl : fallback
-  if (!isAllowedReturnUrl(returnUrl, base, c.req.url)) {
+  const given = typeof req.returnUrl === 'string' && req.returnUrl ? req.returnUrl : undefined
+  const returnUrl = given ?? fallback
+  // Without OAUTH_REDIRECT_BASE no start below runs (each says it isn't set
+  // up), so only an address the client sent is worth refusing then.
+  if ((given !== undefined || base) && !isAllowedReturnUrl(returnUrl, base, c.req.url)) {
     return c.json({ error: 'Invalid return_url: must be a trusted origin' }, 400)
   }
   const normalizedPubkey = normalizePubkey(req.pubkey)
