@@ -1,4 +1,4 @@
-import { fetchFromPlatform, PlatformUnavailableError, throwIfUnanswered, type PlatformVerifier } from './base'
+import { discardBody, fetchFromPlatform, PlatformUnavailableError, readJson, throwIfUnanswered, type PlatformVerifier } from './base'
 import { DIVINE_IDENTITY_LINK_COLLECTION, matchNostrIdentityLinkRecord } from '../identity-link'
 import { resolveAtprotoIdentityPds } from '../atproto'
 import { fetchPublic } from '../utils/safe-fetch'
@@ -61,17 +61,15 @@ export class BlueskyVerifier implements PlatformVerifier {
       return { verified: false, error: `Bluesky API error: ${response.status}` }
     }
 
-    let data: {
+    const data = await readJson<{
       thread?: {
         post?: {
           author?: { handle?: string; did?: string }
           record?: { text?: string }
         }
       }
-    }
-    try {
-      data = await response.json() as typeof data
-    } catch {
+    }>(response, this.label)
+    if (data === undefined) {
       return { verified: false, error: 'Invalid JSON response from Bluesky' }
     }
 
@@ -115,21 +113,19 @@ export class BlueskyVerifier implements PlatformVerifier {
     }, fetchPublic)
 
     if (response.status === 400 || response.status === 404) {
+      await discardBody(response)
       return null
     }
     throwIfUnanswered(response, 'PDS')
     if (!response.ok) {
+      await discardBody(response)
       return null
     }
 
-    let data: {
+    const data = await readJson<{
       records?: Array<{ uri?: string; value?: unknown; record?: unknown }>
-    }
-    try {
-      data = await response.json() as typeof data
-    } catch {
-      return null
-    }
+    }>(response, 'PDS')
+    if (data === undefined) return null
 
     for (const recordEntry of data.records || []) {
       const record = recordEntry.value ?? recordEntry.record

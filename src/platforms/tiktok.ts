@@ -1,4 +1,4 @@
-import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
+import { discardBody, fetchFromPlatform, readJson, throwIfUnanswered, type PlatformVerifier } from './base'
 
 interface TikTokOEmbedResponse {
   // Display name (nickname); not unique, so unsuitable for ownership checks.
@@ -100,9 +100,7 @@ async function resolveShareLink(shareUrl: string): Promise<TikTokProof> {
     headers: { 'User-Agent': 'divine-identity-verification-service' },
   })
   // Only the status and Location matter; close the body so it isn't left open.
-  try {
-    await response.body?.cancel()
-  } catch {}
+  await discardBody(response)
   throwIfUnanswered(response, 'TikTok')
   if (response.status < 300 || response.status > 399) return { kind: 'invalid' }
   const location = response.headers.get('Location')
@@ -159,10 +157,8 @@ export class TikTokVerifier implements PlatformVerifier {
       return { verified: false, error: `TikTok oEmbed error: ${response.status}` }
     }
 
-    let data: TikTokOEmbedResponse
-    try {
-      data = await response.json() as TikTokOEmbedResponse
-    } catch {
+    const data = await readJson<TikTokOEmbedResponse>(response, this.label)
+    if (data === undefined) {
       return { verified: false, error: 'Invalid JSON response from TikTok oEmbed' }
     }
 

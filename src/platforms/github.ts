@@ -1,6 +1,6 @@
 // ABOUTME: GitHub proof-post verifier: reads the gist and checks it for the
 // ABOUTME: claimant's npub, via the JSON API when credentialed and the CDN otherwise.
-import { fetchFromPlatform, isUnanswered, throwIfUnanswered, type PlatformVerifier } from './base'
+import { discardBody, fetchFromPlatform, isUnanswered, PLATFORM_REQUEST_TIMEOUT_MS, readJson, readText, throwIfUnanswered, type PlatformVerifier } from './base'
 
 // Unauthenticated api.github.com allows 60 calls/hour per IP, and a Worker's
 // egress addresses are shared across the whole Cloudflare edge — so that budget
@@ -52,6 +52,7 @@ export class GitHubVerifier implements PlatformVerifier {
           'User-Agent': 'divine-identity-verification-service',
           'Authorization': `token ${this.token}`,
         },
+        signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
       })
     } catch {
       return null
@@ -61,18 +62,21 @@ export class GitHubVerifier implements PlatformVerifier {
       return { verified: false, error: 'Gist not found' }
     }
     if (apiUnavailable(response.status)) {
+      await discardBody(response)
       return null
     }
     if (!response.ok) {
       return { verified: false, error: `GitHub API error: ${response.status}` }
     }
 
-    let gist: { owner?: { login?: string }; files?: Record<string, { content?: string }> }
+    // An answer that stops arriving is the API not answering too: carry on with the public copy.
+    let gist: { owner?: { login?: string }; files?: Record<string, { content?: string }> } | undefined
     try {
-      gist = (await response.json()) as typeof gist
+      gist = await readJson<NonNullable<typeof gist>>(response, this.label)
     } catch {
       return null
     }
+    if (gist === undefined) return null
 
     if (gist.owner?.login?.toLowerCase() !== identity.toLowerCase()) {
       return { verified: false, error: 'Gist owner does not match claimed identity' }
@@ -112,7 +116,7 @@ export class GitHubVerifier implements PlatformVerifier {
       return { verified: false, error: `GitHub error: ${response.status}` }
     }
 
-    const content = await response.text()
+    const { text: content, truncated } = await readText(response, this.label)
     if (content.includes(npub)) {
       return { verified: true }
     }
@@ -120,7 +124,8 @@ export class GitHubVerifier implements PlatformVerifier {
     return {
       verified: false,
       error:
-        'npub not found in gist content. Without an API token only the first file of a gist is read, so put your npub in the first file.',
+        'npub not found in gist content. Without an API token only the first file of a gist is read, so put your npub in the first file.' +
+        (truncated ? ' Only the first 1 MB of that file is read, so put it near the start.' : ''),
     }
   }
 }

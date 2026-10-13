@@ -1,4 +1,4 @@
-import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier, type VerdictCode } from './base'
+import { fetchFromPlatform, readJson, throwIfUnanswered, type PlatformVerifier, type VerdictCode } from './base'
 
 interface DiscordMessageResponse {
   id: string
@@ -210,12 +210,7 @@ export class DiscordVerifier implements PlatformVerifier {
     // the bot cannot see, and only the body tells them apart. That difference is
     // the whole answer to "is the bot in the server?", so it is worth reading.
     if (response.status === 404) {
-      let discordCode: number | undefined
-      try {
-        discordCode = ((await response.json()) as { code?: number }).code
-      } catch {
-        discordCode = undefined
-      }
+      const discordCode = (await readJson<{ code?: number }>(response, this.label))?.code
       if (discordCode === DISCORD_UNKNOWN_CHANNEL) {
         return {
           verified: false,
@@ -239,10 +234,8 @@ export class DiscordVerifier implements PlatformVerifier {
       }
     }
 
-    let data: DiscordMessageResponse
-    try {
-      data = await response.json() as DiscordMessageResponse
-    } catch {
+    const data = await readJson<DiscordMessageResponse>(response, this.label)
+    if (data === undefined) {
       return {
         verified: false,
         code: 'discord_api_error',

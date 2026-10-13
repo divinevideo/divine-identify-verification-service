@@ -1,4 +1,4 @@
-import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
+import { discardBody, fetchFromPlatform, readJson, throwIfUnanswered, type PlatformVerifier } from './base'
 import { isPrivateHostname, isSafeUrl } from '../utils/validation'
 import { fetchPublic } from '../utils/safe-fetch'
 
@@ -29,13 +29,6 @@ function actorUrl(body: unknown, account: string): URL | null {
   if (!self || !isSafeUrl(self.href)) return null
   const url = new URL(self.href)
   return url.port ? null : url
-}
-
-// Close a body that won't be read, as fetchPublic does, so it isn't left open.
-async function discardBody(response: Response): Promise<void> {
-  try {
-    await response.body?.cancel()
-  } catch {}
 }
 
 export class MastodonVerifier implements PlatformVerifier {
@@ -103,10 +96,8 @@ export class MastodonVerifier implements PlatformVerifier {
       return { verified: false, error: `Mastodon API error: ${response.status}` }
     }
 
-    let status: { account?: { acct?: string }; content?: string }
-    try {
-      status = await response.json() as typeof status
-    } catch {
+    const status = await readJson<{ account?: { acct?: string }; content?: string }>(response, this.label)
+    if (status === undefined) {
       return { verified: false, error: 'Invalid JSON response from Mastodon' }
     }
 
@@ -156,11 +147,7 @@ export class MastodonVerifier implements PlatformVerifier {
       await discardBody(response)
       return null
     }
-    try {
-      return actorUrl(await response.json(), account)
-    } catch {
-      return null
-    }
+    return actorUrl(await readJson<unknown>(response, this.label), account)
   }
 
   private parseIdentity(identity: string): { instance: string; user: string } | null {

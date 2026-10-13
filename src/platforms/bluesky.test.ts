@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { BlueskyVerifier } from './bluesky'
+import { fakeResponse } from '../test-support/fake-response'
 
 describe('BlueskyVerifier', () => {
   const verifier = new BlueskyVerifier()
@@ -8,21 +9,21 @@ describe('BlueskyVerifier', () => {
   const pdsEndpoint = 'https://example-pds.test'
 
   function didDocumentResponse() {
-    return {
+    return fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
         service: [{ id: '#atproto_pds', serviceEndpoint: pdsEndpoint }],
       }),
-    }
+    })
   }
 
   function emptyIdentityLinksResponse() {
-    return {
+    return fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({ records: [] }),
-    }
+    })
   }
 
   beforeEach(() => {
@@ -31,13 +32,13 @@ describe('BlueskyVerifier', () => {
 
   it('returns verified when identity-link record matches npub', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({ did }),
-      })
+      }))
       .mockResolvedValueOnce(didDocumentResponse())
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -51,7 +52,7 @@ describe('BlueskyVerifier', () => {
             },
           }],
         }),
-      })
+      }))
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await verifier.verify('alice.bsky.social', '', npub)
@@ -66,7 +67,7 @@ describe('BlueskyVerifier', () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(didDocumentResponse())
       .mockResolvedValueOnce(emptyIdentityLinksResponse())
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -77,7 +78,7 @@ describe('BlueskyVerifier', () => {
             },
           },
         }),
-      }))
+      })))
 
     const result = await verifier.verify(did, 'abc123rkey', npub)
     expect(result.verified).toBe(true)
@@ -88,7 +89,7 @@ describe('BlueskyVerifier', () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(didDocumentResponse())
       .mockResolvedValueOnce(emptyIdentityLinksResponse())
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -99,7 +100,7 @@ describe('BlueskyVerifier', () => {
             },
           },
         }),
-      }))
+      })))
 
     const result = await verifier.verify(did, 'abc123rkey', npub)
     expect(result.verified).toBe(false)
@@ -110,7 +111,7 @@ describe('BlueskyVerifier', () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(didDocumentResponse())
       .mockResolvedValueOnce(emptyIdentityLinksResponse())
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -121,7 +122,7 @@ describe('BlueskyVerifier', () => {
             },
           },
         }),
-      }))
+      })))
 
     const result = await verifier.verify(did, 'abc123rkey', npub)
     expect(result.verified).toBe(false)
@@ -155,7 +156,7 @@ describe('BlueskyVerifier', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(didDocumentResponse())
       .mockResolvedValueOnce(emptyIdentityLinksResponse())
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -166,7 +167,7 @@ describe('BlueskyVerifier', () => {
             },
           },
         }),
-      })
+      }))
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await verifier.verify('did:plc:e2ctbutx6kya6si4if5ngjmm', '3molaaw2qhk25', npub)

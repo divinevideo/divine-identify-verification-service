@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MastodonVerifier } from './mastodon'
 import { PlatformUnavailableError } from './base'
+import { fakeResponse } from '../test-support/fake-response'
 
 describe('MastodonVerifier', () => {
   const verifier = new MastodonVerifier()
@@ -11,42 +12,42 @@ describe('MastodonVerifier', () => {
   })
 
   it('returns verified when npub found in status from correct author', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
         account: { acct: 'alice', username: 'alice' },
         content: `<p>Verifying that I control the following Nostr public key: &quot;${npub}&quot;</p>`,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('mastodon.social/@alice', '109876543210', npub)
     expect(result.verified).toBe(true)
   })
 
   it('returns not verified when npub missing', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
         account: { acct: 'alice', username: 'alice' },
         content: '<p>Just a regular toot</p>',
       }),
-    }))
+    })))
 
     const result = await verifier.verify('mastodon.social/@alice', '109876543210', npub)
     expect(result.verified).toBe(false)
   })
 
   it('returns not verified when author does not match', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
         account: { acct: 'bob', username: 'bob' },
         content: `<p>${npub}</p>`,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('mastodon.social/@alice', '109876543210', npub)
     expect(result.verified).toBe(false)
@@ -56,14 +57,14 @@ describe('MastodonVerifier', () => {
   // Servers show posts from accounts on other servers too. A remote author has
   // the same bare username but an acct that names their own server.
   it('refuses a post by a same-named account on another server', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
         account: { acct: 'alice@elsewhere.example', username: 'alice' },
         content: `<p>${npub}</p>`,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('mastodon.social/@alice', '109876543210', npub)
     expect(result.verified).toBe(false)
@@ -71,36 +72,36 @@ describe('MastodonVerifier', () => {
   })
 
   it('matches the local author regardless of letter case', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
         account: { acct: 'Alice', username: 'Alice' },
         content: `<p>${npub}</p>`,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('mastodon.social/@alice', '109876543210', npub)
     expect(result.verified).toBe(true)
   })
 
   it('matches a claimed user regardless of letter case', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({ account: { acct: 'alice' }, content: `<p>${npub}</p>` }),
-    }))
+    })))
 
     const result = await verifier.verify('mastodon.social/@Alice', '109876543210', npub)
     expect(result.verified).toBe(true)
   })
 
   it('accepts a full handle on the same server', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({ account: { acct: 'alice' }, content: `<p>${npub}</p>` }),
-    }))
+    })))
 
     for (const identity of [
       'mastodon.social/@alice@mastodon.social',

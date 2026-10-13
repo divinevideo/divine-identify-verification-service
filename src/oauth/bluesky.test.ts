@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // Since it does auth server discovery + PAR + redirect, we mock the full chain.
 
 import { startBlueskyOAuth } from './bluesky'
+import { fakeResponse } from '../test-support/fake-response'
 
 // These tests don't exercise sign-in binding; any hash-shaped string will do.
 const BINDING_HASH = 'b'.repeat(64)
@@ -30,27 +31,27 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
 function mockDiscoveryChain() {
   return [
     // 1. resolveHandle -> DID
-    {
+    fakeResponse({
       ok: true,
       json: async () => ({ did: 'did:plc:testuser123' }),
-    },
+    }),
     // 2. DID document from plc.directory
-    {
+    fakeResponse({
       ok: true,
       json: async () => ({
         alsoKnownAs: ['at://alice.bsky.social'],
         service: [{ id: '#atproto_pds', serviceEndpoint: 'https://pds.bsky.social' }],
       }),
-    },
+    }),
     // 3. PDS resource metadata
-    {
+    fakeResponse({
       ok: true,
       json: async () => ({
         authorization_servers: ['https://bsky.social'],
       }),
-    },
+    }),
     // 4. Auth server metadata
-    {
+    fakeResponse({
       ok: true,
       json: async () => ({
         issuer: 'https://bsky.social',
@@ -58,40 +59,40 @@ function mockDiscoveryChain() {
         token_endpoint: 'https://bsky.social/oauth/token',
         pushed_authorization_request_endpoint: 'https://bsky.social/oauth/par',
       }),
-    },
+    }),
   ]
 }
 
 // Successful PAR response
 function parSuccess() {
-  return {
+  return fakeResponse({
     ok: true,
     status: 201,
     headers: new Headers(),
     json: async () => ({ request_uri: 'urn:ietf:params:oauth:request_uri:test123' }),
-  }
+  })
 }
 
 // PAR rejection with use_dpop_nonce
 function parNonceRequired(nonce: string) {
-  return {
+  return fakeResponse({
     ok: false,
     status: 400,
     headers: new Headers({ 'DPoP-Nonce': nonce }),
     json: async () => ({ error: 'use_dpop_nonce' }),
     text: async () => JSON.stringify({ error: 'use_dpop_nonce' }),
-  }
+  })
 }
 
 // PAR failure without nonce (real error)
 function parFailed(status: number, body: string) {
-  return {
+  return fakeResponse({
     ok: false,
     status,
     headers: new Headers(),
     json: async () => ({ error: body }),
     text: async () => body,
-  }
+  })
 }
 
 describe('startBlueskyOAuth - DPoP nonce retry', () => {

@@ -1,6 +1,6 @@
 import { isSafeUrl } from './utils/validation'
 import { fetchPublic } from './utils/safe-fetch'
-import { fetchFromPlatform, throwIfUnanswered } from './platforms/base'
+import { discardBody, fetchFromPlatform, readJson, throwIfUnanswered } from './platforms/base'
 
 export type DidDocument = {
   alsoKnownAs?: string[]
@@ -16,26 +16,24 @@ export async function resolveHandle(handle: string): Promise<string | null> {
   const resolveUrl = `https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`
   const resolveResp = await fetchFromPlatform('Bluesky handle lookup', resolveUrl)
   throwIfUnanswered(resolveResp, 'Bluesky handle lookup')
-  if (!resolveResp.ok) return null
-
-  try {
-    const resolveData = await resolveResp.json() as { did?: string }
-    return resolveData.did || null
-  } catch {
+  if (!resolveResp.ok) {
+    await discardBody(resolveResp)
     return null
   }
+
+  const resolveData = await readJson<{ did?: string }>(resolveResp, 'Bluesky handle lookup')
+  return resolveData?.did || null
 }
 
 export async function resolveDidDocument(did: string): Promise<DidDocument | null> {
   if (did.startsWith('did:plc:')) {
     const didResp = await fetchFromPlatform('PLC directory', `https://plc.directory/${did}`)
     throwIfUnanswered(didResp, 'PLC directory')
-    if (!didResp.ok) return null
-    try {
-      return await didResp.json() as DidDocument
-    } catch {
+    if (!didResp.ok) {
+      await discardBody(didResp)
       return null
     }
+    return (await readJson<DidDocument>(didResp, 'PLC directory')) ?? null
   }
 
   if (did.startsWith('did:web:')) {
@@ -45,12 +43,11 @@ export async function resolveDidDocument(did: string): Promise<DidDocument | nul
     if (!isSafeUrl(didWebUrl)) return null
     const didResp = await fetchFromPlatform('did:web host', didWebUrl, undefined, fetchPublic)
     throwIfUnanswered(didResp, 'did:web host')
-    if (!didResp.ok) return null
-    try {
-      return await didResp.json() as DidDocument
-    } catch {
+    if (!didResp.ok) {
+      await discardBody(didResp)
       return null
     }
+    return (await readJson<DidDocument>(didResp, 'did:web host')) ?? null
   }
 
   return null
