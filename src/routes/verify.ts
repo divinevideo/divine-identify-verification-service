@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { Bindings, VerifyClaim, VerifyResult, CachedResult } from '../types'
-import { validateClaim, normalizePubkey, VALID_PLATFORMS } from '../utils/validation'
+import { validateClaim, normalizePubkey, fitsStorageKeys, VALID_PLATFORMS } from '../utils/validation'
 import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
@@ -9,10 +9,25 @@ import { PlatformUnavailableError } from '../platforms/base'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import { getOAuthVerification } from '../oauth/state'
 import { signInAccountStillMatches } from '../oauth/signin-account'
+import { tidyClaim } from '../utils/tidy-claim'
 
 const verify = new Hono<{ Bindings: Bindings }>()
 
 export const MAX_BATCH_SIZE = 10
+
+// The clean values for a verified answer: the platform's own (a TikTok post
+// number, a Mastodon web domain) win over what tidying produced.
+function cleanValues(
+  result: { canonicalProof?: string; canonicalIdentity?: string },
+  tidied: { canonical_identity?: string; canonical_proof?: string },
+): { canonical_identity?: string; canonical_proof?: string } {
+  const identity = result.canonicalIdentity ?? tidied.canonical_identity
+  const proof = result.canonicalProof ?? tidied.canonical_proof
+  return {
+    ...(identity ? { canonical_identity: identity } : {}),
+    ...(proof ? { canonical_proof: proof } : {}),
+  }
+}
 
 async function verifySingleClaim(
   claim: VerifyClaim,
@@ -29,14 +44,29 @@ async function verifySingleClaim(
     pubkey: normalizePubkey(claim.pubkey),
     proof: claim.platform === 'bluesky' && proof.trim() === '' ? '' : proof,
   }
-  const key = cacheKey(normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.proof, normalizedClaim.pubkey)
+  // People paste handles and links in many shapes. Check and cache the tidy
+  // form, but echo the identity as sent: clients match results on it.
+  const tidyForm = tidyClaim(normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.proof)
+  // The tidy account can be longer than the one sent: a Telegram channel copied
+  // into the account in place of "s". Validation sized the claim as sent, so
+  // when the tidy form's storage keys wouldn't fit, the claim is checked as
+  // sent and stays checkable.
+  const tidy = fitsStorageKeys(normalizedClaim.platform, tidyForm.identity, tidyForm.proof, normalizedClaim.pubkey)
+    ? tidyForm
+    : { identity: normalizedClaim.identity, proof: normalizedClaim.proof }
+  // The tidy values to hand back, on a verified answer, when tidying changed something.
+  const tidied = {
+    ...(tidy.identity !== normalizedClaim.identity ? { canonical_identity: tidy.identity } : {}),
+    ...(tidy.proof !== normalizedClaim.proof ? { canonical_proof: tidy.proof } : {}),
+  }
+  const key = cacheKey(normalizedClaim.platform, tidy.identity, tidy.proof, normalizedClaim.pubkey)
 
   // A sign-in record answers first, so a result cached before a fresh sign-in
   // (a failed check, or one made right after an unlink) can't hide it.
   if (normalizedClaim.platform === 'twitter' || normalizedClaim.platform === 'bluesky' || normalizedClaim.platform === 'youtube' || normalizedClaim.platform === 'tiktok') {
-    const oauthResult = await getOAuthVerification(env.CACHE_KV, normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.pubkey)
+    const oauthResult = await getOAuthVerification(env.CACHE_KV, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey)
     if (oauthResult) {
-      if (!(await signInAccountStillMatches(env, oauthResult, normalizedClaim.identity))) {
+      if (!(await signInAccountStillMatches(env, oauthResult, tidy.identity))) {
         return {
           platform: normalizedClaim.platform,
           identity: normalizedClaim.identity,
@@ -55,6 +85,8 @@ async function verifySingleClaim(
           method: 'oauth',
           evidence: ['oauth_verification_cache'],
         },
+        // A sign-in claim can carry a pasted proof too, so both clean values apply.
+        ...cleanValues({}, tidied),
         checked_at: oauthResult.checked_at,
         cached: true,
       }
@@ -72,8 +104,9 @@ async function verifySingleClaim(
       code: cached.code,
       method: cached.method,
       provenance: cached.provenance,
-      ...(cached.canonical_proof ? { canonical_proof: cached.canonical_proof } : {}),
-      ...(cached.canonical_identity ? { canonical_identity: cached.canonical_identity } : {}),
+      // The entry may have been written for the clean form, so the tidy values
+      // of this claim fill in what the platform didn't supply.
+      ...(cached.verified ? cleanValues({ canonicalProof: cached.canonical_proof, canonicalIdentity: cached.canonical_identity }, tidied) : {}),
       checked_at: cached.checked_at,
       cached: true,
     }
@@ -116,7 +149,7 @@ async function verifySingleClaim(
   // Perform verification
   const verifier = getVerifier(normalizedClaim.platform, env.GITHUB_TOKEN, env.YOUTUBE_API_KEY, env.DISCORD_BOT_TOKEN, env.DISCORD_VERIFY_CHANNEL_ID)
   try {
-    const result = await verifier.verify(normalizedClaim.identity, normalizedClaim.proof, npub)
+    const result = await verifier.verify(tidy.identity, tidy.proof, npub)
 
     // Cache the result
     const cacheResult: CachedResult = {
@@ -125,8 +158,8 @@ async function verifySingleClaim(
       code: result.code,
       method: result.method,
       provenance: result.provenance,
-      ...(result.canonicalProof ? { canonical_proof: result.canonicalProof } : {}),
-      ...(result.canonicalIdentity ? { canonical_identity: result.canonicalIdentity } : {}),
+      // Only the platform's own values: tidied ones belong to this request, not the entry.
+      ...(result.verified ? cleanValues(result, {}) : {}),
       checked_at: now,
       type: result.verified ? 'verified' : 'failed',
     }
@@ -140,8 +173,7 @@ async function verifySingleClaim(
       code: result.code,
       method: result.method,
       provenance: result.provenance,
-      ...(result.canonicalProof ? { canonical_proof: result.canonicalProof } : {}),
-      ...(result.canonicalIdentity ? { canonical_identity: result.canonicalIdentity } : {}),
+      ...(result.verified ? cleanValues(result, tidied) : {}),
       checked_at: now,
       cached: false,
     }

@@ -94,9 +94,9 @@ export interface VerifyResult {
   code?: VerificationCode
   method?: VerificationMethod
   provenance?: VerificationProvenance
-  /** The proof to publish instead of the one sent; see PlatformVerifier.verify. */
+  /** The proof to publish instead of the one sent: tidied, or resolved by the platform check (see PlatformVerifier.verify). */
   canonical_proof?: string
-  /** The account as claimed, named on the server that holds it; see PlatformVerifier.verify. */
+  /** The account to publish instead of the one sent: tidied, or named on the server that holds it (see PlatformVerifier.verify). */
   canonical_identity?: string
   checked_at: number
   cached: boolean
@@ -113,6 +113,7 @@ export interface CachedResult {
   code?: VerificationCode
   method?: VerificationMethod
   provenance?: VerificationProvenance
+  /** Only the platform check's own values; tidied values are worked out per request, never cached. */
   canonical_proof?: string
   canonical_identity?: string
   checked_at: number

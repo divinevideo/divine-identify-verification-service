@@ -1,0 +1,223 @@
+// ABOUTME: Tidies the account and proof people paste (a leading @, a full post
+// ABOUTME: link) into the form each platform check expects. Pure: never fetches.
+
+export interface TidiedClaim {
+  identity: string
+  proof: string
+}
+
+const TWITTER_HOSTS = ['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com']
+const YOUTUBE_HOSTS = ['youtube.com', 'www.youtube.com', 'm.youtube.com']
+// YouTube Music links to a video only as a watch link.
+const YOUTUBE_MUSIC_HOSTS = ['music.youtube.com']
+const YOUTUBE_EMBED_HOSTS = ['www.youtube-nocookie.com']
+const AT_PREFIX = ['twitter', 'bluesky', 'github', 'telegram', 'tiktok']
+
+// A pasted http(s) link, or null. Only links are parsed; other text is left alone.
+function link(text: string): URL | null {
+  if (!/^https?:\/\//i.test(text)) return null
+  try {
+    return new URL(text)
+  } catch {
+    return null
+  }
+}
+
+function parts(url: URL): string[] {
+  return url.pathname.split('/').filter(Boolean)
+}
+
+function on(url: URL, hosts: string[]): boolean {
+  return hosts.includes(url.hostname.toLowerCase())
+}
+
+function twitterProof(proof: string): string | null {
+  const url = link(proof)
+  if (!url || !on(url, TWITTER_HOSTS)) return null
+  // /<user>/status/<id>, /i/status/<id> and /i/web/status/<id>, maybe followed
+  // by /photo/<n> or /video/<n> (a post's own media links).
+  const segments = parts(url)
+  const at = segments[0] === 'i' && segments[1] === 'web' ? 2 : 1
+  const [status, id, ...rest] = segments.slice(at)
+  const media = rest.length === 0
+    || (rest.length === 2 && (rest[0] === 'photo' || rest[0] === 'video') && /^\d+$/.test(rest[1]))
+  return status === 'status' && /^\d+$/.test(id ?? '') && media ? id : null
+}
+
+// The characters a record key may have (atproto.com/specs/record-key). Both
+// link forms are read with it, so a key outside it is left as sent.
+const RECORD_KEY = /^[A-Za-z0-9._~:-]+$/
+
+function blueskyProof(proof: string): string | null {
+  const atUri = proof.match(/^at:\/\/[^/]+\/app\.bsky\.feed\.post\/([^/]+)$/)
+  if (atUri) return RECORD_KEY.test(atUri[1]) ? atUri[1] : null
+  const url = link(proof)
+  if (!url || !on(url, ['bsky.app'])) return null
+  const segments = parts(url)
+  const [profile, , post, rkey] = segments
+  return segments.length === 4 && profile === 'profile' && post === 'post' && RECORD_KEY.test(rkey) ? rkey : null
+}
+
+function githubProof(proof: string): string | null {
+  const url = link(proof)
+  if (!url || !on(url, ['gist.github.com', 'gist.githubusercontent.com'])) return null
+  // /<user>/<id> or, on gist.github.com, /<id>. The clone link is /<id>.git and
+  // the embed link /<user>/<id>.js; both name the same gist.
+  const segments = parts(url)
+  const candidate = segments.length === 1 && on(url, ['gist.github.com'])
+    ? segments[0].replace(/\.git$/, '')
+    : (segments[1] ?? '').replace(/\.js$/, '')
+  return /^[0-9a-f]+$/.test(candidate) ? candidate : null
+}
+
+const TELEGRAM_HOSTS = ['t.me', 'www.t.me', 'telegram.me', 'telegram.dog']
+// A channel name: Telegram allows at most 32 characters. A post in tidy form is
+// <channel>/<post>.
+const TELEGRAM_CHANNEL = /^[A-Za-z0-9_]{1,32}$/
+const TELEGRAM_POST = /^[A-Za-z0-9_]{1,32}\/\d+$/
+
+// A public post: exactly <channel>/<post>. Private links (c/...) can't be read
+// publicly, and forum-topic links have a third part, so neither is rewritten.
+function telegramPost(channel: string | undefined, id: string | undefined): string | null {
+  return channel && channel !== 'c' && TELEGRAM_CHANNEL.test(channel) && /^\d+$/.test(id ?? '') ? `${channel}/${id}` : null
+}
+
+// Whether the proof names a post on Telegram's public preview page: a
+// t.me/s/<channel>/<post> link, or the s/<channel>/<post> left of one.
+function telegramPreview(proof: string): boolean {
+  if (proof.startsWith('s/')) return true
+  const url = link(proof)
+  return !!url && TELEGRAM_HOSTS.includes(url.hostname.toLowerCase()) && parts(url)[0] === 's'
+}
+
+function telegramProof(proof: string): string | null {
+  const bare = proof.match(/^s\/([A-Za-z0-9_]+)\/(\d+)$/)
+  if (bare) return telegramPost(bare[1], bare[2])
+  const url = link(proof)
+  if (!url) return null
+  const host = url.hostname.toLowerCase()
+  const segments = parts(url)
+  // <channel>.t.me/<post>
+  if (host.endsWith('.t.me') && host !== 'www.t.me') {
+    return segments.length === 1 ? telegramPost(host.slice(0, -'.t.me'.length), segments[0]) : null
+  }
+  if (!TELEGRAM_HOSTS.includes(host)) return null
+  const post = segments[0] === 's' ? segments.slice(1) : segments
+  return post.length === 2 ? telegramPost(post[0], post[1]) : null
+}
+
+// Mastodon status ids are opaque strings; servers use letters and digits.
+const STATUS_ID = /^[A-Za-z0-9]+$/
+
+// A local account in a path: "@alice", not "@alice@other.server". A post seen
+// through another server has that server's id, which the account's own server
+// doesn't know, so remote views are not rewritten.
+function localAccount(segment: string | undefined): boolean {
+  return !!segment && segment.startsWith('@') && segment.indexOf('@', 1) === -1
+}
+
+function mastodonProof(proof: string): string | null {
+  const url = link(proof)
+  if (!url) return null
+  const segments = parts(url)
+  const post = segments[0] === 'web' ? segments.slice(1) : segments
+  // /@user/<id>, /@user/<id>/embed and /web/@user/<id>
+  if (localAccount(post[0]) && STATUS_ID.test(post[1] ?? '')
+    && (post.length === 2 || (post.length === 3 && post[2] === 'embed' && segments[0] !== 'web'))) return post[1]
+  // /users/<user>/statuses/<id> (not /activity, which is a boost)
+  if (segments.length === 4 && segments[0] === 'users' && segments[2] === 'statuses' && STATUS_ID.test(segments[3])) return segments[3]
+  return null
+}
+
+// Every video id seen is 11 characters; YouTube doesn't document the length,
+// so this is an observed rule, not a documented one.
+const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
+
+function youtubeProof(proof: string): string | null {
+  const url = link(proof)
+  if (!url) return null
+  if (on(url, ['youtu.be'])) {
+    const [id] = parts(url)
+    return VIDEO_ID.test(id ?? '') ? id : null
+  }
+  if (!on(url, [...YOUTUBE_HOSTS, ...YOUTUBE_MUSIC_HOSTS, ...YOUTUBE_EMBED_HOSTS])) return null
+  const [kind, id] = parts(url)
+  if (on(url, YOUTUBE_EMBED_HOSTS)) return kind === 'embed' && VIDEO_ID.test(id ?? '') ? id : null
+  if (kind === 'watch') {
+    const v = url.searchParams.get('v') ?? ''
+    return VIDEO_ID.test(v) ? v : null
+  }
+  return on(url, YOUTUBE_HOSTS) && ['shorts', 'live', 'embed'].includes(kind ?? '') && VIDEO_ID.test(id ?? '') ? id : null
+}
+
+// A handle: letters and digits in any script, plus _ - . and the middle dot
+// (support.google.com/youtube/answer/11585688).
+const YOUTUBE_HANDLE = /^@[\p{L}\p{M}\p{N}_.·-]+$/u
+
+// A link's path is percent-encoded (/@caf%C3%A9), so the handle is read
+// decoded, the way it is typed and the way sign-in records it.
+function decodedSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return null
+  }
+}
+
+function youtubeIdentity(identity: string): string | null {
+  const url = link(identity)
+  if (!url || !on(url, YOUTUBE_HOSTS)) return null
+  const [first, second] = parts(url)
+  if (first === 'channel' && /^UC[A-Za-z0-9_-]{22}$/.test(second ?? '')) return second
+  const handle = first?.startsWith('@') ? decodedSegment(first) : null
+  return handle && YOUTUBE_HANDLE.test(handle) ? handle : null
+}
+
+// A handle as Mastodon shows it, @user@server, in NIP-39's server/@user form.
+// The user part is Mastodon's own username grammar (app/models/account.rb).
+const MASTODON_HANDLE = /^@?([A-Za-z0-9_]+(?:[.-]+[A-Za-z0-9_]+)*)@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)$/
+
+function mastodonIdentity(identity: string): string | null {
+  const handle = identity.match(MASTODON_HANDLE)
+  return handle ? `${handle[2]}/@${handle[1]}` : null
+}
+
+const PROOF_TIDIERS: Record<string, (proof: string) => string | null> = {
+  twitter: twitterProof,
+  bluesky: blueskyProof,
+  github: githubProof,
+  telegram: telegramProof,
+  mastodon: mastodonProof,
+  youtube: youtubeProof,
+}
+
+/**
+ * The account and proof in the form each platform's check expects. Only exact,
+ * known shapes are rewritten; anything else comes back trimmed and otherwise as
+ * sent, so the platform check answers it as it always has.
+ */
+export function tidyClaim(platform: string, identity: string, proof: string): TidiedClaim {
+  let tidyIdentity = identity.trim()
+  const tidyProof = proof.trim()
+
+  if (AT_PREFIX.includes(platform) && tidyIdentity.startsWith('@') && tidyIdentity.length > 1) {
+    tidyIdentity = tidyIdentity.slice(1)
+  }
+  if (platform === 'youtube') tidyIdentity = youtubeIdentity(tidyIdentity) ?? tidyIdentity
+  if (platform === 'mastodon') tidyIdentity = mastodonIdentity(tidyIdentity) ?? tidyIdentity
+
+  const tidier = PROOF_TIDIERS[platform]
+  const resolvedProof = (tidier && tidier(tidyProof)) || tidyProof
+
+  // A t.me/s/<channel> link read as account "s": /s/ is Telegram's public
+  // preview path, not an account, so the channel of the post is the account.
+  if (platform === 'telegram' && tidyIdentity.toLowerCase() === 's'
+    && telegramPreview(tidyProof) && TELEGRAM_POST.test(resolvedProof)) {
+    tidyIdentity = resolvedProof.split('/')[0]
+  }
+
+  return {
+    identity: tidyIdentity || identity,
+    proof: resolvedProof || proof,
+  }
+}

@@ -334,6 +334,16 @@ describe('response fields in the API docs', () => {
     const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
     expect(html).toContain('<tr><td><code>canonical_identity</code></td><td>string?</td>')
   })
+
+  it('says canonical_proof also reports a pasted link reduced to its post', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    expect(html).toContain('a pasted post link was reduced to the part the check uses')
+  })
+
+  it('says canonical_identity also reports a tidied account', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    expect(html).toContain('the account as sent was tidied (for example a leading @ removed, or a Mastodon handle sent as <code>@user@server</code> returned as <code>server/@user</code>)')
+  })
 })
 
 describe('favicon', () => {
@@ -390,6 +400,27 @@ describe('verifier proof-post form', () => {
       identity: 'octocat',
       proof: 'abc123',
     })
+  })
+
+  it('fills in the Telegram channel and post from a pasted preview-page link', async () => {
+    const normalize = await browserNormalizer()
+    expect(normalize('telegram', '', 'https://t.me/s/alicechannel/45')).toEqual({
+      identity: 'alicechannel',
+      proof: 'alicechannel/45',
+    })
+  })
+
+  it('drops a leading @ from the channel in a pasted Telegram link', async () => {
+    const normalize = await browserNormalizer()
+    expect(normalize('telegram', '', 'https://t.me/@alicechannel/45')).toEqual({
+      identity: 'alicechannel',
+      proof: 'alicechannel/45',
+    })
+  })
+
+  it('does not take the preview path for a Telegram account when the link names no post', async () => {
+    const normalize = await browserNormalizer()
+    expect(normalize('telegram', '', 'https://t.me/s/alicechannel')).toEqual({ identity: '', proof: 'https://t.me/s/alicechannel' })
   })
 
   // The verifier is the only place a Discord message link is parsed. It needs

@@ -833,8 +833,8 @@ Content-Type: application/json
         <tr><td><code>verified</code></td><td>boolean</td><td><code>true</code> if proof post contains the npub and the author matches</td></tr>
         <tr><td><code>error</code></td><td>string?</td><td>Error message (only when <code>verified</code> is <code>false</code>)</td></tr>
         <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable reason the claim isn't verified. <code>temporarily_unavailable</code> means the claim couldn't be checked right now (the platform didn't answer, or the per-person or per-platform check limit was hit), not that it was rejected: try again in a few minutes. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.</td></tr>
-        <tr><td><code>canonical_proof</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the proof was resolved to a simpler stable form (TikTok: the post number for a link or share link). Publish this instead of the proof you sent.</td></tr>
-        <tr><td><code>canonical_identity</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the account was confirmed on a different host from the one in the claim (Mastodon: a server whose handles use another domain from its website). Links to the post use it.</td></tr>
+        <tr><td><code>canonical_proof</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the proof was resolved to a simpler stable form: a pasted post link was reduced to the part the check uses, or a TikTok link or share link to its post number. Publish this instead of the proof you sent.</td></tr>
+        <tr><td><code>canonical_identity</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the account as sent was tidied (for example a leading @ removed, or a Mastodon handle sent as <code>@user@server</code> returned as <code>server/@user</code>), or confirmed on a different host from the one in the claim (Mastodon: a server whose handles use another domain from its website). Publish this instead of the account you sent; links to the post use it.</td></tr>
         <tr><td><code>checked_at</code></td><td>number</td><td>Unix timestamp (seconds)</td></tr>
         <tr><td><code>cached</code></td><td>boolean</td><td><code>true</code> if served from cache</td></tr>
       </table>
@@ -1726,9 +1726,11 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       }
 
       if (platform === 'telegram' && (host === 't.me' || host === 'www.t.me')) {
-        if (path[0] && path[1]) {
-          const channel = path[0].replace(/^@/, '');
-          return { identity: channel, proof: channel + '/' + path[1] };
+        // t.me/s/<channel>/<post> is the same post on Telegram's public preview page.
+        const post = path[0] === 's' ? path.slice(1) : path;
+        if (post[0] && post[1]) {
+          const channel = post[0].replace(/^@/, '');
+          return { identity: channel, proof: channel + '/' + post[1] };
         }
       }
 
@@ -1865,11 +1867,16 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
           // TikTok share link becomes its post number), not the pasted link,
           // unless the person changed the proof while the check ran.
           const proofInput = document.getElementById('proof-proof-input');
-          const usePostNumber = typeof data.canonical_proof === 'string' && data.canonical_proof
+          const useCleanProof = typeof data.canonical_proof === 'string' && data.canonical_proof
             && proofInput.value === normalized.proof;
-          if (usePostNumber) proofInput.value = data.canonical_proof;
+          if (useCleanProof) proofInput.value = data.canonical_proof;
+          // The same for the account (for example a handle pasted with its @).
+          const identityInput = document.getElementById('proof-identity-input');
+          const useCleanIdentity = typeof data.canonical_identity === 'string' && data.canonical_identity
+            && identityInput.value === normalized.identity;
+          if (useCleanIdentity) identityInput.value = data.canonical_identity;
           const method = data.method ? ' via ' + data.method.replace('_', ' ') : '';
-          setStatus('proof-status', 'Success. This account is verified' + method + '.' + (usePostNumber ? ' Publishing will use the post number.' : ''), 'ok');
+          setStatus('proof-status', 'Success. This account is verified' + method + '.' + (useCleanProof || useCleanIdentity ? ' Publishing will use the clean form.' : ''), 'ok');
         } else {
           setStatus('proof-status', data.error || 'Not verified yet.', 'error');
         }

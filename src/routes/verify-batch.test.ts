@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import type { Bindings, CachedResult } from '../types'
 import verify from './verify'
 import { cacheKey } from '../utils/cache'
+import { hexToNpub } from '../utils/npub'
 
 const app = new Hono<{ Bindings: Bindings }>()
 app.route('/verify', verify)
@@ -165,6 +166,105 @@ describe('POST /verify: one bad claim no longer fails the whole batch', () => {
       expect(results.map(r => r.verified)).toEqual([false, true])
       expect(results[0].error).toMatch(/too long/i)
     }
+  })
+
+  it('keeps a long claim checkable when its tidy form would be too long to store', async () => {
+    const { env } = createEnv()
+    await seedVerified(env, 'github', 'octocat', 'abc123')
+    const fetchMock = vi.fn(async () => new Response('', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    // As sent, "v|telegram|s|" + 430 + "|" + 64-char pubkey = 508 bytes. Tidied, the
+    // channel becomes the account and the key would be 537 bytes.
+    const proof = `s/${'a'.repeat(32)}/${'1'.repeat(395)}`
+    const res = await postBatch(env, {
+      claims: [
+        { platform: 'telegram', identity: 's', proof, pubkey: PUBKEY },
+        { platform: 'github', identity: 'octocat', proof: 'abc123', pubkey: PUBKEY },
+      ],
+    })
+    expect(res.status).toBe(200)
+    const { results } = await res.json() as BatchResponse
+    expect(results[0]).toMatchObject({ platform: 'telegram', identity: 's', verified: false })
+    // The check reads the proof as sent, not its tidy form.
+    expect(fetchMock).toHaveBeenCalledWith(`https://t.me/${proof}?embed=1`, expect.anything())
+    expect(results[0]).not.toHaveProperty('canonical_identity')
+    expect(results[0]).not.toHaveProperty('canonical_proof')
+    expect(results[1]).toMatchObject({ platform: 'github', identity: 'octocat', verified: true })
+  })
+
+  it('answers a claim whose proof is not a complete link without losing the claim beside it', async () => {
+    const { env } = createEnv()
+    await seedVerified(env, 'github', 'octocat', 'abc123')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+    const res = await postBatch(env, {
+      claims: [
+        { platform: 'twitter', identity: 'alice', proof: 'https://', pubkey: PUBKEY },
+        { platform: 'github', identity: 'octocat', proof: 'abc123', pubkey: PUBKEY },
+      ],
+    })
+    expect(res.status).toBe(200)
+    const { results } = await res.json() as BatchResponse
+    expect(results.map(r => r.verified)).toEqual([false, true])
+  })
+
+  it('verifies a claim checked as sent because its tidy account would be too long to store', async () => {
+    const { env, cacheStore } = createEnv()
+    // An embed whose author is the account as sent, with the npub in the message.
+    const fetchMock = vi.fn(async () => new Response(
+      `<div class="tgme_widget_message_author"><a href="https://t.me/s">s</a></div>${hexToNpub(PUBKEY)}`,
+      { status: 200 },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    // As sent, the cache key is 508 bytes. Tidied, the channel becomes the
+    // account and the key would be 537 bytes.
+    const identity = 's'
+    const proof = `s/${'a'.repeat(32)}/${'1'.repeat(395)}`
+    const res = await postBatch(env, {
+      claims: [{ platform: 'telegram', identity, proof, pubkey: PUBKEY }],
+    })
+    expect(res.status).toBe(200)
+    const { results } = await res.json() as BatchResponse
+    expect(results[0]).toMatchObject({ platform: 'telegram', identity, verified: true, cached: false })
+    expect(results[0]).not.toHaveProperty('canonical_identity')
+    expect(results[0]).not.toHaveProperty('canonical_proof')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(cacheStore.has(cacheKey('telegram', identity, proof, PUBKEY))).toBe(true)
+  })
+
+  it('returns no clean values for a claim checked as sent and answered from the cache', async () => {
+    const { env } = createEnv()
+    forbidFetch()
+    const identity = 's'
+    const proof = `s/${'a'.repeat(32)}/${'1'.repeat(395)}`
+    await seedVerified(env, 'telegram', identity, proof)
+    const res = await postBatch(env, {
+      claims: [{ platform: 'telegram', identity, proof, pubkey: PUBKEY }],
+    })
+    expect(res.status).toBe(200)
+    const { results } = await res.json() as BatchResponse
+    expect(results[0]).toMatchObject({ identity, verified: true, cached: true })
+    expect(results[0]).not.toHaveProperty('canonical_identity')
+    expect(results[0]).not.toHaveProperty('canonical_proof')
+  })
+
+  it('checks the tidy form when its storage keys fit, even when the tidy account is longer than sent', async () => {
+    const { env } = createEnv()
+    const channel = 'a'.repeat(32)
+    const fetchMock = vi.fn(async () => new Response(
+      `<div class="tgme_widget_message_author"><a href="https://t.me/${channel}">${channel}</a></div>${hexToNpub(PUBKEY)}`,
+      { status: 200 },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    // Tidied, the key is 502 bytes. The tidy account (32 bytes, sent as "s") with
+    // the proof as sent (a 15-byte longer link) would be 517 and not fit.
+    const post = '1'.repeat(360)
+    const proof = `https://t.me/s/${channel}/${post}`
+    const res = await postBatch(env, {
+      claims: [{ platform: 'telegram', identity: 's', proof, pubkey: PUBKEY }],
+    })
+    expect(res.status).toBe(200)
+    const { results } = await res.json() as BatchResponse
+    expect(results[0]).toMatchObject({ identity: 's', verified: true, canonical_identity: channel, canonical_proof: `${channel}/${post}` })
   })
 
   it('accepts a claim whose storage key is exactly 512 bytes', async () => {

@@ -16,7 +16,7 @@ async function loadVerifySingleHere() {
     new Function(...deps, `${html.slice(start, end)}\nreturn verifySingleHere;`)(...deps.map(d => env[d]))
 }
 
-function harness(response: Record<string, unknown>, proof: string, editDuringRequest?: string) {
+function harness(response: Record<string, unknown>, proof: string, editDuringRequest?: string, editIdentityDuringRequest?: string) {
   const statuses: string[] = []
   const fields: Record<string, { value?: string, style?: Record<string, string>, textContent?: string }> = {
     'proof-result': { style: {} },
@@ -29,6 +29,7 @@ function harness(response: Record<string, unknown>, proof: string, editDuringReq
     document: { getElementById: (id: string) => fields[id] },
     fetch: async () => {
       if (editDuringRequest !== undefined) fields['proof-proof-input'].value = editDuringRequest
+      if (editIdentityDuringRequest !== undefined) fields['proof-identity-input'].value = editIdentityDuringRequest
       return { ok: true, json: async () => response }
     },
     getActivePubkey: async () => 'a'.repeat(64),
@@ -49,11 +50,11 @@ describe('Verify this link', () => {
     expect(h.fields['proof-proof-input'].value).toBe('7123456789012345678')
   })
 
-  it('says it will publish the post number', async () => {
+  it('says it will publish the clean form', async () => {
     const load = await loadVerifySingleHere()
     const h = harness({ verified: true, canonical_proof: '7123456789012345678' }, 'https://vm.tiktok.com/ZMabc123/')
     await load(h.env)()
-    expect(h.statuses[h.statuses.length - 1]).toBe('Success. This account is verified. Publishing will use the post number.')
+    expect(h.statuses[h.statuses.length - 1]).toBe('Success. This account is verified. Publishing will use the clean form.')
   })
 
   it('does not overwrite a proof the person changed while the check ran', async () => {
@@ -82,5 +83,39 @@ describe('Verify this link', () => {
     const h = harness({ verified: true, canonical_proof: 7123456789012345 }, 'https://vm.tiktok.com/ZMabc123/')
     await load(h.env)()
     expect(h.fields['proof-proof-input'].value).toBe('https://vm.tiktok.com/ZMabc123/')
+  })
+
+  it('fills in the account the verifier reports, so Publish uses it', async () => {
+    const load = await loadVerifySingleHere()
+    const h = harness({ verified: true, canonical_identity: 'alice' }, '7123456789012345678')
+    h.fields['proof-identity-input'].value = '@alice'
+    await load(h.env)()
+    expect(h.fields['proof-identity-input'].value).toBe('alice')
+    expect(h.statuses[h.statuses.length - 1]).toBe('Success. This account is verified. Publishing will use the clean form.')
+  })
+
+  it('does not overwrite an account the person changed while the check ran', async () => {
+    const load = await loadVerifySingleHere()
+    const h = harness({ verified: true, canonical_identity: 'alice' }, '7123456789012345678', undefined, 'bob')
+    h.fields['proof-identity-input'].value = '@alice'
+    await load(h.env)()
+    expect(h.fields['proof-identity-input'].value).toBe('bob')
+  })
+
+  it('fills in the account the verifier reports when the page tidied the typed account first', async () => {
+    const load = await loadVerifySingleHere()
+    const h = harness({ verified: true, canonical_identity: 'alice' }, '7123456789012345678')
+    h.env.normalizeProofInputs = (_platform: string, identity: string, p: string) => ({ identity: identity.trim(), proof: p })
+    h.fields['proof-identity-input'].value = '  @alice  '
+    await load(h.env)()
+    expect(h.fields['proof-identity-input'].value).toBe('alice')
+  })
+
+  it('leaves the account alone when verification fails', async () => {
+    const load = await loadVerifySingleHere()
+    const h = harness({ verified: false, error: 'nope', canonical_identity: 'alice' }, '7123456789012345678')
+    h.fields['proof-identity-input'].value = '@alice'
+    await load(h.env)()
+    expect(h.fields['proof-identity-input'].value).toBe('@alice')
   })
 })
