@@ -37,7 +37,7 @@ The service backs Divine's identity and trust surface: divine-web and Divine mob
 
 ### Linking an account by signing in
 
-1. The client keeps a random start secret (32 bytes, base64url) and sends its hash:
+1. The client keeps a random start secret: 32 random bytes written as 43 base64url characters. It sends a hash of it, the start check. Both hashes in this flow (the start check and the binding in step 3) are SHA-256 over the UTF-8 text shown, meaning the 43-character strings and not the raw bytes, written as base64url without padding.
 
    ```http
    POST /auth/bluesky/start
@@ -58,6 +58,7 @@ The service backs Divine's identity and trust surface: divine-web and Divine mob
    ```
 
    The answer is `{"linked":true,"platform":"bluesky","identity":"alice.bsky.social"}`. The client then publishes the same event to relays. Errors carry a `code`:
+   - `invalid_request` (400: a malformed `code` or `start_secret`);
    - `signin_not_found` (expired or not visible yet; retry briefly);
    - `signin_used`;
    - `signin_wrong_account`;
