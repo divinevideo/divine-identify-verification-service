@@ -4,11 +4,12 @@ import type { Context } from 'hono'
 import type { Bindings, OAuthPlatform, SignInCallbackResult } from '../types'
 import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
+import { readJsonBody } from '../utils/json-body'
 import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
 import { deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
 import { getCountedSignIn } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
-import { signInConfirmationMode, confirmCodePlacement, type ConfirmCodePlacement } from '../oauth/confirm'
+import { signInConfirmationMode, confirmCodePlacement, isSignInToken, type ConfirmCodePlacement } from '../oauth/confirm'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
@@ -114,15 +115,14 @@ async function verifyNip98Event(
   return { ok: true, event: parsed.event }
 }
 
-// Allowed origins for OAuth return_url (prevent open redirect)
-const ALLOWED_RETURN_ORIGINS = new Set([
-  'https://divine.video',
-  'https://www.divine.video',
-  // Live verify frontend. Its return_url points back to itself, so the
-  // service's own origin must be trusted or every OAuth start 400s.
-  'https://verify.divine.video',
-  'https://verifyer.divine.video',
-  'https://verifier.divine.video',
+// Sign-ins return only to the verifier page (on either of its hosts; the page
+// returns to the one it started on) and the Divine app's return address.
+// Compared by origin and path; the query and fragment are the client's own
+// (its sign-in id, the page's section).
+const SIGNIN_RETURN_PAGES = new Set([
+  'https://verifier.divine.video/',
+  'https://verifyer.divine.video/',
+  'https://divine.video/app/callback',
 ])
 
 function isLocalHostname(hostname: string): boolean {
@@ -137,10 +137,10 @@ export function isAllowedReturnUrl(url: string, oauthRedirectBase?: string, requ
     const parsed = new URL(url)
     // Only web addresses: some other schemes (blob:) report a trusted origin.
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+    const page = parsed.origin + parsed.pathname
     const base = oauthRedirectBase ? new URL(oauthRedirectBase) : null
-    // Compare exact origin (scheme + host + port) to prevent subdomain tricks
-    if (base && parsed.origin === base.origin) return true
-    if (ALLOWED_RETURN_ORIGINS.has(parsed.origin)) return true
+    if (base && page === `${base.origin}/`) return true
+    if (SIGNIN_RETURN_PAGES.has(page)) return true
     // Local development only: when the verifier itself runs on localhost,
     // also accept other local dev servers. Production never sends people to
     // localhost.
@@ -218,58 +218,125 @@ auth.post('/nostr/login', async (c) => {
   })
 })
 
-// Start OAuth flow
-// GET /auth/:platform/start?pubkey=hex&return_url=https://...&handle=user.bsky.social (handle required for bluesky)
-auth.get('/:platform/start', async (c) => {
-  const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
-  const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
-  if (!ipLimit.allowed) {
-    return c.json({ error: 'Rate limit exceeded' }, 429)
-  }
+const OAUTH_PLATFORMS = new Set(['twitter', 'bluesky', 'youtube', 'tiktok'])
+const platformForLog = (platform: string) => (OAUTH_PLATFORMS.has(platform) ? platform : 'unknown')
 
-  const platform = c.req.param('platform')
-  const pubkey = c.req.query('pubkey')
-  const returnUrl = c.req.query('return_url') || '/'
-  const handle = c.req.query('handle')
+interface StartRequest {
+  platform: string
+  pubkey: unknown
+  returnUrl: unknown
+  handle: unknown
+  startCheck: string | undefined
+}
 
-  if (!pubkey || !isValidHexPubkey(pubkey)) {
+// The part of starting a sign-in both routes share. Answers the start
+// function's 302 to the provider, or a JSON error.
+async function startSignIn(c: Context<{ Bindings: Bindings }>, req: StartRequest): Promise<Response> {
+  if (typeof req.pubkey !== 'string' || !isValidHexPubkey(req.pubkey)) {
     return c.json({ error: 'Invalid or missing pubkey (64-char hex)' }, 400)
   }
-
-  // Validate return_url to prevent open redirect
-  if (returnUrl !== '/' && !isAllowedReturnUrl(returnUrl, c.env.OAUTH_REDIRECT_BASE, c.req.url)) {
+  // With no return address, come back to the verifier page on the host the
+  // sign-in started on, or else the configured one. Always a full address:
+  // a bare "/" can't carry the one-time code back.
+  const base = c.env.OAUTH_REDIRECT_BASE
+  const here = `${new URL(c.req.url).origin}/`
+  const fallback = !isAllowedReturnUrl(here, base, c.req.url) && base ? `${new URL(base).origin}/` : here
+  const returnUrl = typeof req.returnUrl === 'string' && req.returnUrl ? req.returnUrl : fallback
+  if (!isAllowedReturnUrl(returnUrl, base, c.req.url)) {
     return c.json({ error: 'Invalid return_url: must be a trusted origin' }, 400)
   }
+  const normalizedPubkey = normalizePubkey(req.pubkey)
 
-  const normalizedPubkey = normalizePubkey(pubkey)
-
-  switch (platform) {
+  switch (req.platform) {
     case 'twitter':
-      return await startTwitterOAuth(c.env, normalizedPubkey, returnUrl, undefined)
+      return startTwitterOAuth(c.env, normalizedPubkey, returnUrl, req.startCheck)
 
     case 'bluesky': {
       // People type handles the way Bluesky shows them, with a leading @.
-      const bareHandle = handle?.trim().replace(/^@/, '').trim()
+      const bareHandle = typeof req.handle === 'string' ? req.handle.trim().replace(/^@/, '').trim() : ''
       if (!bareHandle) {
         return c.json({ error: 'Missing handle parameter (e.g., user.bsky.social)' }, 400)
       }
-      return await startBlueskyOAuth(c.env, normalizedPubkey, bareHandle, returnUrl, undefined)
+      return startBlueskyOAuth(c.env, normalizedPubkey, bareHandle, returnUrl, req.startCheck)
     }
 
     case 'youtube':
-      return await startYouTubeOAuth(c.env, normalizedPubkey, returnUrl, undefined)
+      return startYouTubeOAuth(c.env, normalizedPubkey, returnUrl, req.startCheck)
 
     case 'tiktok': {
       const allowSandbox = getCookie(c, 'tiktok_oauth_review') === '1'
       if (!isTikTokOAuthUsable(c.env, allowSandbox)) {
         return c.json({ error: 'TikTok OAuth not configured' }, 503)
       }
-      return await startTikTokOAuth(c.env, normalizedPubkey, returnUrl, undefined)
+      return startTikTokOAuth(c.env, normalizedPubkey, returnUrl, req.startCheck)
     }
 
     default:
       return c.json({ error: 'OAuth not supported for this platform. Supported: twitter, bluesky, youtube, tiktok' }, 400)
   }
+}
+
+const START_BODY_LIMIT = 4096
+
+// Start a sign-in the owner can confirm (#113).
+// POST /auth/:platform/start { pubkey, return_url?, handle?, start_check } -> { url }
+// The start check never goes in an address, and the answer is the provider
+// address rather than a redirect, which a browser would follow without the body.
+auth.post('/:platform/start', async (c) => {
+  const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
+  const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
+  if (!ipLimit.allowed) {
+    return c.json({ error: 'Rate limit exceeded' }, 429)
+  }
+  const read = await readJsonBody(c, START_BODY_LIMIT)
+  if (!read.ok) return read.response
+  const body = (read.body && typeof read.body === 'object' ? read.body : {}) as Record<string, unknown>
+  if (!isSignInToken(body.start_check)) {
+    return c.json({ error: 'Invalid or missing start_check' }, 400)
+  }
+  const res = await startSignIn(c, {
+    platform: c.req.param('platform'),
+    pubkey: body.pubkey,
+    returnUrl: body.return_url,
+    handle: body.handle,
+    startCheck: body.start_check,
+  })
+  if (res.status !== 302) return res
+  return c.json({ url: res.headers.get('Location') })
+})
+
+// Start a sign-in the way app versions without confirmation do.
+// GET /auth/:platform/start?pubkey=hex&return_url=https://...&handle=user.bsky.social
+// Its sign-ins can't be confirmed, so once confirmation is required it is refused.
+// TODO(#113): remove once SIGNIN_CONFIRMATION is "required".
+auth.get('/:platform/start', async (c) => {
+  const platform = c.req.param('platform')
+  if (c.req.query('start_check') !== undefined) {
+    return c.json({ error: 'start_check is only accepted in a POST body' }, 400)
+  }
+  // Rate limited first, so refusals (and their log lines) are limited too.
+  const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
+  const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
+  if (!ipLimit.allowed) {
+    return c.json({ error: 'Rate limit exceeded' }, 429)
+  }
+  if (signInConfirmationMode(c.env) === 'required') {
+    console.info(`${platformForLog(platform)} sign-in start refused: GET start`)
+    const returnUrl = c.req.query('return_url')
+    // A browser opening this address (an app's fallback when its own request
+    // failed) is sent back with a reason rather than left on a JSON page.
+    if (c.req.header('sec-fetch-mode') === 'navigate' && returnUrl && isAllowedReturnUrl(returnUrl, c.env.OAUTH_REDIRECT_BASE, c.req.url)) {
+      return c.redirect(buildReturnUrl(returnUrl, { oauth_error: 'update the Divine app to link by signing in' }))
+    }
+    return c.json({ error: 'Update the Divine app to link by signing in' }, 400)
+  }
+  return startSignIn(c, {
+    platform,
+    pubkey: c.req.query('pubkey'),
+    returnUrl: c.req.query('return_url'),
+    handle: c.req.query('handle'),
+    startCheck: undefined,
+  })
 })
 
 const SIGN_IN_LABELS: Record<OAuthPlatform, string> = {
@@ -466,8 +533,6 @@ auth.get('/:platform/status', async (c) => {
     method: null,
   })
 })
-
-const OAUTH_PLATFORMS = new Set(['twitter', 'bluesky', 'youtube', 'tiktok'])
 
 // Revoke an OAuth sign-in record (a Bluesky one under both its handle and DID)
 // POST /auth/oauth/revoke { platform, identity, pubkey, event }

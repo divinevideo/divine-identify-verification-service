@@ -436,15 +436,18 @@ describe('NIP-98 routes reject a null JSON body with 400, not a crash', () => {
 })
 
 describe('isAllowedReturnUrl', () => {
-  it('trusts the live verify.divine.video frontend (its own origin)', () => {
-    // Regression: the OAuth start flow return_url is verify.divine.video itself.
-    expect(isAllowedReturnUrl('https://verify.divine.video/#verify-here')).toBe(true)
-  })
-
-  it('keeps trusting the existing allow-listed origins', () => {
+  it('accepts only the verifier pages and the app\'s return address, by origin and path', () => {
     expect(isAllowedReturnUrl('https://verifier.divine.video/')).toBe(true)
-    expect(isAllowedReturnUrl('https://verifyer.divine.video/')).toBe(true)
-    expect(isAllowedReturnUrl('https://divine.video/')).toBe(true)
+    expect(isAllowedReturnUrl('https://verifier.divine.video/?signin=abc#verify-here')).toBe(true)
+    expect(isAllowedReturnUrl('https://verifyer.divine.video/?signin=abc#verify-here')).toBe(true)
+    expect(isAllowedReturnUrl('https://verifyer.divine.video/other')).toBe(false)
+    expect(isAllowedReturnUrl('https://divine.video/app/callback')).toBe(true)
+    expect(isAllowedReturnUrl('https://divine.video/app/callback?signin=abc')).toBe(true)
+    expect(isAllowedReturnUrl('https://verify.divine.video/#verify-here')).toBe(false)
+    expect(isAllowedReturnUrl('https://divine.video/')).toBe(false)
+    expect(isAllowedReturnUrl('https://divine.video/app/callback/x')).toBe(false)
+    expect(isAllowedReturnUrl('https://www.divine.video/app/callback')).toBe(false)
+    expect(isAllowedReturnUrl('https://verifier.divine.video/other')).toBe(false)
   })
 
   it('rejects untrusted origins (open-redirect guard still holds)', () => {
@@ -453,10 +456,9 @@ describe('isAllowedReturnUrl', () => {
     expect(isAllowedReturnUrl('https://verify.divine.video.evil.com/')).toBe(false)
   })
 
-  it('honours the configured OAUTH_REDIRECT_BASE origin', () => {
-    expect(
-      isAllowedReturnUrl('https://staging.divine.video/x', 'https://staging.divine.video'),
-    ).toBe(true)
+  it('honours the configured OAUTH_REDIRECT_BASE page', () => {
+    expect(isAllowedReturnUrl('https://staging.divine.video/?signin=x', 'https://staging.divine.video')).toBe(true)
+    expect(isAllowedReturnUrl('https://staging.divine.video/x', 'https://staging.divine.video')).toBe(false)
   })
 
   it('returns false for malformed input', () => {
@@ -530,10 +532,8 @@ describe('GET /auth/:platform/start return address', () => {
       TWITTER_CLIENT_SECRET: 'test-client-secret',
       OAUTH_REDIRECT_BASE: 'http://localhost:8787',
     }
-    // Absolute, and matching OAUTH_REDIRECT_BASE exactly: a bare relative
-    // path would default to http://localhost with no port, which would also
-    // start directly, but only because localhost is exempt from the
-    // finishing-host redirect, not because it's already on that exact host.
+    // Reached on the configured local address, so the verifier counts as
+    // running locally and accepts a local return address.
     const res = await app.request(`http://localhost:8787/auth/twitter/start?pubkey=${'a'.repeat(64)}&return_url=${encodeURIComponent('http://localhost:5173/?signin=abc#verify-here')}`, {}, env)
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toMatch(/^https:\/\/twitter\.com\/i\/oauth2\/authorize\?/)
@@ -548,10 +548,8 @@ describe('GET /auth/tiktok/start', () => {
     OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
   }
 
-  // Absolute, and matching OAUTH_REDIRECT_BASE exactly: a bare relative path
-  // would default to http://localhost, which is exempt from the
-  // finishing-host redirect but is not this test's production host, so this
-  // keeps the test on the host it means to exercise.
+  // Absolute, on the live host: a bare path would reach the verifier on
+  // http://localhost, where it counts as running locally.
   function startUrl(): string {
     return `https://verifier.divine.video/auth/tiktok/start?pubkey=${pubkey}&return_url=https://verifier.divine.video/`
   }

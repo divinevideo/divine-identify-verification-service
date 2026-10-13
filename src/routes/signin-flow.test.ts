@@ -347,3 +347,149 @@ describe('a sign-in callback that throws', () => {
     expect(info).not.toHaveBeenCalled()
   })
 })
+
+async function postStart(platform: Platform, env: Bindings, body: Record<string, unknown>, host = BASE) {
+  return app.request(`${host}/auth/${platform}/start`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }, env)
+}
+
+function startBody(platform: Platform, pubkey: string, startCheck: string, returnUrl = PAGE_RETURN): Record<string, unknown> {
+  return { pubkey, return_url: returnUrl, start_check: startCheck, ...(platform === 'bluesky' ? { handle: BLUESKY_HANDLE } : {}) }
+}
+
+describe('POST /auth/:platform/start', () => {
+  it.each(PLATFORMS)('%s: answers with the provider address and stores the start check', async (platform) => {
+    const env = platformEnv(platform)
+    const capture: { stateId?: string } = {}
+    if (platform === 'bluesky') vi.stubGlobal('fetch', blueskyStartFetch(capture))
+    const res = await postStart(platform, env, startBody(platform, PUBKEY, START_CHECK))
+    expect(res.status).toBe(200)
+    const { url } = await res.json() as { url: string }
+    expect(new URL(url).protocol).toBe('https:')
+    expect(url).not.toContain(START_CHECK)
+    const state = JSON.parse((await env.CACHE_KV.get(oauthStateKey(stateIdFrom(platform, url, capture)))) as string)
+    expect(state.startCheck).toBe(START_CHECK)
+    expect(state.returnUrl).toBe(PAGE_RETURN)
+  })
+
+  it.each(PLATFORMS)('%s: logs nothing that carries the start check', async (platform) => {
+    if (platform === 'bluesky') vi.stubGlobal('fetch', blueskyStartFetch({}))
+    const spies = (['log', 'info', 'warn', 'error'] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => {}))
+    await postStart(platform, platformEnv(platform), startBody(platform, PUBKEY, START_CHECK))
+    const logged = spies.flatMap((spy) => spy.mock.calls.flat().map(String))
+    expect(logged.filter((line) => line.includes(START_CHECK))).toEqual([])
+  })
+
+  it('starts on any verifier host without redirecting (a redirect would drop the body)', async () => {
+    const res = await postStart('twitter', baseEnv(), startBody('twitter', PUBKEY, START_CHECK), 'https://verifyer.divine.video')
+    expect(res.status).toBe(200)
+  })
+
+  it.each([
+    ['no start check', { pubkey: PUBKEY, return_url: PAGE_RETURN }],
+    ['a short start check', { pubkey: PUBKEY, return_url: PAGE_RETURN, start_check: 'abc' }],
+    ['a bad pubkey', { pubkey: 'nope', return_url: PAGE_RETURN, start_check: START_CHECK }],
+    ['a return address on another page', { pubkey: PUBKEY, return_url: 'https://divine.video/somewhere', start_check: START_CHECK }],
+  ])('refuses %s with 400', async (_label, body) => {
+    expect((await postStart('twitter', baseEnv(), body)).status).toBe(400)
+  })
+
+  it('refuses a JSON body that is not an object with 400', async () => {
+    const res = await app.request(`${BASE}/auth/twitter/start`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: 'null',
+    }, baseEnv())
+    expect(res.status).toBe(400)
+  })
+
+  it('refuses a form post with 415 and a large body with 413', async () => {
+    const form = await app.request(`${BASE}/auth/twitter/start`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `pubkey=${PUBKEY}`,
+    }, baseEnv())
+    expect(form.status).toBe(415)
+    const big = await postStart('twitter', baseEnv(), { ...startBody('twitter', PUBKEY, START_CHECK), pad: 'x'.repeat(5000) })
+    expect(big.status).toBe(413)
+  })
+
+  it('answers 429 once the IP is over its limit', async () => {
+    const limited = {
+      get: async (key: string) => (key.startsWith('rl:ip') ? '999' : null),
+      put: async () => {}, delete: async () => {}, list: async () => ({ keys: [], list_complete: true, caches_used: 0 }),
+    } as unknown as KVNamespace
+    expect((await postStart('twitter', baseEnv({ RATE_LIMIT_KV: limited }), startBody('twitter', PUBKEY, START_CHECK))).status).toBe(429)
+  })
+
+  it('returns to the verifier page when no return address is given', async () => {
+    const env = baseEnv()
+    const res = await postStart('twitter', env, { pubkey: PUBKEY, start_check: START_CHECK })
+    const { url } = await res.json() as { url: string }
+    const state = JSON.parse((await env.CACHE_KV.get(oauthStateKey(stateIdFrom('twitter', url, {})))) as string)
+    expect(state.returnUrl).toBe(`${BASE}/`)
+  })
+
+  // A bare "/" can't carry the code back, so the default is always a full address.
+  it('with no return address, returns to the verifier page on the host it started on', async () => {
+    const env = baseEnv()
+    const res = await postStart('twitter', env, { pubkey: PUBKEY, start_check: START_CHECK }, 'https://verifyer.divine.video')
+    const { url } = await res.json() as { url: string }
+    const state = JSON.parse((await env.CACHE_KV.get(oauthStateKey(stateIdFrom('twitter', url, {})))) as string)
+    expect(state.returnUrl).toBe('https://verifyer.divine.video/')
+  })
+
+  it('with no return address, on a host that is not a verifier page, returns to the configured verifier page', async () => {
+    const env = baseEnv()
+    const res = await postStart('twitter', env, { pubkey: PUBKEY, start_check: START_CHECK }, 'https://other.example.com')
+    const { url } = await res.json() as { url: string }
+    const state = JSON.parse((await env.CACHE_KV.get(oauthStateKey(stateIdFrom('twitter', url, {})))) as string)
+    expect(state.returnUrl).toBe(`${BASE}/`)
+  })
+
+  it('still says sign-in is not set up with 503', async () => {
+    expect((await postStart('twitter', baseEnv({ TWITTER_CLIENT_ID: undefined }), startBody('twitter', PUBKEY, START_CHECK))).status).toBe(503)
+  })
+})
+
+describe('GET /auth/:platform/start', () => {
+  it.each(['optional', 'required'] as const)('refuses a start check in the address, in every mode (%s)', async (mode) => {
+    const res = await app.request(`${BASE}/auth/twitter/start?pubkey=${PUBKEY}&start_check=${START_CHECK}`, {}, baseEnv({ SIGNIN_CONFIRMATION: mode }))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'start_check is only accepted in a POST body' })
+  })
+
+  it('still starts for installed apps before the switch', async () => {
+    const res = await app.request(`${BASE}/auth/twitter/start?pubkey=${PUBKEY}&return_url=${encodeURIComponent('https://divine.video/app/callback')}`, {}, baseEnv())
+    expect(res.status).toBe(302)
+  })
+
+  it('once required, refuses an app\'s request with 400 and logs it', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const res = await app.request(`${BASE}/auth/twitter/start?pubkey=${PUBKEY}&return_url=${encodeURIComponent('https://divine.video/app/callback')}`, {}, baseEnv({ SIGNIN_CONFIRMATION: 'required' }))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'Update the Divine app to link by signing in' })
+    expect(info.mock.calls).toEqual([['twitter sign-in start refused: GET start']])
+  })
+
+  it('once required, logs a platform it does not know as unknown', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    await app.request(`${BASE}/auth/myspace/start?pubkey=${PUBKEY}`, {}, baseEnv({ SIGNIN_CONFIRMATION: 'required' }))
+    expect(info.mock.calls).toEqual([['unknown sign-in start refused: GET start']])
+  })
+
+  it('once required, sends a browser back to its return address with a reason instead of a JSON page', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const res = await app.request(`${BASE}/auth/twitter/start?pubkey=${PUBKEY}&return_url=${encodeURIComponent('https://divine.video/app/callback')}`,
+      { headers: { 'Sec-Fetch-Mode': 'navigate' } }, baseEnv({ SIGNIN_CONFIRMATION: 'required' }))
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get('Location') as string)
+    expect(location.origin + location.pathname).toBe('https://divine.video/app/callback')
+    expect(location.searchParams.get('oauth_error')).toBe('update the Divine app to link by signing in')
+  })
+
+  it('once required, answers a browser with a return address it does not allow with 400, not a redirect', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const res = await app.request(`${BASE}/auth/twitter/start?pubkey=${PUBKEY}&return_url=${encodeURIComponent('https://other.example.com/')}`,
+      { headers: { 'Sec-Fetch-Mode': 'navigate' } }, baseEnv({ SIGNIN_CONFIRMATION: 'required' }))
+    expect(res.status).toBe(400)
+    expect(res.headers.get('Location')).toBeNull()
+  })
+})
