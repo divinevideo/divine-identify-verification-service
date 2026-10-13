@@ -218,32 +218,36 @@ describe('POST /verify: one bad claim no longer fails the whole batch', () => {
 
   it('verifies a claim checked as sent because its tidy account would be too long to store', async () => {
     const { env, cacheStore } = createEnv()
-    env.YOUTUBE_API_KEY = 'test-key'
-    const fetchMock = vi.fn(async () => youtubeVideo(`Proof: ${hexToNpub(PUBKEY)}`))
+    // An embed whose author is the account as sent, with the npub in the message.
+    const fetchMock = vi.fn(async () => new Response(
+      `<div class="tgme_widget_message_author"><a href="https://t.me/s">s</a></div>${hexToNpub(PUBKEY)}`,
+      { status: 200 },
+    ))
     vi.stubGlobal('fetch', fetchMock)
-    // As sent, the cache key is 312 bytes. Read as a link, each "é" in the handle
-    // becomes "%C3%A9", and the tidy account alone would be 601 bytes.
-    const identity = `https://www.youtube.com/@${'é'.repeat(100)}`
+    // As sent, the cache key is 508 bytes. Tidied, the channel becomes the
+    // account and the key would be 537 bytes.
+    const identity = 's'
+    const proof = `s/${'a'.repeat(32)}/${'1'.repeat(395)}`
     const res = await postBatch(env, {
-      claims: [{ platform: 'youtube', identity, proof: VIDEO, pubkey: PUBKEY }],
+      claims: [{ platform: 'telegram', identity, proof, pubkey: PUBKEY }],
     })
     expect(res.status).toBe(200)
     const { results } = await res.json() as BatchResponse
-    expect(results[0]).toMatchObject({ platform: 'youtube', identity, verified: true, cached: false })
+    expect(results[0]).toMatchObject({ platform: 'telegram', identity, verified: true, cached: false })
     expect(results[0]).not.toHaveProperty('canonical_identity')
     expect(results[0]).not.toHaveProperty('canonical_proof')
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(cacheStore.has(cacheKey('youtube', identity, VIDEO, PUBKEY))).toBe(true)
+    expect(cacheStore.has(cacheKey('telegram', identity, proof, PUBKEY))).toBe(true)
   })
 
   it('returns no clean values for a claim checked as sent and answered from the cache', async () => {
     const { env } = createEnv()
     forbidFetch()
-    const identity = `https://www.youtube.com/@${'é'.repeat(100)}`
-    const proof = `https://youtu.be/${VIDEO}?si=abc`
-    await seedVerified(env, 'youtube', identity, proof)
+    const identity = 's'
+    const proof = `s/${'a'.repeat(32)}/${'1'.repeat(395)}`
+    await seedVerified(env, 'telegram', identity, proof)
     const res = await postBatch(env, {
-      claims: [{ platform: 'youtube', identity, proof, pubkey: PUBKEY }],
+      claims: [{ platform: 'telegram', identity, proof, pubkey: PUBKEY }],
     })
     expect(res.status).toBe(200)
     const { results } = await res.json() as BatchResponse
@@ -257,8 +261,7 @@ describe('POST /verify: one bad claim no longer fails the whole batch', () => {
     env.YOUTUBE_API_KEY = 'test-key'
     const fetchMock = vi.fn(async () => youtubeVideo(`Proof: ${hexToNpub(PUBKEY)}`))
     vi.stubGlobal('fetch', fetchMock)
-    // Tidied, the account is 421 bytes and the cache key 508. The tidy account
-    // with the link as sent would not fit.
+    // As sent, the account is a 165-byte link; tidied, it is the 141-byte handle.
     const identity = `https://www.youtube.com/@${'é'.repeat(70)}`
     const res = await postBatch(env, {
       claims: [{ platform: 'youtube', identity, proof: `https://youtu.be/${VIDEO}?si=abc`, pubkey: PUBKEY }],

@@ -210,6 +210,8 @@ describe('tidyClaim', () => {
     ['https://www.youtube.com/channel/UC1234567890abcdefghijkl', 'UC1234567890abcdefghijkl'],
     ['https://www.youtube.com/@Alice', '@Alice'],
     ['https://m.youtube.com/@Alice/videos', '@Alice'],
+    ['https://www.youtube.com/@caf%C3%A9', '@café'],
+    ['https://www.youtube.com/@café', '@café'],
   ])('reduces the YouTube channel link %s to the channel', (identity, expected) => {
     expect(tidyClaim('youtube', identity, 'dQw4w9WgXcQ').identity).toBe(expected)
   })
@@ -220,6 +222,9 @@ describe('tidyClaim', () => {
     'https://www.youtube.com/channel/XX1234567890abcdefghijkl',
     `https://www.youtube.com/user/UC${'a'.repeat(22)}`,
     'https://www.youtube.com/@',
+    'https://www.youtube.com/@%E0%A4',
+    'https://www.youtube.com/@a%2Fb',
+    'https://www.youtube.com/@a%3Cb',
     'https://evil.example/@Alice',
     'https://evil.example/channel/UC1234567890abcdefghijkl',
     'https://music.youtube.com/@Alice',
