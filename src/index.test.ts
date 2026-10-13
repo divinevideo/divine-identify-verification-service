@@ -278,7 +278,7 @@ describe('verifier twitter oauth gating', () => {
     const docs = oauthDocsSection(html)
     expect(docs).toContain('<h2>OAuth Verification (Bluesky)</h2>')
     expect(docs).not.toContain('/auth/twitter/')
-    expect(docs).toContain('/auth/bluesky/status?pubkey=hex64&amp;identity=alice.bsky.social')
+    expect(docs).toContain('/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social')
     expect(docs).toContain('before cached results and proof posts, for Bluesky.')
     expect(html).toContain('<li><strong>OAuth login</strong> (Bluesky) &mdash;')
   })
@@ -406,6 +406,26 @@ describe('the two ways to link an account', () => {
     expect(section).toContain(linkStep)
     expect(section).toContain('Press Publish to add the link to your profile.')
     expect(section).not.toContain('advanced section')
+  })
+})
+
+// Example accounts on the page must not belong to anyone, so they use the
+// reserved name "example" (GitHub's own "octocat" is fine).
+describe('example accounts on the page', () => {
+  it.each([
+    ['by default', {}],
+    ['with every sign-in set up', { ...twitterOAuthConfig, YOUTUBE_API_KEY: 'key', TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }],
+  ])('leaves none of the old sample name on the page (%s)', async (_label, env) => {
+    expect(await homeHtml('https://verifier.divine.video/', env)).not.toMatch(/alice/i)
+  })
+
+  it('shows the reserved example names in the fields people fill in', async () => {
+    const html = await homeHtml()
+    expect(html).toContain('<input id="verify-pubkey-input" class="field-input" type="text" placeholder="example@divine.video or npub1...">')
+    expect(html).toContain('<input id="lookup-input" type="text" class="lookup-input" placeholder="example@divine.video or npub1...">')
+    expect(html).toContain('<input id="oauth-bluesky-handle-input" class="field-input" type="text" placeholder="example.bsky.social">')
+    expect(html).toContain("identityInput.placeholder = 'mastodon.social/@example';")
+    expect(html).toContain("throw new Error('Enter your Bluesky handle (example: example.bsky.social).');")
   })
 })
 

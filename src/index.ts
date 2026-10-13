@@ -576,7 +576,7 @@ app.get('/', (c) => {
       <h2>How Does It Work?</h2>
       <p>Think of it like a handshake between two accounts:</p>
       <ul>
-        <li><strong>Your Divine profile says</strong> "I'm @alice on Twitter"</li>
+        <li><strong>Your Divine profile says</strong> "I'm @example on Twitter"</li>
         <li><strong>Your Twitter account confirms</strong> "Yes, that Divine profile is mine"</li>
       </ul>
       <p>We check both sides automatically. If they match, you're verified. The beauty of this system is that <strong>nobody can fake it</strong> &mdash; an impersonator might copy your name and photo, but they can't post from your real Twitter account.</p>
@@ -626,7 +626,7 @@ app.get('/', (c) => {
           <a href="${divineLoginUrl}" target="_blank" rel="noopener noreferrer" class="verify-btn">Open login.divine.video</a>
         </div>
         <label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you connect)</label>
-        <input id="verify-pubkey-input" class="field-input" type="text" placeholder="alice@divine.video or npub1...">
+        <input id="verify-pubkey-input" class="field-input" type="text" placeholder="example@divine.video or npub1...">
         <p id="signer-session-summary" class="field-help" style="display:none;"></p>
         <!-- TODO(#113): Remove with the paste-an-account fallback. -->
         <p class="field-help">No signer handy? Paste your Divine address or npub to check a link now. You'll still need to connect a signer to publish it.</p>
@@ -670,7 +670,7 @@ app.get('/', (c) => {
             ${proofPlatformOptions}
           </select>
           <label for="proof-identity-input" class="field-label">Your account name on that platform</label>
-          <input id="proof-identity-input" class="field-input" type="text" placeholder="e.g. octocat or alice.bsky.social">
+          <input id="proof-identity-input" class="field-input" type="text" placeholder="e.g. octocat or example.bsky.social">
           <label id="proof-label" for="proof-proof-input" class="field-label">Post link or proof ID</label>
           <input id="proof-proof-input" class="field-input" type="text" placeholder="Paste full post URL or just the ID">
           <p id="proof-helper" class="field-help">Tip: for Twitter and Bluesky, paste the full post URL.</p>
@@ -690,7 +690,7 @@ app.get('/', (c) => {
           </select>
           <div id="oauth-bluesky-handle-wrap" style="display:none;">
             <label for="oauth-bluesky-handle-input" class="field-label">Bluesky handle</label>
-            <input id="oauth-bluesky-handle-input" class="field-input" type="text" placeholder="alice.bsky.social">
+            <input id="oauth-bluesky-handle-input" class="field-input" type="text" placeholder="example.bsky.social">
           </div>
           <button id="oauth-start-btn" class="verify-btn verify-btn-primary" type="button">Continue to secure sign-in</button>
           <div id="oauth-status" class="status-row"></div>
@@ -730,10 +730,10 @@ app.get('/', (c) => {
     <!-- CHECK TOOL -->
     <section id="check" style="box-shadow: 6px 6px 0 var(--pink);">
       <h2>Look up someone</h2>
-      <p>Want to know if a profile is real? Enter their Divine address (like <code>alice@divine.video</code>) or their public key to see which accounts they've verified.</p>
+      <p>Want to know if a profile is real? Enter their Divine address (like <code>example@divine.video</code>) or their public key to see which accounts they've verified.</p>
 
       <div style="display:flex;gap:10px;margin-bottom:1rem;flex-wrap:wrap;">
-        <input id="lookup-input" type="text" class="lookup-input" placeholder="alice@divine.video or npub1...">
+        <input id="lookup-input" type="text" class="lookup-input" placeholder="example@divine.video or npub1...">
         <button id="lookup-btn" class="lookup-btn" onclick="doLookup()">Check</button>
       </div>
       <div id="lookup-status" class="lookup-status"></div>
@@ -772,7 +772,7 @@ app.get('/', (c) => {
         </tr>
         <tr>
           <td><code>bluesky</code></td>
-          <td>Handle (e.g., <code>alice.bsky.social</code>)</td>
+          <td>Handle (e.g., <code>example.bsky.social</code>)</td>
           <td>Post rkey</td>
           <td>Yes</td>
         </tr>
@@ -873,7 +873,7 @@ Content-Type: application/json
 
       <h4>Examples</h4>
       <pre>GET ${origin}/verify/github/octocat/aa5a315d61ae9438b18d?pubkey=7e7e9c42...4e
-GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...4e</pre>
+GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e...4e</pre>
     </section>
 
     <section id="nip05">
@@ -892,10 +892,10 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       <p>The verifier page only reports sign-ins it started itself. The <code>return_url</code> in these examples is the verifier page; a Divine app that starts its own sign-in should return to its own page on a Divine site and confirm the result with the status check below.</p>
 
       <h3>Start OAuth</h3>
-      <pre>${twitterOAuthInlineExample}GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=alice.bsky.social&amp;return_url=${origin}/#verify-here${ytOAuthInlineExample}${ttOAuthInlineExample}</pre>
+      <pre>${twitterOAuthInlineExample}GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=example.bsky.social&amp;return_url=${origin}/#verify-here${ytOAuthInlineExample}${ttOAuthInlineExample}</pre>
 
       <h3>Check OAuth Status</h3>
-      <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=alice.bsky.social</pre>
+      <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
 
       <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.${tiktokOAuthHistoryNote}</div>
     </section>
@@ -1635,7 +1635,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       const helper = document.getElementById('proof-helper');
 
       if (platform === 'bluesky') {
-        identityInput.placeholder = 'alice.bsky.social';
+        identityInput.placeholder = 'example.bsky.social';
         proofLabel.textContent = 'Post link or proof ID (optional)';
         proofInput.placeholder = 'Paste full Bluesky post URL or leave blank for identity-link check';
         helper.textContent = 'Bluesky can verify by login or identity-link record, even without a post ID.';
@@ -1650,9 +1650,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         proofInput.placeholder = 'https://x.com/jack/status/123... or 123...';
         helper.textContent = 'Paste an X/Twitter post URL for easiest setup.';
       } else if (platform === 'mastodon') {
-        identityInput.placeholder = 'mastodon.social/@alice';
+        identityInput.placeholder = 'mastodon.social/@example';
         proofLabel.textContent = 'Status link or Status ID';
-        proofInput.placeholder = 'https://mastodon.social/@alice/123... or 123...';
+        proofInput.placeholder = 'https://mastodon.social/@example/123... or 123...';
         helper.textContent = 'Identity format is instance/@user. A full status URL also works.';
       } else if (platform === 'telegram') {
         identityInput.placeholder = 'mychannel';
@@ -1810,7 +1810,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         });
         if (platform === 'bluesky') {
           const handle = document.getElementById('oauth-bluesky-handle-input').value.trim().replace(/^@/, '').toLowerCase();
-          if (!handle) throw new Error('Enter your Bluesky handle (example: alice.bsky.social).');
+          if (!handle) throw new Error('Enter your Bluesky handle (example: example.bsky.social).');
           params.set('handle', handle);
         }
         setStatus('oauth-status', 'Opening secure ' + platform + ' sign-in...', 'loading');
