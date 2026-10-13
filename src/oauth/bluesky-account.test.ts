@@ -104,7 +104,10 @@ describe('Bluesky sign-in token exchange', () => {
   })
 })
 
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 describe('Bluesky sign-in confirms the account it started with', () => {
   it('records the sign-in for the handle when every check holds', async () => {
@@ -150,14 +153,27 @@ describe('Bluesky sign-in confirms the account it started with', () => {
   it.each([
     ['answers 503', () => json({ error: 'unavailable' }, 503)],
     ['can\'t be reached', () => { throw new TypeError('fetch failed') }],
-  ])('refuses when the DID document lookup %s', async (_label, outage) => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
+  ])('refuses when the DID document lookup %s, and logs it as an outage', async (_label, outage) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const answers = network(DID, [alice])
     const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
       String(input) === `https://plc.directory/${DID}` ? outage() : answers(input))
     const { result, recorded } = await signInReturning(DID, [alice], fetchMock as typeof fetch)
     expect(result).toMatchObject({ success: false, error: 'Bluesky account not confirmed' })
     expect(recorded).toEqual([])
+    expect(warn).toHaveBeenCalledWith('Bluesky sign-in not confirmed: lookup_unavailable')
+  })
+
+  it('logs a failure while reading the account that isn\'t an outage as a lookup failure', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const answers = network(DID, [alice])
+    // A handle list that isn't a list makes reading the DID document throw.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => String(input) === `https://plc.directory/${DID}`
+      ? json({ alsoKnownAs: 5, service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] })
+      : answers(input))
+    const { result } = await signInReturning(DID, [alice], fetchMock as typeof fetch)
+    expect(result).toMatchObject({ success: false, error: 'Bluesky account not confirmed' })
+    expect(warn).toHaveBeenCalledWith('Bluesky sign-in not confirmed: lookup')
   })
 })
 
@@ -203,11 +219,12 @@ describe('Bluesky sign-in discovery', () => {
   // Sign-in treats an account lookup that doesn't answer as one that finds
   // nothing, and answers as it does for a handle it can't find.
   it.each([
-    ['handle', 'answers 503', 'com.atproto.identity.resolveHandle', () => json({ error: 'unavailable' }, 503)],
-    ['handle', 'can\'t be reached', 'com.atproto.identity.resolveHandle', () => { throw new TypeError('fetch failed') }],
-    ['DID document', 'answers 503', `https://plc.directory/${DID}`, () => json({ error: 'unavailable' }, 503)],
-    ['DID document', 'can\'t be reached', `https://plc.directory/${DID}`, () => { throw new TypeError('fetch failed') }],
-  ])('a %s lookup that %s stops the sign-in before it starts', async (_step, _label, lookupUrl, outage) => {
+    ['handle', 'answers 503', 'com.atproto.identity.resolveHandle', () => json({ error: 'unavailable' }, 503), 'Bluesky handle lookup answered 503'],
+    ['handle', 'can\'t be reached', 'com.atproto.identity.resolveHandle', () => { throw new TypeError('fetch failed') }, 'Bluesky handle lookup couldn\'t be reached (TypeError)'],
+    ['DID document', 'answers 503', `https://plc.directory/${DID}`, () => json({ error: 'unavailable' }, 503), 'PLC directory answered 503'],
+    ['DID document', 'can\'t be reached', `https://plc.directory/${DID}`, () => { throw new TypeError('fetch failed') }, 'PLC directory couldn\'t be reached (TypeError)'],
+  ])('a %s lookup that %s stops the sign-in before it starts, and is logged', async (_step, _label, lookupUrl, outage, logged) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const answers = discovery()
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
       String(input).includes(lookupUrl) ? outage() : answers(input)))
@@ -217,6 +234,7 @@ describe('Bluesky sign-in discovery', () => {
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'Could not discover Bluesky authorization server for this handle' })
     expect([...cache.store.keys()]).toEqual([])
+    expect(warn).toHaveBeenCalledWith('Bluesky sign-in discovery:', logged)
   })
 
   it('doesn\'t mistake a failure in its own lookup code for a lookup that found nothing', async () => {

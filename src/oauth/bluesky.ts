@@ -26,13 +26,16 @@ async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
 }
 
 // Sign-in can't start without the account, so an account lookup that didn't
-// answer stops it the same way one that found nothing does.
+// answer stops it the same way one that found nothing does. It's logged so an
+// outage can be told apart from a handle that doesn't exist.
 async function orNullIfUnanswered<T>(lookup: Promise<T | null>): Promise<T | null> {
   try {
     return await lookup
   } catch (err) {
-    if (err instanceof PlatformUnavailableError) return null
-    throw err
+    if (!(err instanceof PlatformUnavailableError)) throw err
+    // The message names the lookup and its status, never the handle or a URL.
+    console.warn('Bluesky sign-in discovery:', err.message)
+    return null
   }
 }
 
@@ -351,8 +354,8 @@ async function confirmedHandle(did: string, state: OAuthState): Promise<string |
     // The first handle a DID document lists is the one it claims
     if (getHandleFromDidDocument(didDoc)?.toLowerCase() !== state.handle) return failed('handle')
     return state.handle
-  } catch {
-    return failed('lookup')
+  } catch (err) {
+    return failed(err instanceof PlatformUnavailableError ? 'lookup_unavailable' : 'lookup')
   }
 }
 

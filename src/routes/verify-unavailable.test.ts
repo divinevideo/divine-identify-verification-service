@@ -179,9 +179,9 @@ describe('a platform that does not answer', () => {
       }))
     }
 
-    function postProving(npub: string) {
+    function postProving(npub: string, author: string = CLAIMS.bluesky.identity) {
       return Response.json({
-        thread: { post: { author: { handle: CLAIMS.bluesky.identity }, record: { text: `Verifying my nostr key: ${npub}` } } },
+        thread: { post: { author: { handle: author }, record: { text: `Verifying my nostr key: ${npub}` } } },
       })
     }
 
@@ -218,10 +218,14 @@ describe('a platform that does not answer', () => {
         expect(body).toMatchObject({ verified: true, method: 'proof_post' })
       })
 
-      it('that can\'t answer is not overruled by a post that doesn\'t prove the claim', async () => {
+      it.each([
+        ['names another key', () => postProving(hexToNpub('cd'.repeat(32)))],
+        ['is by another account', () => postProving(hexToNpub(PUBKEY), 'someone-else.bsky.social')],
+        ['isn\'t there', () => new Response(null, { status: 404 })],
+      ])('that can\'t answer is not overruled by a post that %s', async (_label, post) => {
         const { env, kv } = createEnv()
         vi.spyOn(console, 'warn').mockImplementation(() => {})
-        bluesky({ [step]: 503, post: postProving(hexToNpub('cd'.repeat(32))) })
+        bluesky({ [step]: 503, post: post() })
         const body = await verify(env, 'bluesky', CLAIMS.bluesky)
         expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
         expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
