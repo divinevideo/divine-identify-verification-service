@@ -1,7 +1,7 @@
 import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString, generateDPoPKeyPair, importDPoPPrivateKey, createDPoPProof } from './crypto'
-import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
-import { tidyEarlierBlueskySignIn } from './signin-records'
+import { storeOAuthState, getOAuthState, deleteOAuthState } from './state'
+import { holdSignIn } from './signin-records'
 import { getHandleFromDidDocument, getPdsEndpoint, resolveDidDocument, resolveHandle } from '../atproto'
 import { isSafeUrl } from '../utils/validation'
 import { fetchPublic } from '../utils/safe-fetch'
@@ -390,34 +390,9 @@ async function processBlueskyToken(
     return { success: false, returnUrl: state.returnUrl, error: 'Bluesky account not confirmed' }
   }
 
-  await tidyEarlierBlueskySignIn(env, state.pubkey, did, handle)
-
-  const checkedAt = Math.floor(Date.now() / 1000)
-
-  // Store OAuth verification
-  await storeOAuthVerification(env.CACHE_KV, {
-    platform: 'bluesky',
-    identity: handle,
-    pubkey: state.pubkey,
-    verified: true,
-    method: 'oauth',
-    checked_at: checkedAt,
-    account_id: did,
-    handle,
-  })
-  // Also index by DID so clients can verify either handle or DID identities.
-  await storeOAuthVerification(env.CACHE_KV, {
-    platform: 'bluesky',
-    identity: did,
-    pubkey: state.pubkey,
-    verified: true,
-    method: 'oauth',
-    checked_at: checkedAt,
-    account_id: did,
-    handle,
-  })
-
-  return { success: true, returnUrl: state.returnUrl, identity: handle }
+  // Saving the link (and tidying up after earlier sign-ins) happens once the
+  // owner confirms it. Until the switch, it is also saved unconfirmed now.
+  return holdSignIn(env, state, { platform: 'bluesky', identity: handle, account_id: did, handle })
 }
 
 export function blueskyClientMetadata(baseUrl: string): object {

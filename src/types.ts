@@ -154,4 +154,6 @@ export interface SignInCallbackResult {
   returnUrl: string
   error?: string
   identity?: string
+  // The one-time code the owner confirms with, for a sign-in started with a start check.
+  confirmCode?: string
 }

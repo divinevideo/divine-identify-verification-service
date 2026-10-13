@@ -1,6 +1,7 @@
 import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
-import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
+import { storeOAuthState, getOAuthState, deleteOAuthState } from './state'
+import { holdSignIn } from './signin-records'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -128,15 +129,5 @@ export async function handleYouTubeCallback(
   // Use customUrl (handle) if available, otherwise channel ID
   const identity = channel.snippet?.customUrl || channel.id
 
-  // Store OAuth verification
-  await storeOAuthVerification(env.CACHE_KV, {
-    platform: 'youtube',
-    identity,
-    pubkey: state.pubkey,
-    verified: true,
-    method: 'oauth',
-    checked_at: Math.floor(Date.now() / 1000),
-  })
-
-  return { success: true, returnUrl: state.returnUrl, identity }
+  return holdSignIn(env, state, { platform: 'youtube', identity })
 }

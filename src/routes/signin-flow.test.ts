@@ -145,9 +145,12 @@ describe('the sign-in browser cookie is gone', () => {
 
   it('a GET start on the other verifier host starts there, with no redirect to the base host', async () => {
     const env = baseEnv()
-    const res = await app.request(`https://verifyer.divine.video/auth/twitter/start?pubkey=${PUBKEY}`, {}, env)
+    const returnUrl = 'https://verifyer.divine.video/#verify-here'
+    const res = await app.request(`https://verifyer.divine.video/auth/twitter/start?pubkey=${PUBKEY}&return_url=${encodeURIComponent(returnUrl)}`, {}, env)
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toMatch(/^https:\/\/twitter\.com\/i\/oauth2\/authorize\?/)
+    const state = JSON.parse((await env.CACHE_KV.get(oauthStateKey(stateIdFrom('twitter', res.headers.get('Location') as string, {})))) as string)
+    expect(state.returnUrl).toBe(returnUrl)
   })
 
   it.each(PLATFORMS)('%s: a callback clears no cookie and writes no bound flag', async (platform) => {
@@ -163,8 +166,9 @@ describe('the sign-in browser cookie is gone', () => {
     expect(res.status).toBe(302)
     expect(res.headers.get('Set-Cookie')).toBeNull()
     for (const key of recordKeysFor(platform, PUBKEY)) {
-      const record = JSON.parse((await env.CACHE_KV.get(key)) as string)
-      expect(record.bound).toBeUndefined()
+      const raw = await env.CACHE_KV.get(key)
+      expect(raw).not.toBeNull()
+      expect(JSON.parse(raw as string).bound).toBeUndefined()
     }
   })
 })
@@ -195,8 +199,7 @@ describe('what a sign-in callback logs', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     const res = await app.request(`${BASE}/auth/twitter/callback?code=c&state=${stateId}`, {}, env)
     expect(new URL(res.headers.get('Location') as string, BASE).searchParams.get('oauth_verified')).toBe('true')
-    const logged = JSON.stringify(info.mock.calls)
-    for (const value of [PUBKEY, stateId, 'jack']) expect(logged).not.toContain(value)
+    expect(info.mock.calls).toEqual([['twitter sign-in finished: installed app, unconfirmed']])
   })
 
   it('logs nothing when a callback fails without throwing (unknown state)', async () => {
@@ -214,6 +217,124 @@ describe('what a sign-in callback logs', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     const res = await app.request(`${BASE}/auth/twitter/callback?code=c&state=${stateId}`, {}, env)
     expect(new URL(res.headers.get('Location') as string, BASE).searchParams.get('oauth_error')).toBe('Verification failed')
+    expect(info).not.toHaveBeenCalled()
+  })
+})
+
+// A callback for a state stored by hand, so these tests don't depend on how a
+// start is made.
+async function finishWithState(
+  platform: Platform,
+  env: Bindings,
+  state: Record<string, unknown>,
+  fetchStub: ReturnType<typeof vi.fn> = callbackFetchFor(platform),
+) {
+  const full: Record<string, unknown> = { platform, pubkey: PUBKEY, codeVerifier: 'v', createdAt: Date.now(), ...state }
+  if (platform === 'bluesky') {
+    const { generateDPoPKeyPair } = await import('../oauth/crypto')
+    const { publicJwk, privateJwk } = await generateDPoPKeyPair()
+    Object.assign(full, {
+      dpopPrivateJwk: privateJwk, dpopPublicJwk: publicJwk,
+      issuer: 'https://bsky.social', tokenEndpoint: 'https://bsky.social/oauth/token',
+      did: BLUESKY_DID, handle: BLUESKY_HANDLE,
+    })
+  }
+  await env.CACHE_KV.put(oauthStateKey('s1'), JSON.stringify(full))
+  vi.stubGlobal('fetch', fetchStub)
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  const res = await app.request(`${BASE}/auth/${platform}/callback?code=c&state=s1${callbackQueryExtra(platform)}`, {}, env)
+  return { res, info, location: new URL(res.headers.get('Location') as string, BASE) }
+}
+
+const START_CHECK = 'G2CN_J8Es1JmsWz0QXd2Kc-4p-lCo8GCsR-tVw6vre4'
+const PAGE_RETURN = `${BASE}/?signin=nonce1#verify-here`
+const CODE = /^[A-Za-z0-9_-]{43}$/
+
+describe('a finished sign-in started with a start check', () => {
+  it.each(PLATFORMS)('%s: sends a one-time code after the # and holds the sign-in for confirmation', async (platform) => {
+    const env = platformEnv(platform)
+    const { location, info } = await finishWithState(platform, env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
+    const code = new URLSearchParams(location.hash.slice(1)).get('oauth_confirm') as string
+    expect(code).toMatch(CODE)
+    expect(location.hash).toBe(`#oauth_confirm=${code}`)
+    expect(location.searchParams.get('oauth_confirm')).toBeNull()
+    expect(location.searchParams.get('signin')).toBe('nonce1')
+    expect(location.searchParams.get('platform')).toBe(platform)
+    expect(location.searchParams.get('identity')).toBe(identityFor(platform))
+    const { getPendingSignIn } = await import('../oauth/confirm')
+    expect(await getPendingSignIn(env.CACHE_KV, code)).toMatchObject({ platform, pubkey: PUBKEY, identity: identityFor(platform), startCheck: START_CHECK })
+    expect(info.mock.calls).toEqual([[`${platform} sign-in finished: awaiting confirmation`]])
+  })
+
+  it('puts the code in the query when set to', async () => {
+    const env = baseEnv({ SIGNIN_CODE_PLACEMENT: 'query' })
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
+    expect(location.searchParams.get('oauth_confirm')).toMatch(CODE)
+    expect(location.hash).toBe('#verify-here')
+  })
+
+  it('before the switch: also saves an unconfirmed record and says oauth_verified', async () => {
+    const env = baseEnv()
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
+    expect(location.searchParams.get('oauth_verified')).toBe('true')
+    const record = JSON.parse((await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', PUBKEY))) as string)
+    expect(record.confirmed).toBeUndefined()
+  })
+
+  it.each(PLATFORMS)('%s: once required, saves no record and does not say oauth_verified', async (platform) => {
+    const env = platformEnv(platform, { SIGNIN_CONFIRMATION: 'required' })
+    const { location } = await finishWithState(platform, env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
+    expect(location.searchParams.get('oauth_verified')).toBeNull()
+    for (const key of recordKeysFor(platform, PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
+  })
+
+  it('replaces names the return address arrived with, and a fragment that carried a code', async () => {
+    const env = baseEnv()
+    const returnUrl = `${BASE}/?signin=n&identity=evil&oauth_confirm=old#oauth_confirm=old`
+    const { location } = await finishWithState('twitter', env, { returnUrl, startCheck: START_CHECK })
+    expect(location.searchParams.get('identity')).toBe('jack')
+    expect(location.searchParams.getAll('oauth_confirm')).toEqual([])
+    const code = new URLSearchParams(location.hash.slice(1)).get('oauth_confirm') as string
+    expect(code).toMatch(CODE)
+    expect(location.hash).toBe(`#oauth_confirm=${code}`)
+  })
+
+  it('with the code in the query: drops a fragment that carried a code', async () => {
+    const env = baseEnv({ SIGNIN_CODE_PLACEMENT: 'query' })
+    const returnUrl = `${BASE}/?signin=n&oauth_confirm=old#oauth_confirm=old`
+    const { location } = await finishWithState('twitter', env, { returnUrl, startCheck: START_CHECK })
+    const codes = location.searchParams.getAll('oauth_confirm')
+    expect(codes).toHaveLength(1)
+    expect(codes[0]).toMatch(CODE)
+    expect(location.hash).toBe('')
+  })
+})
+
+describe('a finished sign-in started without a start check (installed app)', () => {
+  it.each(PLATFORMS)('%s: gets no code, saves an unconfirmed record, and logs it as an installed app', async (platform) => {
+    const env = platformEnv(platform)
+    const { location, info } = await finishWithState(platform, env, { returnUrl: 'https://divine.video/app/callback' })
+    expect(location.hash).toBe('')
+    expect(location.searchParams.get('oauth_confirm')).toBeNull()
+    expect(location.searchParams.get('oauth_verified')).toBe('true')
+    for (const key of recordKeysFor(platform, PUBKEY)) {
+      const raw = await env.CACHE_KV.get(key)
+      expect(raw).not.toBeNull()
+      expect(JSON.parse(raw as string).confirmed).toBeUndefined()
+    }
+    expect(info.mock.calls).toEqual([[`${platform} sign-in finished: installed app, unconfirmed`]])
+  })
+})
+
+describe('a sign-in callback that throws', () => {
+  it.each(PLATFORMS)('%s: sends the person to the verifier page with an error and sets no cookie', async (platform) => {
+    const env = platformEnv(platform)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { res, info } = await finishWithState(platform, env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK },
+      vi.fn().mockRejectedValue(new Error('network down')))
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toBe('/?oauth_error=Verification+failed')
+    expect(res.headers.get('Set-Cookie')).toBeNull()
     expect(info).not.toHaveBeenCalled()
   })
 })

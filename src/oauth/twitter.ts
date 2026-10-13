@@ -1,6 +1,7 @@
 import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
-import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
+import { storeOAuthState, getOAuthState, deleteOAuthState } from './state'
+import { holdSignIn } from './signin-records'
 
 const TWITTER_AUTH_URL = 'https://twitter.com/i/oauth2/authorize'
 const TWITTER_TOKEN_URL = 'https://api.twitter.com/2/oauth2/token'
@@ -124,15 +125,5 @@ export async function handleTwitterCallback(
     return { success: false, returnUrl: state.returnUrl, error: 'Twitter did not return a username' }
   }
 
-  // Store OAuth verification
-  await storeOAuthVerification(env.CACHE_KV, {
-    platform: 'twitter',
-    identity,
-    pubkey: state.pubkey,
-    verified: true,
-    method: 'oauth',
-    checked_at: Math.floor(Date.now() / 1000),
-  })
-
-  return { success: true, returnUrl: state.returnUrl, identity }
+  return holdSignIn(env, state, { platform: 'twitter', identity })
 }

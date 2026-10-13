@@ -1,9 +1,9 @@
-// ABOUTME: Saving sign-in records, confirmed or not, and reading the ones that
-// ABOUTME: count. The confirmation itself is in confirm.ts (#113).
-import type { Bindings, OAuthVerification } from '../types'
+// ABOUTME: Saving sign-in records, confirmed or not, holding finished sign-ins
+// ABOUTME: and reading the ones that count. Confirming is in confirm.ts (#113).
+import type { Bindings, OAuthState, OAuthVerification, SignInCallbackResult } from '../types'
 import { getOAuthVerification, storeOAuthVerification, oauthVerificationKey } from './state'
 import { forgetHandleLookup } from './signin-account'
-import { signInConfirmationMode, type SignedInAccount } from './confirm'
+import { signInConfirmationMode, newConfirmCode, storePendingSignIn, type SignedInAccount } from './confirm'
 
 /** The event that confirmed a sign-in. */
 export interface Confirmation {
@@ -19,7 +19,7 @@ function savedIdentities(account: SignedInAccount): string[] {
 
 // Tidying up after earlier sign-ins is best effort; the new link is saved
 // either way, and one step failing doesn't skip the other.
-export async function tidyEarlierBlueskySignIn(env: Bindings, pubkey: string, did: string, handle: string): Promise<void> {
+async function tidyEarlierBlueskySignIn(env: Bindings, pubkey: string, did: string, handle: string): Promise<void> {
   try {
     await forgetHandleLookup(env, handle)
   } catch (err) {
@@ -79,4 +79,26 @@ export async function getCountedSignIn(env: Bindings, platform: string, identity
   if (!record) return null
   if (signInConfirmationMode(env) === 'required' && record.confirmed !== true) return null
   return record
+}
+
+/**
+ * How every sign-in callback ends once the provider confirmed the account.
+ * Before the switch, the sign-in is saved unconfirmed so apps that can't
+ * confirm keep working. A sign-in started with a start check is also held
+ * for its owner to confirm, under a one-time code sent to the return address.
+ */
+export async function holdSignIn(env: Bindings, state: OAuthState, account: SignedInAccount): Promise<SignInCallbackResult> {
+  // TODO(#113): remove once SIGNIN_CONFIRMATION is "required".
+  if (signInConfirmationMode(env) === 'optional') await saveSignIn(env, state.pubkey, account, null)
+  let confirmCode: string | undefined
+  if (state.startCheck) {
+    confirmCode = newConfirmCode()
+    await storePendingSignIn(env.CACHE_KV, confirmCode, {
+      ...account,
+      pubkey: state.pubkey,
+      startCheck: state.startCheck,
+      finishedAt: Date.now(),
+    })
+  }
+  return { success: true, returnUrl: state.returnUrl, identity: account.identity, ...(confirmCode ? { confirmCode } : {}) }
 }

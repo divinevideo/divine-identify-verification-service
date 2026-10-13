@@ -8,6 +8,7 @@ import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-even
 import { deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
 import { getCountedSignIn } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
+import { signInConfirmationMode, confirmCodePlacement, type ConfirmCodePlacement } from '../oauth/confirm'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
@@ -151,11 +152,24 @@ export function isAllowedReturnUrl(url: string, oauthRedirectBase?: string, requ
   }
 }
 
-function buildReturnUrl(returnUrl: string, params: Record<string, string>): string {
+// Names only the verifier sets. A return address that arrived carrying any of
+// them gets the verifier's values instead.
+const RESERVED_RETURN_NAMES = ['oauth_verified', 'oauth_error', 'oauth_confirm', 'platform', 'identity']
+
+function buildReturnUrl(
+  returnUrl: string,
+  params: Record<string, string>,
+  confirm?: { code: string; placement: ConfirmCodePlacement },
+): string {
   try {
     const url = new URL(returnUrl)
-    for (const [key, value] of Object.entries(params)) {
-      url.searchParams.set(key, value)
+    for (const name of RESERVED_RETURN_NAMES) url.searchParams.delete(name)
+    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
+    if (url.hash.includes('oauth_confirm')) url.hash = ''
+    if (confirm) {
+      // After the #, the fragment is exactly the code; clients put back their own.
+      if (confirm.placement === 'query') url.searchParams.set('oauth_confirm', confirm.code)
+      else url.hash = `oauth_confirm=${confirm.code}`
     }
     return url.toString()
   } catch {
@@ -265,11 +279,18 @@ const SIGN_IN_LABELS: Record<OAuthPlatform, string> = {
   bluesky: 'Bluesky',
 }
 
+// Logged with nothing that identifies the person. The two finish lines are
+// told apart so the share of installed-app sign-ins can be read from the logs.
 function finishSignIn(c: Context<{ Bindings: Bindings }>, platform: OAuthPlatform, result: SignInCallbackResult): Response {
-  const params: Record<string, string> = result.success
-    ? { oauth_verified: 'true', platform, identity: result.identity || '' }
-    : { oauth_error: 'Verification failed' }
-  return c.redirect(buildReturnUrl(result.returnUrl, params))
+  if (!result.success) return c.redirect(buildReturnUrl(result.returnUrl, { oauth_error: 'Verification failed' }))
+  console.info(`${platform} sign-in finished: ${result.confirmCode ? 'awaiting confirmation' : 'installed app, unconfirmed'}`)
+  const params: Record<string, string> = { platform, identity: result.identity || '' }
+  // Apps that can't confirm read this as "linked"; once confirmation is
+  // required nothing is linked until the owner confirms.
+  // TODO(#113): remove once SIGNIN_CONFIRMATION is "required".
+  if (signInConfirmationMode(c.env) === 'optional') params.oauth_verified = 'true'
+  const confirm = result.confirmCode ? { code: result.confirmCode, placement: confirmCodePlacement(c.env) } : undefined
+  return c.redirect(buildReturnUrl(result.returnUrl, params, confirm))
 }
 
 // A sign-in the provider did not complete comes back with `error` and, per

@@ -1,6 +1,7 @@
 import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
-import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
+import { storeOAuthState, getOAuthState, deleteOAuthState } from './state'
+import { holdSignIn } from './signin-records'
 
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/'
 const TIKTOK_TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/'
@@ -135,15 +136,5 @@ export async function handleTikTokCallback(
   // ownership check, so there's nothing to re-fetch later. Not persisting
   // tokens keeps the blast radius small if KV is ever exposed.
 
-  // Store OAuth verification
-  await storeOAuthVerification(env.CACHE_KV, {
-    platform: 'tiktok',
-    identity,
-    pubkey: state.pubkey,
-    verified: true,
-    method: 'oauth',
-    checked_at: Math.floor(Date.now() / 1000),
-  })
-
-  return { success: true, returnUrl: state.returnUrl, identity }
+  return holdSignIn(env, state, { platform: 'tiktok', identity })
 }
