@@ -94,10 +94,8 @@ describe('a platform that does not answer', () => {
         expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable', cached: false })
         expect(body.error).toMatch(/couldn't be checked right now/)
         expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
-        // An outage, not a possible bug. TODO(#103): Bluesky's handle lookup
-        // (src/atproto.ts) fails first here and isn't typed yet; its post
-        // lookup is checked below.
-        if (platform !== 'bluesky') expect(logError).not.toHaveBeenCalled()
+        // An outage, not a possible bug.
+        expect(logError).not.toHaveBeenCalled()
       })
 
       it('answering 404 is still a rejection, remembered for 15 minutes', async () => {
@@ -145,6 +143,183 @@ describe('a platform that does not answer', () => {
     expect(body.code).toBe('temporarily_unavailable')
     expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
     expect(logError).not.toHaveBeenCalled()
+  })
+
+  describe('Bluesky account lookups', () => {
+    // Before reading the identity-link record, a Bluesky check looks the
+    // account up: the handle, then its DID document, then its own server (PDS).
+    const DID = `did:plc:${'a'.repeat(24)}`
+    const PDS = 'https://pds.example.com'
+    const STEPS = {
+      'handle lookup': 'com.atproto.identity.resolveHandle',
+      'DID document lookup': `https://plc.directory/${DID}`,
+      'identity-link record lookup': `${PDS}/xrpc/com.atproto.repo.listRecords`,
+    }
+    type Step = keyof typeof STEPS
+    type Answer = number | 'unreachable' | Response
+
+    // Requests the stub below has no answer for. Throwing isn't enough to fail
+    // a test: a lookup reports a failed fetch as an outage, which is what most
+    // of these tests expect.
+    let unexpected: string[] = []
+    afterEach(() => {
+      const requested = unexpected
+      unexpected = []
+      expect(requested).toEqual([])
+    })
+
+    // Every step answers as a working, existing account with no identity-link
+    // record, unless `answers` says otherwise. The proof post doesn't exist.
+    function bluesky(answers: Partial<Record<Step | 'post', Answer>> = {}) {
+      const answer = (given: Answer | undefined, normal: () => Response) => {
+        if (given === 'unreachable') throw new TypeError('fetch failed')
+        if (typeof given === 'number') return new Response(null, { status: given })
+        return given ?? normal()
+      }
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.includes(STEPS['handle lookup'])) return answer(answers['handle lookup'], () => Response.json({ did: DID }))
+        if (url === STEPS['DID document lookup']) {
+          return answer(answers['DID document lookup'], () => Response.json({ service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] }))
+        }
+        if (url.startsWith(STEPS['identity-link record lookup'])) {
+          return answer(answers['identity-link record lookup'], () => Response.json({ records: [] }))
+        }
+        if (url.includes('getPostThread')) return answer(answers.post, () => new Response(null, { status: 404 }))
+        unexpected.push(url)
+        throw new Error(`unexpected fetch ${url}`)
+      }))
+    }
+
+    function postProving(npub: string, author: string = CLAIMS.bluesky.identity) {
+      return Response.json({
+        thread: { post: { author: { handle: author }, record: { text: `Verifying my nostr key: ${npub}` } } },
+      })
+    }
+
+    describe.each(Object.keys(STEPS) as Step[])('the %s', step => {
+      it.each([
+        ['answers 429', 429],
+        ['answers 503', 503],
+        ['can\'t be reached', 'unreachable'],
+      ] as const)('that %s is "couldn\'t check right now", remembered for 5 minutes', async (_label, status) => {
+        const { env, kv } = createEnv()
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
+        bluesky({ [step]: status })
+        const body = await verify(env, 'bluesky', CLAIMS.bluesky)
+        expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable', cached: false })
+        expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
+        expect(logError).not.toHaveBeenCalled()
+      })
+
+      it('that can\'t answer, for a claim without a post, is "couldn\'t check right now"', async () => {
+        const { env, kv } = createEnv()
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+        bluesky({ [step]: 503 })
+        const body = await verify(env, 'bluesky', { identity: CLAIMS.bluesky.identity, proof: '' })
+        expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
+        expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
+      })
+
+      it('that can\'t answer still lets a post that proves the claim verify it', async () => {
+        const { env } = createEnv()
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+        bluesky({ [step]: 503, post: postProving(hexToNpub(PUBKEY)) })
+        const body = await verify(env, 'bluesky', CLAIMS.bluesky)
+        expect(body).toMatchObject({ verified: true, method: 'proof_post' })
+      })
+
+      it.each([
+        ['names another key', () => postProving(hexToNpub('cd'.repeat(32)))],
+        ['is by another account', () => postProving(hexToNpub(PUBKEY), 'someone-else.bsky.social')],
+        ['isn\'t there', () => new Response(null, { status: 404 })],
+      ])('that can\'t answer is not overruled by a post that %s', async (_label, post) => {
+        const { env, kv } = createEnv()
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+        bluesky({ [step]: 503, post: post() })
+        const body = await verify(env, 'bluesky', CLAIMS.bluesky)
+        expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
+        expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
+      })
+    })
+
+    // What each service answers when the account isn't there.
+    it.each([
+      ['handle lookup', 400],
+      ['DID document lookup', 404],
+      ['identity-link record lookup', 400],
+    ] as const)('the %s answering %i (no such account) is still a rejection, remembered for 15 minutes', async (step, status) => {
+      const { env, kv } = createEnv()
+      bluesky({ [step]: status })
+      const body = await verify(env, 'bluesky', { identity: CLAIMS.bluesky.identity, proof: '' })
+      expect(body).toMatchObject({ verified: false, error: 'No identity link record found and no Bluesky post proof provided' })
+      expect(body.code).not.toBe('temporarily_unavailable')
+      expect(rememberedFor(kv)).toBe(FAILED_TTL)
+    })
+
+    it('a did:web host that can\'t be reached is "couldn\'t check right now"', async () => {
+      const { env, kv } = createEnv()
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      platformUnreachable()
+      const body = await verify(env, 'bluesky', { identity: 'did:web:example.com', proof: '' })
+      expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
+      expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
+      expect(logError).not.toHaveBeenCalled()
+    })
+
+    it('a did:web host that answers 503 is "couldn\'t check right now"', async () => {
+      const { env, kv } = createEnv()
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      platformAnswers(503)
+      const body = await verify(env, 'bluesky', { identity: 'did:web:example.com', proof: '' })
+      expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
+      expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
+    })
+
+    it('a did:web host that answers 404 is still a rejection', async () => {
+      const { env, kv } = createEnv()
+      platformAnswers(404)
+      const body = await verify(env, 'bluesky', { identity: 'did:web:example.com', proof: '' })
+      expect(body.code).not.toBe('temporarily_unavailable')
+      expect(rememberedFor(kv)).toBe(FAILED_TTL)
+    })
+
+    it('treats a failure inside the record check as a possible bug, even when the post proves the claim', async () => {
+      const { env } = createEnv()
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      // A record list that isn't a list stands in for a bug in the record check.
+      bluesky({ 'identity-link record lookup': Response.json({ records: 5 }), post: postProving(hexToNpub(PUBKEY)) })
+      const body = await verify(env, 'bluesky', CLAIMS.bluesky)
+      expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
+      expect(logError).toHaveBeenCalledWith('bluesky check failed:', expect.any(TypeError))
+    })
+
+    // The warning names the lookup, so operators can tell which service is down.
+    it.each([
+      ['handle lookup', 503, 'Bluesky handle lookup answered 503'],
+      ['DID document lookup', 503, 'PLC directory answered 503'],
+      ['identity-link record lookup', 503, 'PDS answered 503'],
+      ['identity-link record lookup', 'unreachable', 'PDS couldn\'t be reached (TypeError)'],
+    ] as const)('logs which lookup didn\'t answer: the %s (%s)', async (step, outage, logged) => {
+      const { env } = createEnv()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      bluesky({ [step]: outage })
+      await verify(env, 'bluesky', CLAIMS.bluesky)
+      expect(warn).toHaveBeenCalledWith(expect.any(String), logged)
+    })
+
+    it.each([
+      ['answering 503', () => platformAnswers(503), 'did:web host answered 503'],
+      ['unreachable', platformUnreachable, 'did:web host couldn\'t be reached (TypeError)'],
+    ] as const)('logs which lookup didn\'t answer: a did:web host (%s)', async (_label, outage, logged) => {
+      const { env } = createEnv()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      outage()
+      await verify(env, 'bluesky', { identity: 'did:web:example.com', proof: '' })
+      expect(warn).toHaveBeenCalledWith(expect.any(String), logged)
+    })
   })
 
   // 401 and 403 are our credential being refused, not a verdict on the gist.

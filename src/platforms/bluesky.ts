@@ -1,4 +1,4 @@
-import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
+import { fetchFromPlatform, PlatformUnavailableError, throwIfUnanswered, type PlatformVerifier } from './base'
 import { DIVINE_IDENTITY_LINK_COLLECTION, matchNostrIdentityLinkRecord } from '../identity-link'
 import { resolveAtprotoIdentityPds } from '../atproto'
 import { fetchPublic } from '../utils/safe-fetch'
@@ -13,12 +13,31 @@ export class BlueskyVerifier implements PlatformVerifier {
     npub: string
   ): Promise<{ verified: boolean; error?: string; method?: 'identity_link' | 'proof_post'; provenance?: { method: 'identity_link' | 'proof_post'; collection?: string; at_uri?: string; evidence?: string[]; gateway?: { domain?: string; did?: string } } }> {
     // Prefer deterministic identity-link records over public proof posts.
-    const identityLink = await this.verifyIdentityLinkRecord(identity, npub)
-    if (identityLink) {
-      return identityLink
+    let recordUnavailable: PlatformUnavailableError | null = null
+    try {
+      const identityLink = await this.verifyIdentityLinkRecord(identity, npub)
+      if (identityLink) {
+        return identityLink
+      }
+    } catch (err) {
+      if (!(err instanceof PlatformUnavailableError)) throw err
+      recordUnavailable = err
     }
 
-    // Fall back to legacy proof-post verification.
+    // Fall back to legacy proof-post verification. A post that proves the claim
+    // settles it even when the record couldn't be looked up; any other answer
+    // from the post would leave a record we couldn't see unchecked, so it isn't
+    // a verdict.
+    const post = await this.verifyProofPost(identity, proof, npub)
+    if (recordUnavailable && !post.verified) throw recordUnavailable
+    return post
+  }
+
+  private async verifyProofPost(
+    identity: string,
+    proof: string,
+    npub: string
+  ): Promise<{ verified: boolean; error?: string; method?: 'proof_post'; provenance?: { method: 'proof_post'; at_uri: string; evidence: string[] } }> {
     if (!proof) {
       return { verified: false, error: 'No identity link record found and no Bluesky post proof provided' }
     }
@@ -88,16 +107,17 @@ export class BlueskyVerifier implements PlatformVerifier {
     if (!repo) return null
 
     const url = `${repo.pdsEndpoint}/xrpc/com.atproto.repo.listRecords?repo=${encodeURIComponent(repo.did)}&collection=${encodeURIComponent(DIVINE_IDENTITY_LINK_COLLECTION)}&limit=100`
-    const response = await fetchPublic(url, {
+    const response = await fetchFromPlatform('PDS', url, {
       headers: {
         'Accept': 'application/json',
         'User-Agent': 'divine-identity-verification-service',
       },
-    })
+    }, fetchPublic)
 
     if (response.status === 400 || response.status === 404) {
       return null
     }
+    throwIfUnanswered(response, 'PDS')
     if (!response.ok) {
       return null
     }

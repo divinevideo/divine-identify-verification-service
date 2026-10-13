@@ -6,6 +6,7 @@ import { getHandleFromDidDocument, getPdsEndpoint, resolveDidDocument, resolveHa
 import { isSafeUrl } from '../utils/validation'
 import { fetchPublic } from '../utils/safe-fetch'
 import { isSignInBound } from './binding'
+import { PlatformUnavailableError } from '../platforms/base'
 
 // The AT Protocol OAuth spec requires both metadata documents to answer
 // "HTTP 200 (not 2xx or redirect)", so these two fetches follow no redirect: a
@@ -24,6 +25,20 @@ async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
   return issuer
 }
 
+// Sign-in can't start without the account, so an account lookup that didn't
+// answer stops it the same way one that found nothing does. It's logged so an
+// outage can be told apart from a handle that doesn't exist.
+async function orNullIfUnanswered<T>(lookup: Promise<T | null>): Promise<T | null> {
+  try {
+    return await lookup
+  } catch (err) {
+    if (!(err instanceof PlatformUnavailableError)) throw err
+    // The message names the lookup and its status, never the handle or a URL.
+    console.warn('Bluesky sign-in discovery:', err.message)
+    return null
+  }
+}
+
 // AT Protocol OAuth: discover the authorization server for a handle
 async function resolveAuthServer(handle: string): Promise<{
   did: string
@@ -33,11 +48,11 @@ async function resolveAuthServer(handle: string): Promise<{
   pushedAuthorizationRequestEndpoint: string
 } | null> {
   // 1. Resolve handle to PDS
-  const did = await resolveHandle(handle)
+  const did = await orNullIfUnanswered(resolveHandle(handle))
   if (!did) return null
 
   // 2. Get PDS from DID document
-  const didDoc = await resolveDidDocument(did)
+  const didDoc = await orNullIfUnanswered(resolveDidDocument(did))
   if (!didDoc) return null
   const pdsUrl = getPdsEndpoint(didDoc)
   if (!pdsUrl) return null
@@ -339,8 +354,8 @@ async function confirmedHandle(did: string, state: OAuthState): Promise<string |
     // The first handle a DID document lists is the one it claims
     if (getHandleFromDidDocument(didDoc)?.toLowerCase() !== state.handle) return failed('handle')
     return state.handle
-  } catch {
-    return failed('lookup')
+  } catch (err) {
+    return failed(err instanceof PlatformUnavailableError ? 'lookup_unavailable' : 'lookup')
   }
 }
 
