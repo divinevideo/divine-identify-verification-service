@@ -383,7 +383,7 @@ describe('publishing a linked account', () => {
     expect(h.errors()).toEqual([['publish-status', UNREAD, 'error']])
   })
 
-  it('publishes nothing when every copy the relays sent was ignored', async () => {
+  it('publishes nothing when the only copy Divine\'s relay sent fails the checks', async () => {
     const page = await loadPage()
     const h = harness({
       [DIVINE]: [event(10011, 100, [GITHUB], { sig: BAD_SIG })],
