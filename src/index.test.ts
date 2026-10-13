@@ -436,7 +436,8 @@ describe('signing in with a Divine login first', () => {
 
   it('has no link in Step 1 that opens in a new tab', async () => {
     const card = step1(await homeHtml())
-    expect(card).not.toContain('target="_blank"')
+    // Any spelling of the attribute: quoted or not, any case, spaces around "=".
+    expect(card).not.toMatch(/target\s*=\s*["']?_blank/i)
   })
 
   it('labels the account field and the paste fallback for signing in', async () => {
