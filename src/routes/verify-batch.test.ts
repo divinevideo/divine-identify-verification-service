@@ -43,15 +43,6 @@ async function seedVerified(env: Bindings, platform: string, identity: string, p
   await env.CACHE_KV.put(cacheKey(platform, identity, proof, PUBKEY), JSON.stringify(cached))
 }
 
-const VIDEO = 'dQw4w9WgXcQ'
-
-// The YouTube Data API's answer for a video on a channel, with the given description.
-function youtubeVideo(description: string) {
-  return new Response(JSON.stringify({
-    items: [{ snippet: { channelId: 'UC1234567890abcdefghijkl', description } }],
-  }), { status: 200 })
-}
-
 function forbidFetch() {
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('no platform fetch expected in this test') }))
 }
@@ -256,20 +247,24 @@ describe('POST /verify: one bad claim no longer fails the whole batch', () => {
     expect(results[0]).not.toHaveProperty('canonical_proof')
   })
 
-  it('checks the tidy form when its storage keys fit, even when the link as sent is longer', async () => {
+  it('checks the tidy form when its storage keys fit, even when the tidy account is longer than sent', async () => {
     const { env } = createEnv()
-    env.YOUTUBE_API_KEY = 'test-key'
-    const fetchMock = vi.fn(async () => youtubeVideo(`Proof: ${hexToNpub(PUBKEY)}`))
+    const channel = 'a'.repeat(32)
+    const fetchMock = vi.fn(async () => new Response(
+      `<div class="tgme_widget_message_author"><a href="https://t.me/${channel}">${channel}</a></div>${hexToNpub(PUBKEY)}`,
+      { status: 200 },
+    ))
     vi.stubGlobal('fetch', fetchMock)
-    // As sent, the account is a 165-byte link; tidied, it is the 141-byte handle.
-    const identity = `https://www.youtube.com/@${'é'.repeat(70)}`
+    // Tidied, the key is 502 bytes. The tidy account (32 bytes, sent as "s") with
+    // the proof as sent (a 15-byte longer link) would be 517 and not fit.
+    const post = '1'.repeat(360)
+    const proof = `https://t.me/s/${channel}/${post}`
     const res = await postBatch(env, {
-      claims: [{ platform: 'youtube', identity, proof: `https://youtu.be/${VIDEO}?si=abc`, pubkey: PUBKEY }],
+      claims: [{ platform: 'telegram', identity: 's', proof, pubkey: PUBKEY }],
     })
     expect(res.status).toBe(200)
     const { results } = await res.json() as BatchResponse
-    expect(results[0]).toMatchObject({ identity, verified: true, canonical_proof: VIDEO })
-    expect(results[0]).toHaveProperty('canonical_identity')
+    expect(results[0]).toMatchObject({ identity: 's', verified: true, canonical_identity: channel, canonical_proof: `${channel}/${post}` })
   })
 
   it('accepts a claim whose storage key is exactly 512 bytes', async () => {

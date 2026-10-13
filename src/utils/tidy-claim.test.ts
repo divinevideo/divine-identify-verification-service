@@ -212,6 +212,10 @@ describe('tidyClaim', () => {
     ['https://m.youtube.com/@Alice/videos', '@Alice'],
     ['https://www.youtube.com/@caf%C3%A9', '@café'],
     ['https://www.youtube.com/@café', '@café'],
+    // Vowel signs are combining marks; digits, _ . - and the middle dot are allowed.
+    ['https://www.youtube.com/@%E0%A4%A8%E0%A4%AE%E0%A4%B8%E0%A5%8D%E0%A4%A4%E0%A5%87', '@नमस्ते'],
+    ['https://www.youtube.com/@a_b.c-9', '@a_b.c-9'],
+    ['https://www.youtube.com/@l·l', '@l·l'],
   ])('reduces the YouTube channel link %s to the channel', (identity, expected) => {
     expect(tidyClaim('youtube', identity, 'dQw4w9WgXcQ').identity).toBe(expected)
   })
