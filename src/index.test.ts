@@ -392,10 +392,10 @@ describe('the two ways to link an account', () => {
     expect(publishCard(html)).toContain('Nothing shows on your profile until you publish.')
   })
 
-  it('says in Step 1 that publishing needs a connected signer', async () => {
-    const step1 = between(await homeHtml(), 'Connect your Nostr signer</h3>', 'id="link-with-post"')
-    expect(step1).toContain('You need a connected signer to publish.')
-    expect(step1).toContain("You'll still need to connect a signer to publish it.")
+  it('says in Step 1 that publishing needs you to be signed in', async () => {
+    const step1 = between(await homeHtml(), 'Sign in with your Divine login</h3>', 'id="link-with-post"')
+    expect(step1).toContain("You'll still need to sign in to publish it.")
+    expect(publishCard(await homeHtml())).toContain('Needs you to be signed in (Step 1).')
   })
 
   it.each([
@@ -406,6 +406,83 @@ describe('the two ways to link an account', () => {
     expect(section).toContain(linkStep)
     expect(section).toContain('Press Publish to add the link to your profile.')
     expect(section).not.toContain('advanced section')
+  })
+})
+
+// Most people verifying have a Divine login, so Step 1 leads with it and
+// offers a Nostr signer as the alternative (#83).
+describe('signing in with a Divine login first', () => {
+  function step1(html: string): string {
+    const start = html.indexOf('<span class="step-pill">Step 1</span>')
+    const end = html.indexOf('<span class="step-pill verify-step-gap">Step 2</span>', start)
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    return html.slice(start, end)
+  }
+
+  it('leads Step 1 with the Divine login', async () => {
+    const card = step1(await homeHtml())
+    expect(card).toContain('<h3 style="margin-top:0;">Sign in with your Divine login</h3>')
+    expect(card).toContain('<p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>')
+  })
+
+  it('offers the Divine login first, as the main button, and a Nostr extension second', async () => {
+    const card = step1(await homeHtml())
+    const divine = card.indexOf('<button id="connect-keycast-btn" class="verify-btn verify-btn-primary" type="button">Sign in with Divine login</button>')
+    const nostr = card.indexOf('<button id="connect-nostr-btn" class="verify-btn" type="button">Use a Nostr extension</button>')
+    expect(divine).toBeGreaterThan(-1)
+    expect(nostr).toBeGreaterThan(divine)
+  })
+
+  it('has no separate link that opens login.divine.video in a new tab', async () => {
+    const html = await homeHtml()
+    expect(html).not.toContain('Open login.divine.video')
+    expect(html).not.toContain('login.divine.video/login?return_url')
+  })
+
+  it('labels the account field and the paste fallback for signing in', async () => {
+    const card = step1(await homeHtml())
+    expect(card).toContain('<label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you sign in)</label>')
+    expect(card).toContain(`<!-- TODO(#113): Remove with the paste-an-account fallback. -->
+        <p class="field-help">Not signed in? Paste your Divine address or npub to check a link now. You'll still need to sign in to publish it.</p>`)
+    expect(card).toContain('<summary>Remote signer options: bunker and Nostr Connect</summary>')
+  })
+
+  it('tells people to sign in in the Verify Here intro and How to Get Verified', async () => {
+    const html = await homeHtml()
+    expect(html).toContain('<p class="verify-lead">Sign in, link your account one of two ways, then publish.</p>')
+    expect(html).toContain(`<h4>Sign in</h4>
+          <p>Use your Divine login, or connect your Nostr signer, in <a href="#verify-here">Verify Here</a>. You need it to add the link to your profile.</p>`)
+  })
+
+  // The page's messages to the person name the Divine login first too, and
+  // say "sign in" rather than "connect a signer".
+  it('says "sign in" in its messages to the person', async () => {
+    const html = await homeHtml()
+    for (const old of [
+      'Connect your Nostr signer', 'connect a signer', 'Connect a signer', 'connected signer', 'Requires a signer session',
+      'Please sign in with Nostr first', 'A signer session is required to publish', 'signed-in signer key',
+      "'Connected with login.divine.video.'", "'Reconnected login.divine.video signer session.'",
+      "'Opening secure login.divine.video...'", "'Finishing login.divine.video session...'",
+      "'Could not connect login.divine.video.'", "'Could not open login.divine.video.'",
+      "'Signed in with your browser signer.'", "'Requesting signature from your browser signer...'",
+      'session expired. Connect again.',
+    ]) expect(html).not.toContain(old)
+    for (const now of [
+      "throw new Error('Sign in first (Step 1), or paste your account.');",
+      "throw new Error('The account you typed does not match the account you signed in with.');",
+      "throw new Error('You need to be signed in to publish. Sign in with your Divine login, or connect your Nostr signer, in Step 1.');",
+      "container.textContent = 'Sign in first (Verify Here, Step 1) to see your linked accounts.';",
+      "throw new Error('Sign in first (Verify Here, Step 1).');",
+      '<p>View and remove your linked identity verifications. You need to be signed in (Verify Here, Step 1).</p>',
+      "'Signed in with your Divine login.'", "'Signed in again with your Divine login.'",
+      "'Opening your Divine login...'", "'Finishing your Divine login...'",
+      "'Could not sign in with your Divine login.'", "'Could not open your Divine login.'",
+      "'Signed in with your Nostr extension.'", "'Requesting a signature from your Nostr extension...'",
+      "if (source === 'keycast') return 'your Divine login';",
+      "if (source === 'browser') return 'your Nostr extension';",
+      "throw new Error('Your Divine login has expired. Sign in again.');",
+    ]) expect(html).toContain(now)
   })
 })
 

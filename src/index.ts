@@ -103,7 +103,6 @@ app.get('/', (c) => {
   const tiktokOAuthReviewEnabled = tiktokOAuthReviewRequested
     || getCookie(c, 'tiktok_oauth_review') === '1'
   const tiktokOAuthEnabled = isTikTokOAuthUsable(c.env, tiktokOAuthReviewEnabled)
-  const divineLoginUrl = `https://login.divine.video/login?return_url=${encodeURIComponent(`${origin}/#verify-here`)}`
 
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
   const ytTableRow = hasYouTube ? '<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>Yes</td></tr>' : ''
@@ -591,8 +590,8 @@ app.get('/', (c) => {
       <div class="steps">
         <div class="step">
           <div class="step-number">1</div>
-          <h4>Connect your signer</h4>
-          <p>Go to <a href="#verify-here">Verify Here</a> and connect your Nostr signer. You need it to add the link to your profile.</p>
+          <h4>Sign in</h4>
+          <p>Use your Divine login, or connect your Nostr signer, in <a href="#verify-here">Verify Here</a>. You need it to add the link to your profile.</p>
         </div>
         <div class="step">
           <div class="step-number">2</div>
@@ -614,22 +613,21 @@ app.get('/', (c) => {
 
     <section id="verify-here" class="verify-here">
       <h2>Verify Here</h2>
-      <p class="verify-lead">Connect your signer, link your account one of two ways, then publish.</p>
+      <p class="verify-lead">Sign in, link your account one of two ways, then publish.</p>
 
       <div class="verify-card">
         <span class="step-pill">Step 1</span>
-        <h3 style="margin-top:0;">Connect your Nostr signer</h3>
-        <p>You need a connected signer to publish. Use a browser extension, login.divine.video, a bunker, or Nostr Connect.</p>
+        <h3 style="margin-top:0;">Sign in with your Divine login</h3>
+        <p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
-          <button id="connect-nostr-btn" class="verify-btn verify-btn-primary" type="button">Login with Nostr</button>
-          <button id="connect-keycast-btn" class="verify-btn" type="button">Use login.divine.video</button>
-          <a href="${divineLoginUrl}" target="_blank" rel="noopener noreferrer" class="verify-btn">Open login.divine.video</a>
+          <button id="connect-keycast-btn" class="verify-btn verify-btn-primary" type="button">Sign in with Divine login</button>
+          <button id="connect-nostr-btn" class="verify-btn" type="button">Use a Nostr extension</button>
         </div>
-        <label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you connect)</label>
+        <label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you sign in)</label>
         <input id="verify-pubkey-input" class="field-input" type="text" placeholder="example@divine.video or npub1...">
         <p id="signer-session-summary" class="field-help" style="display:none;"></p>
         <!-- TODO(#113): Remove with the paste-an-account fallback. -->
-        <p class="field-help">No signer handy? Paste your Divine address or npub to check a link now. You'll still need to connect a signer to publish it.</p>
+        <p class="field-help">Not signed in? Paste your Divine address or npub to check a link now. You'll still need to sign in to publish it.</p>
         <details class="advanced-proof" id="remote-signer-details" style="margin-top:0.75rem;">
           <summary>Remote signer options: bunker and Nostr Connect</summary>
           <div class="advanced-proof-inner">
@@ -700,7 +698,7 @@ app.get('/', (c) => {
       <div class="verify-card verify-step-gap" id="publish-step">
         <span class="step-pill">Step 3</span>
         <h3 style="margin-top:0;">Publish to your profile</h3>
-        <p>Nothing shows on your profile until you publish. Needs a connected signer (Step 1).</p>
+        <p>Nothing shows on your profile until you publish. Needs you to be signed in (Step 1).</p>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
           <button id="publish-kind0-btn" class="verify-btn verify-btn-primary" type="button">Publish to my profile</button>
         </div>
@@ -712,7 +710,7 @@ app.get('/', (c) => {
     <!-- MANAGE LINKED VERIFICATIONS -->
     <section id="manage" style="box-shadow: 6px 6px 0 var(--violet);">
       <h2>Manage verified links</h2>
-      <p>View and remove your linked identity verifications. Requires a signer session.</p>
+      <p>View and remove your linked identity verifications. You need to be signed in (Verify Here, Step 1).</p>
       <button id="load-links-btn" class="verify-btn verify-btn-primary" type="button" onclick="loadLinkedVerifications()">Load my links</button>
       <div id="manage-links-container" style="margin-top:1rem;"></div>
       <div id="manage-status" class="status-row"></div>
@@ -933,7 +931,6 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     ${EMBED_BRIDGE_SCRIPT}
 
     const API = '${origin}';
-    const DIVINE_LOGIN_URL = '${divineLoginUrl}';
     const KEYCAST_BASE = 'https://login.divine.video';
     const KEYCAST_CLIENT_ID = 'Divine Identity Verification';
     const KEYCAST_SCOPE = 'policy:social';
@@ -994,8 +991,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     }
 
     function signerSourceLabel(source) {
-      if (source === 'browser') return 'browser signer';
-      if (source === 'keycast') return 'login.divine.video';
+      if (source === 'browser') return 'your Nostr extension';
+      if (source === 'keycast') return 'your Divine login';
       if (source === 'bunker') return 'bunker';
       if (source === 'nostrconnect') return 'Nostr Connect';
       return '';
@@ -1189,7 +1186,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     async function callKeycastRpc(sessionRef, method, params) {
       sessionRef.session = await getValidKeycastSession(sessionRef.session);
       if (!sessionRef.session || !sessionRef.session.accessToken) {
-        throw new Error('Your login.divine.video session expired. Connect again.');
+        throw new Error('Your Divine login has expired. Sign in again.');
       }
       const resp = await fetch(KEYCAST_BASE + '/api/nostr', {
         method: 'POST',
@@ -1364,7 +1361,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         ],
       };
 
-      setStatus('verify-login-status', 'Requesting signature from your browser signer...', 'loading');
+      setStatus('verify-login-status', 'Requesting a signature from your Nostr extension...', 'loading');
       const signedEvent = await browserSigner.signEvent(unsignedEvent);
       if (!signedEvent || typeof signedEvent !== 'object') {
         throw new Error('Signer did not return a valid login event.');
@@ -1387,7 +1384,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         throw new Error('The signed login event did not match your browser signer key.');
       }
 
-      await activateSigner(browserSigner, 'browser', 'Signed in with your browser signer.');
+      await activateSigner(browserSigner, 'browser', 'Signed in with your Nostr extension.');
     }
 
     async function startKeycastLogin() {
@@ -1431,7 +1428,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       if (!code && !error) return false;
 
       clearStatus('verify-global-status');
-      setStatus('verify-login-status', 'Finishing login.divine.video session...', 'loading');
+      setStatus('verify-login-status', 'Finishing your Divine login...', 'loading');
       try {
         if (error) {
           throw new Error(params.get('error_description') || error);
@@ -1465,10 +1462,10 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
           throw new Error('login.divine.video did not return a usable signer session.');
         }
         saveKeycastSession(session);
-        await activateSigner(createKeycastSigner(session), 'keycast', 'Connected with login.divine.video.');
+        await activateSigner(createKeycastSigner(session), 'keycast', 'Signed in with your Divine login.');
       } catch (e) {
         clearKeycastSession();
-        setStatus('verify-login-status', e.message || 'Could not connect login.divine.video.', 'error');
+        setStatus('verify-login-status', e.message || 'Could not sign in with your Divine login.', 'error');
       } finally {
         cleanKeycastCallbackParams();
       }
@@ -1479,7 +1476,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       const session = await getValidKeycastSession();
       if (!session) return false;
       try {
-        await activateSigner(createKeycastSigner(session), 'keycast', 'Reconnected login.divine.video signer session.');
+        await activateSigner(createKeycastSigner(session), 'keycast', 'Signed in again with your Divine login.');
         return true;
       } catch {
         clearKeycastSession();
@@ -1489,7 +1486,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
 
     async function connectKeycastSigner() {
       clearStatus('verify-login-status');
-      setStatus('verify-login-status', 'Opening secure login.divine.video...', 'loading');
+      setStatus('verify-login-status', 'Opening your Divine login...', 'loading');
       await startKeycastLogin();
     }
 
@@ -1603,12 +1600,12 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       if (accountInput && accountInput.trim()) {
         const parsed = await normalizePubkeyInput(accountInput);
         if (signerPubkeyHex && signerPubkeyHex !== parsed) {
-          throw new Error('The typed account does not match your signed-in signer key.');
+          throw new Error('The account you typed does not match the account you signed in with.');
         }
         return parsed;
       }
       if (signerPubkeyHex) return signerPubkeyHex;
-      throw new Error('Please sign in with Nostr first, or paste your account.');
+      throw new Error('Sign in first (Step 1), or paste your account.');
     }
 
     function setButtonLoading(buttonId, isLoading, loadingText) {
@@ -1949,7 +1946,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         setStatus('publish-status', 'Checking signer and profile...', 'loading');
 
         if (!activeSigner || typeof activeSigner.signEvent !== 'function' || typeof activeSigner.getPublicKey !== 'function') {
-          throw new Error('A signer session is required to publish. Connect a browser signer, login.divine.video, bunker, or Nostr Connect first.');
+          throw new Error('You need to be signed in to publish. Sign in with your Divine login, or connect your Nostr signer, in Step 1.');
         }
 
         const activePubkey = await getActivePubkey();
@@ -2472,7 +2469,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       try {
         const pubkey = await getActivePubkey();
         if (!pubkey) {
-          container.textContent = 'Connect a signer first to see your linked accounts.';
+          container.textContent = 'Sign in first (Verify Here, Step 1) to see your linked accounts.';
           return;
         }
 
@@ -2587,7 +2584,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
 
       try {
         if (!activeSigner) {
-          throw new Error('Connect a signer first.');
+          throw new Error('Sign in first (Verify Here, Step 1).');
         }
 
         const pubkey = await getActivePubkey();
@@ -2722,7 +2719,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         setButtonLoading('connect-keycast-btn', true, 'Opening...');
         await connectKeycastSigner();
       } catch (e) {
-        setStatus('verify-login-status', e.message || 'Could not open login.divine.video.', 'error');
+        setStatus('verify-login-status', e.message || 'Could not open your Divine login.', 'error');
       } finally {
         setButtonLoading('connect-keycast-btn', false, '');
       }
