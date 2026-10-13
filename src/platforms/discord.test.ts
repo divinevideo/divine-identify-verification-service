@@ -439,6 +439,46 @@ describe('DiscordVerifier', () => {
       expect(result.code).toBe('discord_message_content_unavailable')
     })
 
+    // An answer that is not shaped like a message is a rejection of this proof,
+    // not an outage: it must come back as a result, never throw (a throw is
+    // reported as "couldn't check right now").
+    describe('an answer that is not shaped like a message', () => {
+      const answers: Array<[string, unknown]> = [
+        ['has no author', { id: messageId, content: `hi ${npub}`, channel_id: channelId }],
+        ['has a null author', { id: messageId, content: `hi ${npub}`, author: null }],
+        ['has an author without a username', { id: messageId, content: `hi ${npub}`, author: { id: '1' } }],
+        ['has a username that is not text', { id: messageId, content: `hi ${npub}`, author: { id: '1', username: 42 } }],
+        ['is null', null],
+        ['is an empty list', []],
+        ['is an empty object', {}],
+        ['is text', 'x'],
+        ['is a number', 5],
+      ]
+
+      it.each(answers)('rejects the proof as not posted by them when the answer %s', async (_name, answer) => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => answer }))
+
+        const result = await verifier.verify('alice', messageId, npub)
+
+        expect(result).toMatchObject({ verified: false, code: 'discord_author_mismatch' })
+      })
+
+      it('does not blame the user when the message text is not text', async () => {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({ id: messageId, content: 12345, author: { id: '1', username: 'alice' } }),
+          }),
+        )
+
+        const result = await verifier.verify('alice', messageId, npub)
+
+        expect(result).toMatchObject({ verified: false, code: 'discord_message_content_unavailable' })
+      })
+    })
+
     it('still refuses a host that only looks like Discord', async () => {
       const fetchMock = vi.fn()
       vi.stubGlobal('fetch', fetchMock)
