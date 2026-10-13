@@ -90,7 +90,13 @@ confirm.post('/confirm', async (c) => {
   // write leaves the code usable for a retry instead of losing the link.
   await saveSignIn(c.env, pending.pubkey, account, { event_id: event.id, created_at: event.created_at })
   await storeUsedCode(c.env.CACHE_KV, code, { event_id: event.id, platform: pending.platform, identity: pending.identity })
-  await deletePendingSignIn(c.env.CACHE_KV, code)
+  // Only tidying up: the link is saved and the code is marked used, and the
+  // pending sign-in expires on its own.
+  try {
+    await deletePendingSignIn(c.env.CACHE_KV, code)
+  } catch {
+    console.warn(`${pending.platform} sign-in confirmed: pending not removed`)
+  }
   console.info(`${pending.platform} sign-in confirmed`)
   return c.json({ linked: true, platform: pending.platform, identity: pending.identity })
 })

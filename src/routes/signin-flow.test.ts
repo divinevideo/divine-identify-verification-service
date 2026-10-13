@@ -690,6 +690,8 @@ describe('POST /auth/confirm', () => {
   it('refuses a malformed code or secret, a form post, and a large body', async () => {
     const env = baseEnv()
     expect((await confirm(env, { code: 'short', start_secret: SECRET, event: {} })).json.code).toBe('invalid_request')
+    expect(await confirm(env, { code: 'C'.repeat(43), start_secret: 'short', event: {} })).toMatchObject({ status: 400, json: { code: 'invalid_request' } })
+    expect(await confirm(env, { code: 'C'.repeat(43), event: {} })).toMatchObject({ status: 400, json: { code: 'invalid_request' } })
     const form = await app.request(`${BASE}/auth/confirm`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' }, env)
     expect(form.status).toBe(415)
     expect((await confirm(env, { code: 'C'.repeat(43), start_secret: SECRET, event: { pad: 'x'.repeat(70000) } })).status).toBe(413)
@@ -746,5 +748,20 @@ describe('POST /auth/confirm', () => {
     expect(await confirmStatus(env, { code: s.code, start_secret: s.secret, event })).toBe(500)
     env.CACHE_KV.put = realPut as typeof env.CACHE_KV.put
     expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
+  })
+
+  it('still confirms when removing the pending sign-in fails, and says so without identifying anyone', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    const realDelete = env.CACHE_KV.delete.bind(env.CACHE_KV)
+    env.CACHE_KV.delete = (async (key: string) => {
+      if (key.startsWith('oauth_pending:')) throw new Error('KV down')
+      return realDelete(key)
+    }) as typeof env.CACHE_KV.delete
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toEqual({ status: 200, json: { linked: true, platform: 'twitter', identity: 'jack' } })
+    expect(JSON.parse((await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', s.pubkey))) as string)).toMatchObject({ confirmed: true, confirm_event_id: event.id })
+    expect(warn.mock.calls).toEqual([['twitter sign-in confirmed: pending not removed']])
   })
 })
