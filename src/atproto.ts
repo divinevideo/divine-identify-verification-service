@@ -7,6 +7,37 @@ export type DidDocument = {
   service?: Array<{ id?: string; serviceEndpoint?: string }>
 }
 
+// A did:plc is "did:plc:" and 24 lowercase base32 characters (a-z, 2-7), per
+// the did:plc spec (did-method-plc, website/spec/v0.1/did-plc.md).
+const DID_PLC = /^did:plc:[a-z2-7]{24}$/
+// atproto's general DID syntax (atproto.com/specs/did): letters, digits and
+// ._:%- only, and not ending in : or %.
+const DID_WEB = /^did:web:[a-zA-Z0-9._:%-]*[a-zA-Z0-9._-]$/
+
+// The host a did:web names, or null when the DID is malformed: characters
+// outside the syntax, a % that isn't a valid escape, or a path (atproto
+// supports hostname-level did:web only).
+function didWebHost(did: string): string | null {
+  if (!DID_WEB.test(did)) return null
+  let host: string
+  try {
+    host = decodeURIComponent(did.slice('did:web:'.length))
+  } catch {
+    return null
+  }
+  return host.includes('/') || host.includes('\\') ? null : host
+}
+
+/**
+ * Whether a did:plc or did:web is malformed, so no lookup could find it. Other
+ * DIDs and handles are not this check's business: they are reported as false.
+ */
+export function isMalformedDid(did: string): boolean {
+  if (did.startsWith('did:plc:')) return !DID_PLC.test(did)
+  if (did.startsWith('did:web:')) return didWebHost(did) === null
+  return false
+}
+
 // These lookups answer null when they get no usable answer (no such account,
 // or one this service can't use), and throw a PlatformUnavailableError when
 // the service didn't answer or couldn't be reached, so an outage isn't taken
@@ -39,8 +70,8 @@ export async function resolveDidDocument(did: string): Promise<DidDocument | nul
   }
 
   if (did.startsWith('did:web:')) {
-    const domain = decodeURIComponent(did.slice('did:web:'.length))
-    if (domain.includes('/') || domain.includes('\\')) return null
+    const domain = didWebHost(did)
+    if (!domain) return null
     const didWebUrl = `https://${domain}/.well-known/did.json`
     if (!isSafeUrl(didWebUrl)) return null
     const didResp = await fetchFromPlatform('did:web host', didWebUrl, undefined, fetchPublic)
