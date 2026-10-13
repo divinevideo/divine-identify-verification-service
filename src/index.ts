@@ -2460,9 +2460,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
 
     // Relays can each hold a different copy, so ask them all at once and keep the
     // newest identity event, or for profiles from before it, the newest kind 0
-    // profile. Each event is checked before it is used. read is true when a relay
-    // returned a copy that passed the checks, or Divine's relay answered that the
-    // person has no list yet; anything else leaves the current list unknown.
+    // profile. Each event is checked before it is used. read is true only when
+    // Divine's relay answered and everything it sent passed the checks; the other
+    // relays can supply a newer copy but can't stand in for it.
     async function readLinkedAccounts(pubkey) {
       const answers = await Promise.all(PROFILE_RELAYS.map(relay => fetchLinkedAccountEvents(relay, pubkey).catch(() => null)));
       let verifyEvent = null;
@@ -2480,7 +2480,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         const answer = answers[i];
         if (!answer) continue;
         const usable = answer.filter(e => e && e.pubkey === pubkey && (e.kind === 10011 || e.kind === 0) && verifyEvent(e));
-        if (usable.length > 0 || (answer.length === 0 && PROFILE_RELAYS[i] === DIVINE_RELAY)) read = true;
+        if (PROFILE_RELAYS[i] === DIVINE_RELAY) read = usable.length === answer.length;
         for (const e of usable) {
           if (e.kind === 10011) identityEvent = newerEvent(identityEvent, e);
           else profile = newerEvent(profile, e);

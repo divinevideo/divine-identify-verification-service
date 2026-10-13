@@ -52,7 +52,7 @@ type NostrEvent = { id: string, pubkey: string, kind: number, created_at: number
 type Filter = { kinds: number[], authors: string[], limit?: number }
 // How a stand-in relay behaves: the events it holds, events it sends whatever
 // was asked, or a way of failing.
-type Relay = NostrEvent[] | { sendsAnyway: NostrEvent[] } | 'unreachable' | 'throws' | 'hangs' | 'refuses' | 'hangs-up'
+type Relay = NostrEvent[] | { sendsAnyway: Array<NostrEvent | null> } | 'unreachable' | 'throws' | 'hangs' | 'refuses' | 'hangs-up'
 
 function iTag(platform: string, identity: string, proof: string) {
   return ['i', `${platform}:${identity}`, proof]
@@ -73,6 +73,8 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
   const steps: string[] = []
   const requests: Array<{ relay: string, filters: Filter[] }> = []
   const checked: unknown[] = []
+  // Relays whose socket the page closed.
+  const closed: string[] = []
   // The page's timers, held so a test can fire them.
   const timers = new Map<number, { fn: () => void, ms: number }>()
   let nextTimer = 1
@@ -109,13 +111,13 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
         if (relay === 'refuses') { this.onmessage?.({ data: JSON.stringify(['CLOSED', subId, 'blocked: not allowed']) }); return }
         const sent = Array.isArray(relay)
           ? filters.flatMap(filter => relay.filter(e => filter.kinds.includes(e.kind)))
-          : (relay as { sendsAnyway: NostrEvent[] }).sendsAnyway
+          : (relay as { sendsAnyway: Array<NostrEvent | null> }).sendsAnyway
         for (const e of sent) this.onmessage?.({ data: JSON.stringify(['EVENT', subId, e]) })
         steps.push(`answer ${this.url}`)
         this.onmessage?.({ data: JSON.stringify(['EOSE', subId]) })
       })
     }
-    close() { queueMicrotask(() => this.onclose?.()) }
+    close() { closed.push(this.url); queueMicrotask(() => this.onclose?.()) }
   }
 
   const env: Record<string, unknown> = {
@@ -160,7 +162,7 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
   const fireTimers = () => {
     for (const [id, timer] of [...timers]) { timers.delete(id); timer.fn() }
   }
-  return { env, published, publishedTags, errors, listed, steps, requests, checked, timers, fireTimers, element }
+  return { env, published, publishedTags, errors, listed, steps, requests, checked, closed, timers, fireTimers, element }
 }
 
 const GITHUB = iTag('github', 'octocat', 'gist1')
@@ -172,7 +174,7 @@ describe('publishing a linked account', () => {
   it('builds on the newest identity event, not the first relay\'s copy', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(10011, 100, [GITHUB])],
+      [DIVINE]: [event(10011, 100, [GITHUB])],
       'wss://two.example': [event(10011, 300, [GITHUB, MASTODON, BLUESKY])],
       'wss://three.example': [event(10011, 200, [GITHUB, MASTODON])],
     })
@@ -186,7 +188,7 @@ describe('publishing a linked account', () => {
   it('keeps the copy with the lowest id when two have the same created_at, as NIP-01 says', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(10011, 300, [GITHUB], { id: 'bb'.repeat(32) })],
+      [DIVINE]: [event(10011, 300, [GITHUB], { id: 'bb'.repeat(32) })],
       'wss://two.example': [event(10011, 300, [MASTODON], { id: 'aa'.repeat(32) })],
       'wss://three.example': [event(10011, 300, [BLUESKY], { id: 'cc'.repeat(32) })],
     })
@@ -199,21 +201,21 @@ describe('publishing a linked account', () => {
   it('asks every relay before any of them answers', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(10011, 100, [GITHUB])],
+      [DIVINE]: [event(10011, 100, [GITHUB])],
       'wss://two.example': [],
       'wss://three.example': [],
     })
 
     await page(h.env).publishIdentityTagToNostr()
 
-    expect(h.steps.slice(0, 3)).toEqual(['open wss://one.example', 'open wss://two.example', 'open wss://three.example'])
+    expect(h.steps.slice(0, 3)).toEqual([`open ${DIVINE}`, 'open wss://two.example', 'open wss://three.example'])
     expect(h.publishedTags()).toEqual([GITHUB, NEW_CLAIM])
   })
 
   it('asks each relay once, for the identity event and the profile in one request', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(10011, 100, [GITHUB])],
+      [DIVINE]: [event(10011, 100, [GITHUB])],
       'wss://two.example': [],
       'wss://three.example': [],
     })
@@ -222,13 +224,13 @@ describe('publishing a linked account', () => {
 
     const both = [{ kinds: [10011], authors: [PUBKEY], limit: 1 }, { kinds: [0], authors: [PUBKEY], limit: 1 }]
     expect(h.requests).toEqual([
-      { relay: 'wss://one.example', filters: both },
+      { relay: DIVINE, filters: both },
       { relay: 'wss://two.example', filters: both },
       { relay: 'wss://three.example', filters: both },
     ])
   })
 
-  it('still uses the newest copy when Divine\'s relay can\'t be reached', async () => {
+  it('publishes nothing when Divine\'s relay can\'t be reached, even if another relay has a valid copy', async () => {
     const page = await loadPage()
     const h = harness({
       [DIVINE]: 'unreachable',
@@ -238,13 +240,38 @@ describe('publishing a linked account', () => {
 
     await page(h.env).publishIdentityTagToNostr()
 
-    expect(h.publishedTags()).toEqual([GITHUB, MASTODON, NEW_CLAIM])
+    expect(h.published).toEqual([])
+    expect(h.errors()).toEqual([['publish-status', UNREAD, 'error']])
+  })
+
+  it('publishes nothing when Divine\'s relay can\'t be reached and the others have only a profile', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: 'unreachable', 'wss://two.example': [event(0, 100, [])], 'wss://three.example': [] })
+
+    await page(h.env).publishIdentityTagToNostr()
+
+    expect(h.published).toEqual([])
+    expect(h.errors()).toEqual([['publish-status', UNREAD, 'error']])
+  })
+
+  it('publishes nothing when Divine\'s relay sends a copy that fails the checks, even if another relay has a valid one', async () => {
+    const page = await loadPage()
+    const h = harness({
+      [DIVINE]: [event(10011, 100, [GITHUB]), event(10011, 300, [BLUESKY], { sig: BAD_SIG })],
+      'wss://two.example': [event(10011, 200, [GITHUB, MASTODON])],
+      'wss://three.example': [],
+    })
+
+    await page(h.env).publishIdentityTagToNostr()
+
+    expect(h.published).toEqual([])
+    expect(h.errors()).toEqual([['publish-status', UNREAD, 'error']])
   })
 
   it('falls back to the newest profile when no relay has an identity event', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(0, 100, [GITHUB])],
+      [DIVINE]: [event(0, 100, [GITHUB])],
       'wss://two.example': [event(0, 200, [GITHUB, MASTODON])],
       'wss://three.example': 'unreachable',
     })
@@ -257,7 +284,7 @@ describe('publishing a linked account', () => {
   it('uses an identity event over a newer profile, since the identity event replaced the profile\'s list', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(0, 900, [BLUESKY])],
+      [DIVINE]: [event(0, 900, [BLUESKY])],
       'wss://two.example': [event(10011, 100, [GITHUB]), event(0, 50, [MASTODON])],
       'wss://three.example': [],
     })
@@ -271,8 +298,8 @@ describe('publishing a linked account', () => {
     const page = await loadPage()
     const badlySigned = event(10011, 900, [BLUESKY], { sig: BAD_SIG })
     const h = harness({
-      'wss://one.example': [badlySigned],
-      'wss://two.example': [event(10011, 100, [GITHUB])],
+      [DIVINE]: [event(10011, 100, [GITHUB])],
+      'wss://two.example': [badlySigned],
       'wss://three.example': [],
     })
 
@@ -285,8 +312,8 @@ describe('publishing a linked account', () => {
   it('ignores a newer copy by someone else', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(10011, 900, [BLUESKY], { pubkey: OTHER_PUBKEY })],
-      'wss://two.example': [event(10011, 100, [GITHUB])],
+      [DIVINE]: [event(10011, 100, [GITHUB])],
+      'wss://two.example': [event(10011, 900, [BLUESKY], { pubkey: OTHER_PUBKEY })],
       'wss://three.example': [],
     })
 
@@ -298,8 +325,8 @@ describe('publishing a linked account', () => {
   it('ignores a newer event of a kind it didn\'t ask for', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': { sendsAnyway: [event(3, 900, [BLUESKY])] },
-      'wss://two.example': [event(0, 100, [GITHUB])],
+      [DIVINE]: [event(0, 100, [GITHUB])],
+      'wss://two.example': { sendsAnyway: [event(3, 900, [BLUESKY])] },
       'wss://three.example': [],
     })
 
@@ -311,8 +338,8 @@ describe('publishing a linked account', () => {
   it('waits at most 8 seconds for a relay that never answers', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': 'hangs',
-      'wss://two.example': [event(10011, 100, [GITHUB])],
+      [DIVINE]: [event(10011, 100, [GITHUB])],
+      'wss://two.example': 'hangs',
       'wss://three.example': [],
     })
 
@@ -348,7 +375,7 @@ describe('publishing a linked account', () => {
 
   it('publishes nothing when no relay could be read', async () => {
     const page = await loadPage()
-    const h = harness({ 'wss://one.example': 'unreachable', 'wss://two.example': 'hangs-up', 'wss://three.example': 'throws' })
+    const h = harness({ [DIVINE]: 'unreachable', 'wss://two.example': 'hangs-up', 'wss://three.example': 'throws' })
 
     await page(h.env).publishIdentityTagToNostr()
 
@@ -395,13 +422,36 @@ describe('publishing a linked account', () => {
 
   it('stops waiting for a relay that refuses the request or hangs up', async () => {
     const page = await loadPage()
-    const h = harness({ 'wss://one.example': 'refuses', 'wss://two.example': 'hangs-up', 'wss://three.example': 'refuses' })
+    const h = harness({ [DIVINE]: 'refuses', 'wss://two.example': 'hangs-up', 'wss://three.example': 'refuses' })
 
     void page(h.env).publishIdentityTagToNostr()
     await settle()
 
     expect(h.errors()).toEqual([['publish-status', UNREAD, 'error']])
     expect(h.timers.size).toBe(0)
+  })
+
+  it('closes each relay\'s socket once it has answered', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [], 'wss://two.example': [event(10011, 100, [GITHUB])], 'wss://three.example': [] })
+
+    await page(h.env).publishIdentityTagToNostr()
+
+    expect(h.closed.sort()).toEqual([DIVINE, 'wss://three.example', 'wss://two.example'])
+  })
+
+  it('skips an empty event a relay sends', async () => {
+    const page = await loadPage()
+    const h = harness({
+      [DIVINE]: [],
+      'wss://two.example': { sendsAnyway: [null, event(10011, 100, [GITHUB])] },
+      'wss://three.example': [],
+    })
+
+    await page(h.env).publishIdentityTagToNostr()
+
+    expect(h.errors()).toEqual([])
+    expect(h.publishedTags()).toEqual([GITHUB, NEW_CLAIM])
   })
 
   it('leaves no timer running when a socket can\'t be opened', async () => {
@@ -419,7 +469,7 @@ describe('listing linked accounts to manage', () => {
   it('lists the newest identity event\'s accounts', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(10011, 100, [GITHUB])],
+      [DIVINE]: [event(10011, 100, [GITHUB])],
       'wss://two.example': [event(10011, 200, [GITHUB, MASTODON])],
       'wss://three.example': [],
     })
@@ -432,7 +482,7 @@ describe('listing linked accounts to manage', () => {
   it('lists the newest profile\'s accounts when no relay has an identity event', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(0, 100, [GITHUB])],
+      [DIVINE]: [event(0, 100, [GITHUB])],
       'wss://two.example': [event(0, 200, [GITHUB, MASTODON])],
       'wss://three.example': [],
     })
@@ -453,6 +503,16 @@ describe('listing linked accounts to manage', () => {
     expect(h.element('manage-links-container').textContent).toBe('')
   })
 
+  it('says the list couldn\'t be loaded when Divine\'s relay can\'t be reached, even if another relay has a copy', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: 'unreachable', 'wss://two.example': [event(10011, 100, [GITHUB])], 'wss://three.example': [] })
+
+    await page(h.env).loadLinkedVerifications()
+
+    expect(h.listed).toEqual([])
+    expect(h.errors()).toEqual([['manage-status', LIST_UNREAD, 'error']])
+  })
+
   it('says there are none when the list was read and is empty', async () => {
     const page = await loadPage()
     const h = harness({ [DIVINE]: [], 'wss://two.example': 'unreachable', 'wss://three.example': [] })
@@ -471,7 +531,7 @@ describe('removing a linked account', () => {
   it('builds on the newest identity event, not the first relay\'s copy', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(10011, 100, [GITHUB, MASTODON])],
+      [DIVINE]: [event(10011, 100, [GITHUB, MASTODON])],
       'wss://two.example': [event(10011, 200, [GITHUB, MASTODON, BLUESKY])],
       'wss://three.example': [],
     }, { removing })
@@ -485,7 +545,7 @@ describe('removing a linked account', () => {
   it('falls back to the newest profile when no relay has an identity event', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(0, 100, [GITHUB, MASTODON])],
+      [DIVINE]: [event(0, 100, [GITHUB, MASTODON])],
       'wss://two.example': [event(0, 200, [GITHUB, MASTODON, BLUESKY])],
       'wss://three.example': [],
     }, { removing })
