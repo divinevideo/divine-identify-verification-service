@@ -5,6 +5,9 @@ import { Hono } from 'hono'
 import type { Bindings } from '../types'
 import auth from './auth'
 import { oauthStateKey, oauthVerificationKey } from '../oauth/state'
+import { schnorr } from '@noble/curves/secp256k1.js'
+import { bytesToHex, hexToBytes } from '@noble/curves/utils.js'
+import { startCheckFor, confirmBindingFor } from '../oauth/confirm'
 
 const app = new Hono<{ Bindings: Bindings }>()
 app.route('/auth', auth)
@@ -502,5 +505,246 @@ describe('GET /auth/:platform/start', () => {
       { headers: { 'Sec-Fetch-Mode': 'navigate' } }, baseEnv({ SIGNIN_CONFIRMATION: 'required' }))
     expect(res.status).toBe(400)
     expect(res.headers.get('Location')).toBeNull()
+  })
+})
+
+// The shared test vector's start secret (43 × S).
+const SECRET = 'S'.repeat(43)
+
+// A really signed kind 10011, so the route's own signature check runs.
+async function signedList(secretKey: Uint8Array, tags: string[][], createdAt = Math.floor(Date.now() / 1000)) {
+  const pubkey = bytesToHex(schnorr.getPublicKey(secretKey))
+  const serialized = JSON.stringify([0, pubkey, createdAt, 10011, tags, ''])
+  const id = bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(serialized))))
+  const sig = bytesToHex(schnorr.sign(hexToBytes(id), secretKey))
+  return { id, pubkey, created_at: createdAt, kind: 10011, tags, content: '', sig }
+}
+
+async function confirm(env: Bindings, body: unknown) {
+  const res = await app.request(`${BASE}/auth/confirm`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }, env)
+  return { status: res.status, json: await res.json() as Record<string, unknown> }
+}
+
+// Status only: when a write fails the test app answers with Hono's plain-text 500.
+async function confirmStatus(env: Bindings, body: unknown) {
+  const res = await app.request(`${BASE}/auth/confirm`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }, env)
+  return res.status
+}
+
+// Starts through POST and finishes through the real callback; answers the
+// code the callback sent and what the owner needs to confirm it.
+async function startedAndFinished(platform: Platform, env: Bindings, opts: { secret?: string } = {}) {
+  const secretKey = schnorr.utils.randomSecretKey()
+  const pubkey = bytesToHex(schnorr.getPublicKey(secretKey))
+  const secret = opts.secret ?? SECRET
+  const startCheck = await startCheckFor(secret)
+  const capture: { stateId?: string } = {}
+  if (platform === 'bluesky') vi.stubGlobal('fetch', blueskyStartFetch(capture))
+  const start = await postStart(platform, env, startBody(platform, pubkey, startCheck))
+  const { url } = await start.json() as { url: string }
+  vi.stubGlobal('fetch', callbackFetchFor(platform))
+  vi.spyOn(console, 'info').mockImplementation(() => {})
+  const res = await app.request(`${BASE}/auth/${platform}/callback?code=c&state=${stateIdFrom(platform, url, capture)}${callbackQueryExtra(platform)}`, {}, env)
+  const code = new URLSearchParams(new URL(res.headers.get('Location') as string).hash.slice(1)).get('oauth_confirm') as string
+  const binding = await confirmBindingFor(code, startCheck)
+  const claim = `${platform}:${identityFor(platform)}`
+  return { secretKey, pubkey, secret, startCheck, code, binding, claim }
+}
+
+describe('POST /auth/confirm', () => {
+  it.each(PLATFORMS)('%s: saves a confirmed record when the owner signs the bound claim', async (platform) => {
+    const env = platformEnv(platform, { SIGNIN_CONFIRMATION: 'required' })
+    const s = await startedAndFinished(platform, env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding], ['i', 'github:alice', 'gist']])
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const res = await confirm(env, { code: s.code, start_secret: s.secret, event })
+    expect(res).toEqual({ status: 200, json: { linked: true, platform, identity: identityFor(platform) } })
+    for (const key of recordKeysFor(platform, s.pubkey)) {
+      expect(JSON.parse((await env.CACHE_KV.get(key)) as string)).toMatchObject({ confirmed: true, confirm_event_id: event.id, confirm_created_at: event.created_at })
+    }
+    expect(info).toHaveBeenCalledWith(`${platform} sign-in confirmed`)
+  })
+
+  it('answers the same event sent again with the same 200, and another event with 409', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toEqual({ status: 200, json: { linked: true, platform: 'twitter', identity: 'jack' } })
+    const other = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]], event.created_at + 1)
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event: other })).toMatchObject({ status: 409, json: { code: 'signin_used' } })
+  })
+
+  it('answers 404 for a code it does not know', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    expect(await confirm(env, { code: 'D'.repeat(43), start_secret: s.secret, event })).toMatchObject({ status: 404, json: { code: 'signin_not_found' } })
+  })
+
+  it('refuses another account\'s signature, and keeps the code for the right one', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const stranger = await signedList(schnorr.utils.randomSecretKey(), [['i', s.claim, 'oauth', s.binding]])
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event: stranger })).toMatchObject({ status: 401, json: { code: 'signin_wrong_account' } })
+    const own = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event: own })).status).toBe(200)
+  })
+
+  it('refuses the wrong start secret, and keeps the code for the right one', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    expect(await confirm(env, { code: s.code, start_secret: 'T'.repeat(43), event })).toMatchObject({ status: 401, json: { code: 'signin_not_yours' } })
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
+  })
+
+  it('refuses a claim bound with another start check, even with the right secret (injected return)', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const otherBinding = await confirmBindingFor(s.code, await startCheckFor('U'.repeat(43)))
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', otherBinding]])
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toMatchObject({ status: 401, json: { code: 'signin_claim_mismatch' } })
+  })
+
+  it('refuses a public list without this code\'s binding (replay)', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth']])
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toMatchObject({ status: 401, json: { code: 'signin_claim_mismatch' } })
+  })
+
+  it('refuses the binding on another claim\'s tag, or a claim for another account', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const elsewhere = await signedList(s.secretKey, [['i', s.claim, 'oauth'], ['i', 'github:alice', 'gist', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event: elsewhere })).json.code).toBe('signin_claim_mismatch')
+    const otherAccount = await signedList(s.secretKey, [['i', 'twitter:someone', 'oauth', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event: otherAccount })).json.code).toBe('signin_claim_mismatch')
+    const notAnITag = await signedList(s.secretKey, [['r', s.claim, 'oauth', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event: notAnITag })).json.code).toBe('signin_claim_mismatch')
+  })
+
+  it('matches a Bluesky claim of the handle in capitals, or of the DID', async () => {
+    for (const claim of [`bluesky:${BLUESKY_HANDLE.toUpperCase()}`, `bluesky:${BLUESKY_DID}`]) {
+      const env = platformEnv('bluesky')
+      const s = await startedAndFinished('bluesky', env)
+      const event = await signedList(s.secretKey, [['i', claim, 'oauth', s.binding]])
+      expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
+    }
+  })
+
+  it('confirms two sign-ins in flight with their own secrets, and not with each other\'s', async () => {
+    const env = baseEnv()
+    const a = await startedAndFinished('twitter', env, { secret: 'A'.repeat(43) })
+    const b = await startedAndFinished('twitter', env, { secret: 'B'.repeat(43) })
+    const aEvent = await signedList(a.secretKey, [['i', a.claim, 'oauth', a.binding]])
+    expect((await confirm(env, { code: a.code, start_secret: b.secret, event: aEvent })).json.code).toBe('signin_not_yours')
+    expect((await confirm(env, { code: a.code, start_secret: a.secret, event: aEvent })).status).toBe(200)
+    const bEvent = await signedList(b.secretKey, [['i', b.claim, 'oauth', b.binding]])
+    expect((await confirm(env, { code: b.code, start_secret: b.secret, event: bEvent })).status).toBe(200)
+  })
+
+  it('accepts an event dated long ago, and refuses one more than ten minutes ahead', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const ahead = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]], Math.floor(Date.now() / 1000) + 601)
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event: ahead })).json.code).toBe('invalid_event')
+    const old = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]], 1_600_000_000)
+    const before = Math.floor(Date.now() / 1000)
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event: old })).status).toBe(200)
+    // The record keeps the event's date for ordering and the server's time as when it was checked.
+    const record = JSON.parse((await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', s.pubkey))) as string)
+    expect(record.confirm_created_at).toBe(1_600_000_000)
+    expect(record.checked_at).toBeGreaterThanOrEqual(before)
+  })
+
+  it('cannot confirm a sign-in started without a start check, even before the switch', async () => {
+    const env = baseEnv()
+    const { storePendingSignIn } = await import('../oauth/confirm')
+    const secretKey = schnorr.utils.randomSecretKey()
+    const pubkey = bytesToHex(schnorr.getPublicKey(secretKey))
+    await storePendingSignIn(env.CACHE_KV, 'C'.repeat(43), { platform: 'twitter', identity: 'jack', pubkey, finishedAt: 1 })
+    const binding = await confirmBindingFor('C'.repeat(43), '')
+    const event = await signedList(secretKey, [['i', 'twitter:jack', 'oauth', binding]])
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    expect(await confirm(env, { code: 'C'.repeat(43), start_secret: SECRET, event })).toMatchObject({ status: 401, json: { code: 'signin_not_yours' } })
+    expect(info.mock.calls).toEqual([['twitter sign-in confirmation refused: no_start_check']])
+  })
+
+  it.each([
+    ['a kind other than 10011', async (s: Awaited<ReturnType<typeof startedAndFinished>>) => ({ ...(await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])), kind: 1 })],
+    ['a bad signature', async (s: Awaited<ReturnType<typeof startedAndFinished>>) => ({ ...(await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])), sig: 'f'.repeat(128) })],
+    ['an id that does not match its contents', async (s: Awaited<ReturnType<typeof startedAndFinished>>) => ({ ...(await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])), content: 'changed' })],
+    ['a tag with a non-text value', async (s: Awaited<ReturnType<typeof startedAndFinished>>) => signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding], ['i', 1]] as unknown as string[][])],
+  ])('refuses %s as invalid_event', async (_label, make) => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event: await make(s) })).toMatchObject({ status: 400, json: { code: 'invalid_event' } })
+  })
+
+  it('refuses a malformed code or secret, a form post, and a large body', async () => {
+    const env = baseEnv()
+    expect((await confirm(env, { code: 'short', start_secret: SECRET, event: {} })).json.code).toBe('invalid_request')
+    const form = await app.request(`${BASE}/auth/confirm`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' }, env)
+    expect(form.status).toBe(415)
+    expect((await confirm(env, { code: 'C'.repeat(43), start_secret: SECRET, event: { pad: 'x'.repeat(70000) } })).status).toBe(413)
+  })
+
+  it('answers 429 once the IP is over its limit', async () => {
+    const limited = {
+      get: async (key: string) => (key.startsWith('rl:ip') ? '999' : null),
+      put: async () => {}, delete: async () => {}, list: async () => ({ keys: [], list_complete: true, caches_used: 0 }),
+    } as unknown as KVNamespace
+    const res = await app.request(`${BASE}/auth/confirm`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'C'.repeat(43), start_secret: SECRET, event: {} }),
+    }, baseEnv({ RATE_LIMIT_KV: limited }))
+    expect(res.status).toBe(429)
+  })
+
+  it('logs refusals with a reason and nothing that identifies anyone', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    await confirm(env, { code: s.code, start_secret: 'T'.repeat(43), event })
+    expect(info).toHaveBeenCalledWith('twitter sign-in confirmation refused: not_yours')
+    const logged = JSON.stringify(info.mock.calls)
+    for (const secret of [s.pubkey, s.code, s.binding, s.secret, 'jack']) expect(logged).not.toContain(secret)
+  })
+
+  it('keeps the pending sign-in when saving the record fails, so the owner can try again', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    const realPut = env.CACHE_KV.put.bind(env.CACHE_KV)
+    env.CACHE_KV.put = (async (key: string, value: string, opts?: KVNamespacePutOptions) => {
+      if (key.startsWith('oauth_verified:')) throw new Error('KV down')
+      return realPut(key, value, opts)
+    }) as typeof env.CACHE_KV.put
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await confirmStatus(env, { code: s.code, start_secret: s.secret, event })).toBe(500)
+    env.CACHE_KV.put = realPut as typeof env.CACHE_KV.put
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
+    expect(JSON.parse((await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', s.pubkey))) as string)).toMatchObject({ confirmed: true, confirm_event_id: event.id })
+  })
+
+  it('when marking the code used fails, the same event sent again still succeeds through the pending sign-in', async () => {
+    const env = baseEnv()
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    const realPut = env.CACHE_KV.put.bind(env.CACHE_KV)
+    env.CACHE_KV.put = (async (key: string, value: string, opts?: KVNamespacePutOptions) => {
+      if (key.startsWith('oauth_confirmed:')) throw new Error('KV down')
+      return realPut(key, value, opts)
+    }) as typeof env.CACHE_KV.put
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await confirmStatus(env, { code: s.code, start_secret: s.secret, event })).toBe(500)
+    env.CACHE_KV.put = realPut as typeof env.CACHE_KV.put
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
   })
 })

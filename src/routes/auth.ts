@@ -14,8 +14,11 @@ import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
 import { startTikTokOAuth, handleTikTokCallback, isTikTokOAuthUsable } from '../oauth/tiktok'
+import signInConfirm from './signin-confirm'
 
 const auth = new Hono<{ Bindings: Bindings }>()
+auth.route('/', signInConfirm)
+
 // NIP-98 suggests 60s; login.divine.video enforced 60s when it did this check.
 const NIP98_MAX_AGE_SECONDS = 60
 
