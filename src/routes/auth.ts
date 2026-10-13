@@ -5,7 +5,8 @@ import type { Bindings, OAuthPlatform, SignInCallbackResult } from '../types'
 import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
-import { getOAuthVerification, deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
+import { deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
+import { getCountedSignIn } from '../oauth/signin-records'
 import { createBinding, bindingSetCookie, BINDING_COOKIE, BINDING_CLEAR_COOKIE } from '../oauth/binding'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
@@ -465,7 +466,7 @@ auth.get('/:platform/status', async (c) => {
   }
 
   const normalizedPubkey = normalizePubkey(pubkey)
-  const verification = await getOAuthVerification(c.env.CACHE_KV, platform, identity, normalizedPubkey)
+  const verification = await getCountedSignIn(c.env, platform, identity, normalizedPubkey)
 
   if (verification && await signInAccountStillMatches(c.env, verification, identity)) {
     return c.json({

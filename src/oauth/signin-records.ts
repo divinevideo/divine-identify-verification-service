@@ -51,6 +51,8 @@ export async function saveSignIn(env: Bindings, pubkey: string, account: SignedI
   const checkedAt = Math.floor(Date.now() / 1000)
   for (const identity of savedIdentities(account)) {
     if (!confirmation) {
+      // Best effort: KV reads are eventually consistent, so a confirmed record
+      // saved moments ago in another location may not be seen yet.
       const existing = await getOAuthVerification(env.CACHE_KV, account.platform, identity, pubkey)
       if (existing?.confirmed === true && existing.account_id === account.account_id) continue
     }
