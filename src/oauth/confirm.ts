@@ -12,7 +12,13 @@ export type SignInConfirmationMode = 'optional' | 'required'
 // confirm still count for a day.
 // TODO(#113): remove once SIGNIN_CONFIRMATION is "required".
 export function signInConfirmationMode(env: Bindings): SignInConfirmationMode {
-  return env.SIGNIN_CONFIRMATION === 'required' ? 'required' : 'optional'
+  const setting = env.SIGNIN_CONFIRMATION
+  if (setting === 'required') return 'required'
+  // A mistyped setting still counts unconfirmed sign-ins, so say so in the logs.
+  if (setting !== undefined && setting !== 'optional') {
+    console.warn('SIGNIN_CONFIRMATION is not "optional" or "required"; treating it as optional')
+  }
+  return 'optional'
 }
 
 export type ConfirmCodePlacement = 'fragment' | 'query'

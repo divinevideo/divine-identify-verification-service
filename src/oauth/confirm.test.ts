@@ -26,8 +26,22 @@ describe('sign-in confirmation settings', () => {
   it('counts unconfirmed sign-ins until the switch is set to required', () => {
     expect(signInConfirmationMode(env({}))).toBe('optional')
     expect(signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'optional' }))).toBe('optional')
-    expect(signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'Required' }))).toBe('optional')
     expect(signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'required' }))).toBe('required')
+  })
+
+  it('warns about any other confirmation setting and treats it as optional', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      signInConfirmationMode(env({}))
+      signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'optional' }))
+      signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'required' }))
+      expect(warn).not.toHaveBeenCalled()
+      expect(signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'Required' }))).toBe('optional')
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0].join(' ')).not.toContain('Required')
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('sends the code after the # unless set to the query', () => {
