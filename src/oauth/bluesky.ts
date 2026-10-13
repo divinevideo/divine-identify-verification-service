@@ -6,15 +6,22 @@ import { getHandleFromDidDocument, getPdsEndpoint, resolveDidDocument, resolveHa
 import { isSafeUrl } from '../utils/validation'
 import { fetchPublic } from '../utils/safe-fetch'
 import { isSignInBound } from './binding'
-import { PlatformUnavailableError } from '../platforms/base'
+import { PlatformUnavailableError, fetchFromPlatform, throwIfUnanswered } from '../platforms/base'
 
 // The AT Protocol OAuth spec requires both metadata documents to answer
 // "HTTP 200 (not 2xx or redirect)", so these two fetches follow no redirect: a
-// redirect comes back as a non-ok answer.
+// redirect comes back as a non-ok answer. A server that doesn't answer or can't
+// be reached is an outage rather than a "no", so it throws a
+// PlatformUnavailableError.
+async function fetchMetadata(label: string, url: string): Promise<Response> {
+  const response = await fetchFromPlatform(label, url, { redirect: 'manual' })
+  throwIfUnanswered(response, label)
+  return response
+}
 
 // The authorization server a PDS (resource server) declares.
 async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
-  const resourceResp = await fetch(`${pdsUrl}/.well-known/oauth-protected-resource`, { redirect: 'manual' })
+  const resourceResp = await fetchMetadata('Bluesky PDS metadata', `${pdsUrl}/.well-known/oauth-protected-resource`)
   if (!resourceResp.ok) return null
   let resourceMeta: { authorization_servers?: string[] }
   try {
@@ -25,9 +32,9 @@ async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
   return issuer
 }
 
-// Sign-in can't start without the account, so an account lookup that didn't
-// answer stops it the same way one that found nothing does. It's logged so an
-// outage can be told apart from a handle that doesn't exist.
+// Sign-in can't start without the account or its server, so a lookup that
+// didn't answer stops it the same way one that found nothing does. It's logged
+// so an outage can be told apart from a handle that doesn't exist.
 async function orNullIfUnanswered<T>(lookup: Promise<T | null>): Promise<T | null> {
   try {
     return await lookup
@@ -58,12 +65,14 @@ async function resolveAuthServer(handle: string): Promise<{
   if (!pdsUrl) return null
 
   // 3. Get authorization server from PDS resource metadata
-  const issuer = await pdsAuthorizationServer(pdsUrl)
+  const issuer = await orNullIfUnanswered(pdsAuthorizationServer(pdsUrl))
   if (!issuer) return null
 
   // 4. Get authorization server metadata
-  const authResp = await fetch(`${issuer}/.well-known/oauth-authorization-server`, { redirect: 'manual' })
-  if (!authResp.ok) return null
+  const authResp = await orNullIfUnanswered(
+    fetchMetadata('Bluesky authorization server metadata', `${issuer}/.well-known/oauth-authorization-server`),
+  )
+  if (!authResp?.ok) return null
   let authMeta: {
     issuer: string
     authorization_endpoint: string
