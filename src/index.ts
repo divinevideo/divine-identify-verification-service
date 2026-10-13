@@ -624,10 +624,8 @@ app.get('/', (c) => {
           <button id="connect-nostr-btn" class="verify-btn" type="button">Use a Nostr extension</button>
         </div>
         <label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you sign in)</label>
-        <input id="verify-pubkey-input" class="field-input" type="text" placeholder="example@divine.video or npub1...">
+        <input id="verify-pubkey-input" class="field-input" type="text" readonly placeholder="Filled in when you sign in">
         <p id="signer-session-summary" class="field-help" style="display:none;"></p>
-        <!-- TODO(#113): Remove with the paste-an-account fallback. -->
-        <p class="field-help">Not signed in? Paste your Divine address or npub to check a link now. You'll still need to sign in to publish it.</p>
         <details class="advanced-proof" id="remote-signer-details" style="margin-top:0.75rem;">
           <summary>Remote signer options: bunker and Nostr Connect</summary>
           <div class="advanced-proof-inner">
@@ -1317,9 +1315,6 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       const inputEl = document.getElementById('verify-pubkey-input');
       if (!inputEl) return;
       inputEl.value = value;
-      // Remembering the account is a convenience; a browser that blocks
-      // storage must not stop the caller (such as starting a sign-in).
-      try { if (value) localStorage.setItem('verifyer_account_input', value); } catch {}
     }
 
     function inferLoginQueryPubkey(params) {
@@ -1619,12 +1614,12 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       if (accountInput && accountInput.trim()) {
         const parsed = await normalizePubkeyInput(accountInput);
         if (signerPubkeyHex && signerPubkeyHex !== parsed) {
-          throw new Error('The account you typed does not match the account you signed in with.');
+          throw new Error('The account in Step 1 does not match the account you signed in with.');
         }
         return parsed;
       }
       if (signerPubkeyHex) return signerPubkeyHex;
-      throw new Error('Sign in first (Verify Here, Step 1), or paste your account there.');
+      throw new Error('Sign in first (Verify Here, Step 1).');
     }
 
     function setButtonLoading(buttonId, isLoading, loadingText) {
@@ -1814,28 +1809,46 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         clearStatus('verify-global-status');
         clearStatus('oauth-status');
         setButtonLoading('oauth-start-btn', true, 'Opening sign-in...');
-        setStatus('oauth-status', 'Checking your Divine account...', 'loading');
-
-        const pubkey = await getActivePubkey();
+        // A link counts once you confirm it with your signer, so a sign-in
+        // starts only with one connected (#113).
+        if (!activeSigner || typeof activeSigner.getPublicKey !== 'function') {
+          throw new Error('Sign in first (Verify Here, Step 1). You confirm the link with your Divine login or Nostr signer when you come back.');
+        }
+        const pubkey = String(await activeSigner.getPublicKey()).toLowerCase();
         const platform = document.getElementById('oauth-platform-select').value;
         setAccountInputValue(pubkey);
 
-        // A one-time code that ties the return to the sign-in this page started.
+        // The nonce ties the return to this page; the secret, which never
+        // leaves this browser except to confirm, ties it to this sign-in.
         const nonce = newSignInNonce();
-        const params = new URLSearchParams({
-          pubkey,
-          return_url: window.location.origin + window.location.pathname + '?signin=' + nonce + '#verify-here',
-        });
+        const startSecret = newStartSecret();
+        const startCheck = await startCheckFor(startSecret);
+        // Back to this same page and host, where this sign-in is remembered.
+        const body = { pubkey, return_url: window.location.origin + '/?signin=' + nonce + '#verify-here', start_check: startCheck };
+        let handle = '';
         if (platform === 'bluesky') {
-          const handle = document.getElementById('oauth-bluesky-handle-input').value.trim().replace(/^@/, '').toLowerCase();
+          handle = document.getElementById('oauth-bluesky-handle-input').value.trim().replace(/^@/, '').toLowerCase();
           if (!handle) throw new Error('Enter your Bluesky handle (example: example.bsky.social).');
-          params.set('handle', handle);
+          body.handle = handle;
         }
         setStatus('oauth-status', 'Opening secure ' + platform + ' sign-in...', 'loading');
-        if (!rememberPendingSignIn(platform, pubkey, nonce)) {
-          throw new Error('This browser would not let the page save your sign-in, so it could not confirm it when you come back. Allow this site to store data and try again.');
+        if (!rememberPendingSignIn(platform, pubkey, nonce, { startSecret, startCheck, signer: activeSignerSource, handle })) {
+          throw new Error('This browser blocked the page from saving your sign-in, so it can\\'t be confirmed. Allow this site to store data and try again.');
         }
-        window.location.href = API + '/auth/' + platform + '/start?' + params.toString();
+        const resp = await fetch(API + '/auth/' + platform + '/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        let data = null;
+        try { data = await resp.json(); } catch {}
+        if (!resp.ok || !data || typeof data.url !== 'string') {
+          throw new Error((data && data.error) || 'Could not start sign-in.');
+        }
+        let target = null;
+        try { target = new URL(data.url); } catch {}
+        if (!target || target.protocol !== 'https:') throw new Error('Could not start sign-in.');
+        window.location.href = target.toString();
       } catch (e) {
         setStatus('oauth-status', e.message || 'Could not start sign-in.', 'error');
         setButtonLoading('oauth-start-btn', false, '');
@@ -2052,7 +2065,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
     }
 
-    // Drops pending sign-ins that are too old to come back.
+    // Drops pending sign-ins that are too old to come back or to be confirmed.
     function forgetExpiredSignIns() {
       try {
         const keys = [];
@@ -2061,39 +2074,91 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
           if (key && key.indexOf(PENDING_SIGN_IN_KEY) === 0) keys.push(key);
         }
         for (const key of keys) {
-          let startedAt = 0;
-          try { startedAt = JSON.parse(localStorage.getItem(key) || '{}').startedAt; } catch {}
-          if (typeof startedAt !== 'number' || Date.now() - startedAt > PENDING_SIGN_IN_MAX_AGE_MS) localStorage.removeItem(key);
+          let entry = null;
+          try { entry = JSON.parse(localStorage.getItem(key) || '{}'); } catch {}
+          if (!entry || typeof entry.startedAt !== 'number' || signInHasExpired(entry)) localStorage.removeItem(key);
         }
       } catch {}
     }
 
+    function newStartSecret() {
+      return randomBase64Url(32);
+    }
+
+    // Same hashing as the verifier and the Divine app: SHA-256 over the text,
+    // base64url without padding.
+    async function startCheckFor(startSecret) {
+      return sha256Base64Url('divine-signin-start:' + startSecret);
+    }
+
+    async function confirmBindingFor(code, startCheck) {
+      return sha256Base64Url('divine-signin-confirm:' + code + ':' + startCheck);
+    }
+
     // Returns false when the browser won't store it, so the page can say so
     // instead of sending the person off on a sign-in it could never confirm.
-    function rememberPendingSignIn(platform, pubkey, nonce) {
+    function rememberPendingSignIn(platform, pubkey, nonce, extra) {
       try {
         forgetExpiredSignIns();
-        localStorage.setItem(PENDING_SIGN_IN_KEY + nonce, JSON.stringify({ platform, pubkey, nonce, startedAt: Date.now() }));
+        localStorage.setItem(PENDING_SIGN_IN_KEY + nonce, JSON.stringify(Object.assign({ platform, pubkey, nonce, startedAt: Date.now() }, extra || {})));
         return true;
       } catch {
         return false;
       }
     }
 
-    function takePendingSignIn(nonce) {
+    function readPendingSignIn(nonce) {
       // newSignInNonce always makes 32 lowercase hex characters.
       if (!/^[0-9a-f]{32}$/.test(nonce)) return null;
       try {
-        const raw = localStorage.getItem(PENDING_SIGN_IN_KEY + nonce);
-        localStorage.removeItem(PENDING_SIGN_IN_KEY + nonce);
-        const pending = raw ? JSON.parse(raw) : null;
+        const pending = JSON.parse(localStorage.getItem(PENDING_SIGN_IN_KEY + nonce) || 'null');
         if (!pending || SIGN_IN_PLATFORMS.indexOf(pending.platform) === -1) return null;
         if (typeof pending.pubkey !== 'string' || typeof pending.startedAt !== 'number') return null;
-        if (Date.now() - pending.startedAt > PENDING_SIGN_IN_MAX_AGE_MS) return null;
+        if (signInHasExpired(pending)) return null;
         return pending;
       } catch {
         return null;
       }
+    }
+
+    function savePendingSignIn(pending) {
+      try { localStorage.setItem(PENDING_SIGN_IN_KEY + pending.nonce, JSON.stringify(pending)); } catch {}
+    }
+
+    function forgetPendingSignIn(nonce) {
+      try { localStorage.removeItem(PENDING_SIGN_IN_KEY + nonce); } catch {}
+    }
+
+    // A sign-in that came back waits for its code to be confirmed: ten minutes
+    // from its return on the verifier, a minute more here.
+    function signInHasExpired(pending) {
+      const since = typeof pending.finishedAt === 'number' ? pending.finishedAt : pending.startedAt;
+      return Date.now() - since > PENDING_SIGN_IN_MAX_AGE_MS;
+    }
+
+    // Every sign-in in this browser that came back and is waiting to be confirmed.
+    function waitingSignIns() {
+      const found = [];
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key || key.indexOf(PENDING_SIGN_IN_KEY) !== 0) continue;
+          const pending = readPendingSignIn(key.slice(PENDING_SIGN_IN_KEY.length));
+          if (pending && pending.code) found.push(pending);
+        }
+      } catch {}
+      return found;
+    }
+
+    // The sign-in waiting to be confirmed for this platform and account, if any.
+    function findWaitingSignIn(platform, identity, pubkey) {
+      return waitingSignIns().find(pending => pending.platform === platform && pending.pubkey === pubkey
+        && String(pending.identity || '').toLowerCase() === String(identity || '').toLowerCase()) || null;
+    }
+
+    // The most recent sign-in still waiting, to pick up again after a reload.
+    function newestWaitingSignIn() {
+      return waitingSignIns().sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0))[0] || null;
     }
 
     // Brings an element into view. While the page is still loading, the
@@ -2180,7 +2245,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       const cleanUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
       window.history.replaceState({}, '', cleanUrl);
 
-      const pending = takePendingSignIn(nonce);
+      // A return is used once, whatever it reports.
+      const pending = readPendingSignIn(nonce);
+      forgetPendingSignIn(nonce);
       if (!verified) {
         showSignInStatus(signInErrorMessage(reason), 'error');
         return;
@@ -2808,9 +2875,6 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     document.getElementById('oauth-start-btn').addEventListener('click', startOAuthVerification);
     document.getElementById('proof-verify-btn').addEventListener('click', verifySingleHere);
     document.getElementById('publish-kind0-btn').addEventListener('click', publishIdentityTagToNostr);
-    document.getElementById('verify-pubkey-input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') startOAuthVerification();
-    });
     document.getElementById('proof-identity-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') verifySingleHere();
     });
@@ -2820,17 +2884,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     document.getElementById('bunker-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') connectBunkerSigner();
     });
-    document.getElementById('verify-pubkey-input').addEventListener('blur', () => {
-      const value = document.getElementById('verify-pubkey-input').value.trim();
-      try { if (value) localStorage.setItem('verifyer_account_input', value); } catch {}
-    });
-    // A browser that blocks storage throws here; the rest of start-up,
-    // including handling a returning sign-in, must still run.
-    let savedAccountInput = null;
-    try { savedAccountInput = localStorage.getItem('verifyer_account_input'); } catch {}
-    if (savedAccountInput) {
-      document.getElementById('verify-pubkey-input').value = savedAccountInput;
-    }
+    // Start-up: a returning sign-in is handled first, before any signer is
+    // restored, so its one-time code leaves the address straight away.
     updateOAuthInputs();
     updateProofInputs();
     handleOAuthCallbackMessage();

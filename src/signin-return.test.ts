@@ -8,7 +8,7 @@ const NONCE = '0123456789abcdef'.repeat(2)
 const PENDING_KEY = PENDING_PREFIX + NONCE
 const CONFIRMING: [string, string, string] = ['verify-global-status', 'Confirming your sign-in...', 'loading']
 const UNCONFIRMED: [string, string, string] = ['verify-global-status', 'This page could not confirm a sign-in. Start the sign-in again from this page.', 'error']
-const SAVE_REFUSED: [string, string, string] = ['oauth-status', 'This browser would not let the page save your sign-in, so it could not confirm it when you come back. Allow this site to store data and try again.', 'error']
+const SAVE_REFUSED: [string, string, string] = ['oauth-status', 'This browser blocked the page from saving your sign-in, so it can\'t be confirmed. Allow this site to store data and try again.', 'error']
 
 async function pageHtml(): Promise<string> {
   const res = await worker.fetch(new Request(`${API}/`), {} as never)
@@ -35,18 +35,19 @@ async function loadReturnHandler() {
 }
 
 // Runs the page's real sign-in start (startOAuthVerification, with the
-// setAccountInputValue and pending sign-in helpers it calls) against
+// hashing, setAccountInputValue and pending sign-in helpers it calls) against
 // stand-ins for the browser and the rest of the page.
 async function loadSignInStart() {
   const html = await pageHtml()
   const source = [
+    scriptBetween(html, 'function bytesToBase64Url(bytes)', 'async function createKeycastPkce()'),
     scriptBetween(html, 'function setAccountInputValue(value)', 'function inferLoginQueryPubkey(params)'),
     scriptBetween(html, 'async function startOAuthVerification()', 'async function verifySingleHere()'),
     scriptBetween(html, 'const PENDING_SIGN_IN_KEY', 'function showStatus(msg, type)'),
   ].join('\n')
-  const deps = ['window', 'localStorage', 'fetch', 'API', 'setStatus', 'clearStatus', 'setButtonLoading', 'getActivePubkey', 'document']
+  const deps = ['window', 'localStorage', 'fetch', 'API', 'setStatus', 'clearStatus', 'setButtonLoading', 'document', 'activeSigner', 'activeSignerSource', 'crypto', 'btoa']
   return (env: Record<string, unknown>) =>
-    new Function(...deps, `${source}\nreturn { startOAuthVerification };`)(...deps.map(d => env[d]))
+    new Function(...deps, `${source}\nreturn { startOAuthVerification, startCheckFor, confirmBindingFor, setAccountInputValue };`)(...deps.map(d => env[d]))
 }
 
 // Stands in for localStorage in a browser that blocks site data, where every
@@ -62,6 +63,8 @@ function startHarness(opts: { refusePending?: boolean, blockStorage?: boolean } 
   const buttons: Array<[string, boolean]> = []
   // Every time the page leaves: where to, and what it had saved by then.
   const departures: Array<{ url: string, saved: string[] }> = []
+  // Every request the page sent to start a sign-in.
+  const posts: Array<{ url: string; body: Record<string, unknown>; method: string }> = []
   const leave = (url: string) => { departures.push({ url, saved: [...store.keys()] }) }
   const fields: Record<string, { value: string }> = {
     'oauth-platform-select': { value: 'twitter' },
@@ -81,26 +84,30 @@ function startHarness(opts: { refusePending?: boolean, blockStorage?: boolean } 
       },
       removeItem: (k: string) => { store.delete(k) },
     },
-    fetch: async () => { throw new Error('starting a sign-in must not call the verifier') },
+    fetch: async (url: string, init: RequestInit) => {
+      posts.push({ url, body: JSON.parse(String(init.body)), method: String(init.method) })
+      return new Response(JSON.stringify({ url: 'https://twitter.com/i/oauth2/authorize?state=s' }), { status: 200 })
+    },
     setStatus: (id: string, msg: string, type: string) => { statuses.push([id, msg, type]) },
     clearStatus: () => {},
     setButtonLoading: (id: string, loading: boolean) => { buttons.push([id, loading]) },
-    getActivePubkey: async () => PUBKEY,
     document: { getElementById: (id: string) => fields[id] ?? null },
+    activeSigner: { getPublicKey: async () => PUBKEY },
+    activeSignerSource: 'keycast',
+    crypto,
+    btoa,
   }
-  return { env, store, statuses, buttons, departures }
+  return { env, store, statuses, buttons, departures, posts }
 }
 
-// Runs the page's start-up code, from remembering the account box through the
+// Runs the page's start-up code, from handling a returning sign-in through the
 // Divine login checks, with the page functions it calls replaced by recorders.
 async function loadStartup() {
-  const source = scriptBetween(await pageHtml(), "document.getElementById('verify-pubkey-input').addEventListener('blur'", '// Lookup tool Enter key')
+  const source = scriptBetween(await pageHtml(), '// Start-up: a returning sign-in is handled first', '// Lookup tool Enter key')
   const pageFunctions = ['updateOAuthInputs', 'updateProofInputs', 'handleOAuthCallbackMessage', 'forgetExpiredSignIns', 'updateSignerSummary', 'maybeHandleKeycastCallback', 'applyLoginQueryHint', 'restoreKeycastSession']
   return (opts: { blockStorage?: boolean } = {}) => {
     const calls: string[] = []
     const store = new Map<string, string>()
-    const accountListeners: Record<string, () => void> = {}
-    const accountBox = { value: '', addEventListener: (type: string, listener: () => void) => { accountListeners[type] = listener } }
     const windowListeners: Record<string, (event: { persisted: boolean }) => void> = {}
     const buttons: Array<[string, boolean]> = []
     const cleared: string[] = []
@@ -110,14 +117,13 @@ async function loadStartup() {
         getItem: (k: string) => store.get(k) ?? null,
         setItem: (k: string, v: string) => { store.set(k, v) },
       },
-      document: { getElementById: (id: string) => (id === 'verify-pubkey-input' ? accountBox : null) },
       setButtonLoading: (id: string, loading: boolean) => { buttons.push([id, loading]) },
       clearStatus: (id: string) => { cleared.push(id) },
       ...Object.fromEntries(pageFunctions.map(name => [name, async () => { calls.push(name); return false }])),
     }
-    const deps = ['window', 'localStorage', 'document', 'setButtonLoading', 'clearStatus', ...pageFunctions]
+    const deps = ['window', 'localStorage', 'setButtonLoading', 'clearStatus', ...pageFunctions]
     new Function(...deps, source)(...deps.map(d => env[d]))
-    return { calls, accountBox, accountListeners, windowListeners, buttons, cleared }
+    return { calls, windowListeners, buttons, cleared }
   }
 }
 
@@ -463,13 +469,6 @@ describe('sign-in return on the verifier page', () => {
     expect(cleared).toEqual(['oauth-status'])
   })
 
-  it('does not throw when the account box loses focus and the browser blocks storage', async () => {
-    const startup = await loadStartup()
-    const { accountBox, accountListeners } = startup({ blockStorage: true })
-    accountBox.value = 'npub1example'
-    expect(() => accountListeners.blur()).not.toThrow()
-  })
-
   it('remembers the platform and account when a sign-in starts', async () => {
     const load = await loadReturnHandler()
     const h = harness({ search: '' })
@@ -480,18 +479,17 @@ describe('sign-in return on the verifier page', () => {
   })
 
   it('saves the pending sign-in before leaving for the provider', async () => {
-    const load = await loadSignInStart()
     const h = startHarness()
-    await load(h.env).startOAuthVerification()
-    expect(h.departures).toHaveLength(1)
-    const start = new URL(h.departures[0].url)
-    expect(start.origin + start.pathname).toBe(`${API}/auth/twitter/start`)
-    expect(start.searchParams.get('pubkey')).toBe(PUBKEY)
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(h.posts).toHaveLength(1)
+    expect(h.posts[0].url).toBe(`${API}/auth/twitter/start`)
+    expect(h.posts[0].body.pubkey).toBe(PUBKEY)
     // The same one-time code goes into the return address the provider sends the person back to.
-    const back = new URL(start.searchParams.get('return_url') as string)
+    const back = new URL(String(h.posts[0].body.return_url))
     expect(back.origin + back.pathname + back.hash).toBe(`${API}/#verify-here`)
     const code = back.searchParams.get('signin') as string
     expect(code).toMatch(/^[0-9a-f]{32}$/)
+    expect(h.departures).toHaveLength(1)
     expect(h.departures[0].saved).toContain(PENDING_PREFIX + code)
     expect(JSON.parse(h.store.get(PENDING_PREFIX + code) as string)).toMatchObject({ platform: 'twitter', pubkey: PUBKEY, nonce: code })
   })
@@ -500,7 +498,7 @@ describe('sign-in return on the verifier page', () => {
     const start = await loadSignInStart()
     const startTab = startHarness()
     await start(startTab.env).startOAuthVerification()
-    const back = new URL(new URL(startTab.departures[0].url).searchParams.get('return_url') as string)
+    const back = new URL(String(startTab.posts[0].body.return_url))
     // The verifier's callback adds the result to the return address.
     const load = await loadReturnHandler()
     const h = harness({ search: `${back.search}&oauth_verified=true&platform=twitter&identity=jack`, store: startTab.store, statusResponse: { verified: true, identity: 'jack' } })
@@ -631,6 +629,92 @@ describe('sign-in return on the verifier page', () => {
     const h = harness({ search: returned('&ref=home'), pending: freshPending(), statusResponse: { verified: true, identity: 'jack' } })
     await load(h.env).handleOAuthCallbackMessage()
     expect(h.replaced).toEqual(['/?ref=home#verify-here'])
+  })
+})
+
+describe('starting a sign-in from the page', () => {
+  it('hashes a sign-in the way the verifier and the app do (shared test vector)', async () => {
+    const start = (await loadSignInStart())(startHarness().env)
+    const check = await start.startCheckFor('S'.repeat(43))
+    expect(check).toBe('G2CN_J8Es1JmsWz0QXd2Kc-4p-lCo8GCsR-tVw6vre4')
+    expect(await start.confirmBindingFor('C'.repeat(43), check)).toBe('y_rdmZDwlKYUcthysDgPyoiPWBwzgSafjaPHJ4JE1ZY')
+  })
+
+  it('posts the start with a start check, keeps the secret, and opens the provider page', async () => {
+    const h = startHarness()
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(h.posts).toHaveLength(1)
+    expect(h.posts[0]).toMatchObject({ url: `${API}/auth/twitter/start`, method: 'POST' })
+    const body = h.posts[0].body
+    expect(body.pubkey).toBe(PUBKEY)
+    expect(String(body.return_url)).toMatch(new RegExp(`^${API}/\\?signin=[0-9a-f]{32}#verify-here$`))
+    expect(String(body.start_check)).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    const saved = JSON.parse([...h.store.values()][0])
+    expect(saved.startSecret).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(saved.startCheck).toBe(body.start_check)
+    expect(saved.signer).toBe('keycast')
+    expect(h.departures.map(d => d.url)).toEqual(['https://twitter.com/i/oauth2/authorize?state=s'])
+    expect(JSON.stringify(h.departures)).not.toContain(saved.startSecret)
+  })
+
+  it('sends and remembers the Bluesky handle the person entered', async () => {
+    const h = startHarness()
+    const fields = { 'oauth-platform-select': { value: 'bluesky' }, 'oauth-bluesky-handle-input': { value: ' @Example.BSKY.social ' } }
+    h.env.document = { getElementById: (id: string) => (fields as Record<string, { value: string }>)[id] ?? { value: '' } }
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(h.posts[0].url).toBe(`${API}/auth/bluesky/start`)
+    expect(h.posts[0].body.handle).toBe('example.bsky.social')
+    expect(JSON.parse([...h.store.values()][0])).toMatchObject({ platform: 'bluesky', handle: 'example.bsky.social' })
+  })
+
+  it('returns to the verifier host it started on', async () => {
+    const h = startHarness()
+    ;(h.env.window as { location: { origin: string } }).location.origin = 'https://verifyer.divine.video'
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(String(h.posts[0].body.return_url)).toMatch(/^https:\/\/verifyer\.divine\.video\/\?signin=/)
+  })
+
+  it('does not start without a connected signer', async () => {
+    const h = startHarness()
+    h.env.activeSigner = null
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(h.posts).toHaveLength(0)
+    expect(h.store.size).toBe(0)
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['oauth-status', 'Sign in first (Verify Here, Step 1). You confirm the link with your Divine login or Nostr signer when you come back.', 'error'])
+  })
+
+  it('does not open a provider address that is not https', async () => {
+    const h = startHarness()
+    h.env.fetch = async () => new Response(JSON.stringify({ url: 'javascript:alert(1)' }), { status: 200 })
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(h.departures).toHaveLength(0)
+  })
+
+  it('no longer remembers the account box between visits', async () => {
+    const h = startHarness()
+    ;(await loadSignInStart())(h.env).setAccountInputValue(PUBKEY)
+    expect([...h.store.keys()]).not.toContain('verifyer_account_input')
+  })
+
+  it('still fills the account box from the app\'s ?pubkey= address', async () => {
+    const html = await pageHtml()
+    const source = [
+      scriptBetween(html, 'function extractHexFromText(text)', 'async function normalizePubkeyInput(raw)'),
+      scriptBetween(html, 'function setAccountInputValue(value)', 'async function connectBrowserSigner()'),
+    ].join('\n')
+    const accountBox = { value: '' }
+    const env: Record<string, unknown> = {
+      window: { location: { search: `?pubkey=${PUBKEY}`, pathname: '/', hash: '' }, history: { replaceState: () => {} } },
+      document: { getElementById: (id: string) => (id === 'verify-pubkey-input' ? accountBox : null) },
+      setStatus: () => {},
+      updateSignerSummary: () => {},
+      npubToHex: () => { throw new Error('not an npub') },
+    }
+    const deps = Object.keys(env)
+    const page = new Function(...deps, `let signerPubkeyHex = null; let activeSignerSource = null;\n${source}\nreturn { applyLoginQueryHint, signer: () => signerPubkeyHex };`)(...deps.map(d => env[d]))
+    page.applyLoginQueryHint()
+    expect(accountBox.value).toBe(PUBKEY)
+    expect(page.signer()).toBe(PUBKEY)
   })
 })
 

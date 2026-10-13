@@ -392,9 +392,7 @@ describe('the two ways to link an account', () => {
     expect(publishCard(html)).toContain('Nothing shows on your profile until you publish.')
   })
 
-  it('says in Step 1 that publishing needs you to be signed in', async () => {
-    const step1 = between(await homeHtml(), 'Sign in with your Divine login</h3>', 'id="link-with-post"')
-    expect(step1).toContain("You'll still need to sign in to publish it.")
+  it('says publishing needs you to be signed in', async () => {
     expect(publishCard(await homeHtml())).toContain('Needs you to be signed in (Step 1).')
   })
 
@@ -440,12 +438,17 @@ describe('signing in with a Divine login first', () => {
     expect(card).not.toMatch(/target\s*=\s*["']?_blank/i)
   })
 
-  it('labels the account field and the paste fallback for signing in', async () => {
+  it('labels the account field for signing in', async () => {
     const card = step1(await homeHtml())
     expect(card).toContain('<label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you sign in)</label>')
-    expect(card).toContain(`<!-- TODO(#113): Remove with the paste-an-account fallback. -->
-        <p class="field-help">Not signed in? Paste your Divine address or npub to check a link now. You'll still need to sign in to publish it.</p>`)
     expect(card).toContain('<summary>Remote signer options: bunker and Nostr Connect</summary>')
+  })
+
+  it('Step 1 has no paste-your-account option: the account box is filled only by signing in', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    expect(html).not.toContain('Paste your Divine address or npub')
+    expect(html).not.toContain('TODO(#113)')
+    expect(html).toMatch(/<input id="verify-pubkey-input"[^>]*readonly/)
   })
 
   it('tells people to sign in in the Verify Here intro and How to Get Verified', async () => {
@@ -467,10 +470,11 @@ describe('signing in with a Divine login first', () => {
       "'Could not connect login.divine.video.'", "'Could not open login.divine.video.'",
       "'Signed in with your browser signer.'", "'Requesting signature from your browser signer...'",
       'session expired. Connect again.', "'Sign in first (Step 1), or paste your account.'", 'browser signer key',
-    ]) expect(html).not.toContain(old)
-    for (const now of [
       "throw new Error('Sign in first (Verify Here, Step 1), or paste your account there.');",
       "throw new Error('The account you typed does not match the account you signed in with.');",
+    ]) expect(html).not.toContain(old)
+    for (const now of [
+      "throw new Error('The account in Step 1 does not match the account you signed in with.');",
       "throw new Error('You need to be signed in to publish. Sign in with your Divine login, or connect your Nostr signer, in Step 1.');",
       "container.textContent = 'Sign in first (Verify Here, Step 1) to see your linked accounts.';",
       "throw new Error('Sign in first (Verify Here, Step 1).');",
@@ -499,7 +503,7 @@ describe('example accounts on the page', () => {
 
   it('shows the reserved example names in the fields people fill in', async () => {
     const html = await homeHtml()
-    expect(html).toContain('<input id="verify-pubkey-input" class="field-input" type="text" placeholder="example@divine.video or npub1...">')
+    expect(html).toContain('<input id="verify-pubkey-input" class="field-input" type="text" readonly placeholder="Filled in when you sign in">')
     expect(html).toContain('<input id="lookup-input" type="text" class="lookup-input" placeholder="example@divine.video or npub1...">')
     expect(html).toContain('<input id="oauth-bluesky-handle-input" class="field-input" type="text" placeholder="example.bsky.social">')
     expect(html).toContain("identityInput.placeholder = 'mastodon.social/@example';")
