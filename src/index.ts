@@ -2238,8 +2238,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
 
     // The account and "oauth" a sign-in fills in belong to the signed-in
     // platform. Once another platform is picked (by hand or from the platform
-    // list), clear whichever of them the person hasn't changed, so Publish
-    // can't send them for that platform. Anything the person typed stays.
+    // list), clear whichever of them the person hasn't changed. Anything the
+    // person typed stays.
     function clearSignInFillOnPlatformChange(platformEl, identityEl, proofEl, platform, identity) {
       const onChange = () => {
         if (platformEl.value === platform) return;
