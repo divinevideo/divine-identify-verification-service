@@ -434,10 +434,9 @@ describe('signing in with a Divine login first', () => {
     expect(nostr).toBeGreaterThan(divine)
   })
 
-  it('has no separate link that opens login.divine.video in a new tab', async () => {
-    const html = await homeHtml()
-    expect(html).not.toContain('Open login.divine.video')
-    expect(html).not.toContain('login.divine.video/login?return_url')
+  it('has no link in Step 1 that opens in a new tab', async () => {
+    const card = step1(await homeHtml())
+    expect(card).not.toContain('target="_blank"')
   })
 
   it('labels the account field and the paste fallback for signing in', async () => {
@@ -466,10 +465,10 @@ describe('signing in with a Divine login first', () => {
       "'Opening secure login.divine.video...'", "'Finishing login.divine.video session...'",
       "'Could not connect login.divine.video.'", "'Could not open login.divine.video.'",
       "'Signed in with your browser signer.'", "'Requesting signature from your browser signer...'",
-      'session expired. Connect again.',
+      'session expired. Connect again.', "'Sign in first (Step 1), or paste your account.'", 'browser signer key',
     ]) expect(html).not.toContain(old)
     for (const now of [
-      "throw new Error('Sign in first (Step 1), or paste your account.');",
+      "throw new Error('Sign in first (Verify Here, Step 1), or paste your account there.');",
       "throw new Error('The account you typed does not match the account you signed in with.');",
       "throw new Error('You need to be signed in to publish. Sign in with your Divine login, or connect your Nostr signer, in Step 1.');",
       "container.textContent = 'Sign in first (Verify Here, Step 1) to see your linked accounts.';",
@@ -478,7 +477,6 @@ describe('signing in with a Divine login first', () => {
       "'Signed in with your Divine login.'", "'Signed in again with your Divine login.'",
       "'Opening your Divine login...'", "'Finishing your Divine login...'",
       "'Could not sign in with your Divine login.'", "'Could not open your Divine login.'",
-      "'Signed in with your Nostr extension.'", "'Requesting a signature from your Nostr extension...'",
       "if (source === 'keycast') return 'your Divine login';",
       "if (source === 'browser') return 'your Nostr extension';",
       "throw new Error('Your Divine login has expired. Sign in again.');",

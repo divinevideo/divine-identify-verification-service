@@ -992,6 +992,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
 
     function signerSourceLabel(source) {
       if (source === 'browser') return 'your Nostr extension';
+      if (source === 'embedded') return 'your Divine account';
       if (source === 'keycast') return 'your Divine login';
       if (source === 'bunker') return 'bunker';
       if (source === 'nostrconnect') return 'Nostr Connect';
@@ -1349,6 +1350,10 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
 
     async function connectBrowserSigner() {
       const browserSigner = createBrowserSigner();
+      // Inside the Divine app's frame, window.nostr is the app signing for the
+      // person's Divine account, not an extension they installed.
+      const embedded = !!window.__divineEmbedded;
+      const signerName = embedded ? 'your Divine account' : 'your Nostr extension';
       // NIP-98: sign for the exact URL the event is sent to.
       const loginUrl = API + '/auth/nostr/login';
       const unsignedEvent = {
@@ -1361,7 +1366,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         ],
       };
 
-      setStatus('verify-login-status', 'Requesting a signature from your Nostr extension...', 'loading');
+      setStatus('verify-login-status', 'Requesting a signature from ' + signerName + '...', 'loading');
       const signedEvent = await browserSigner.signEvent(unsignedEvent);
       if (!signedEvent || typeof signedEvent !== 'object') {
         throw new Error('Signer did not return a valid login event.');
@@ -1381,10 +1386,12 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       const loginPubkey = String(data.pubkey).toLowerCase();
       const signerPubkey = await browserSigner.getPublicKey();
       if (loginPubkey !== signerPubkey) {
-        throw new Error('The signed login event did not match your browser signer key.');
+        throw new Error(embedded
+          ? "The sign-in didn't match your Divine account. Try again."
+          : "The sign-in didn't match the account in your Nostr extension. Try again.");
       }
 
-      await activateSigner(browserSigner, 'browser', 'Signed in with your Nostr extension.');
+      await activateSigner(browserSigner, embedded ? 'embedded' : 'browser', 'Signed in with ' + signerName + '.');
     }
 
     async function startKeycastLogin() {
@@ -1584,9 +1591,14 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       try {
         setButtonLoading('connect-nostr-btn', true, 'Signing in...');
         // Without an extension, say so rather than open the Divine login:
-        // that has its own button. Inside the Divine app's frame the page
-        // installs window.nostr itself, so this doesn't apply there.
+        // that has its own button. Inside the Divine app's frame the app
+        // provides window.nostr; if it were ever missing there, open the
+        // Divine login as before rather than ask for an extension.
         if (!isBrowserSignerAvailable()) {
+          if (window.__divineEmbedded) {
+            await connectKeycastSigner();
+            return;
+          }
           setStatus('verify-login-status', 'No Nostr extension found. Sign in with your Divine login instead, or install one.', 'error');
           return;
         }
@@ -1608,7 +1620,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         return parsed;
       }
       if (signerPubkeyHex) return signerPubkeyHex;
-      throw new Error('Sign in first (Step 1), or paste your account.');
+      throw new Error('Sign in first (Verify Here, Step 1), or paste your account there.');
     }
 
     function setButtonLoading(buttonId, isLoading, loadingText) {
