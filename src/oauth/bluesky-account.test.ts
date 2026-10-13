@@ -152,6 +152,8 @@ describe('Bluesky sign-in confirms the account it started with', () => {
   // one that finds nothing.
   it.each([
     ['DID document', 'answers 503', `https://plc.directory/${DID}`, () => json({ error: 'unavailable' }, 503)],
+    ['DID document', 'answers 403', `https://plc.directory/${DID}`, () => json({ error: 'forbidden' }, 403)],
+    ['DID document', 'answers 200 with a page that isn\'t JSON', `https://plc.directory/${DID}`, () => new Response('<html>blocked</html>', { status: 200, headers: { 'Content-Type': 'text/html' } })],
     ['DID document', 'can\'t be reached', `https://plc.directory/${DID}`, () => { throw new TypeError('fetch failed') }],
     ['PDS metadata', 'answers 503', `${PDS}/.well-known/oauth-protected-resource`, () => json({ error: 'unavailable' }, 503)],
     ['PDS metadata', 'can\'t be reached', `${PDS}/.well-known/oauth-protected-resource`, () => { throw new TypeError('fetch failed') }],
@@ -234,7 +236,11 @@ describe('Bluesky sign-in discovery', () => {
   it.each([
     ['handle', 'answers 503', 'com.atproto.identity.resolveHandle', () => json({ error: 'unavailable' }, 503), 'Bluesky handle lookup answered 503'],
     ['handle', 'can\'t be reached', 'com.atproto.identity.resolveHandle', () => { throw new TypeError('fetch failed') }, 'Bluesky handle lookup couldn\'t be reached (TypeError)'],
+    ['handle', 'answers 403', 'com.atproto.identity.resolveHandle', () => json({ error: 'forbidden' }, 403), 'Bluesky handle lookup answered 403'],
+    ['handle', 'answers 200 with a page that isn\'t JSON', 'com.atproto.identity.resolveHandle', () => new Response('<html>blocked</html>', { status: 200 }), 'Bluesky handle lookup answered something that isn\'t JSON'],
     ['DID document', 'answers 503', `https://plc.directory/${DID}`, () => json({ error: 'unavailable' }, 503), 'PLC directory answered 503'],
+    ['DID document', 'answers 401', `https://plc.directory/${DID}`, () => json({ error: 'unauthorized' }, 401), 'PLC directory answered 401'],
+    ['DID document', 'answers 200 with a page that isn\'t JSON', `https://plc.directory/${DID}`, () => new Response('<html>blocked</html>', { status: 200 }), 'PLC directory answered something that isn\'t JSON'],
     ['DID document', 'can\'t be reached', `https://plc.directory/${DID}`, () => { throw new TypeError('fetch failed') }, 'PLC directory couldn\'t be reached (TypeError)'],
     ['PDS metadata', 'answers 503', `${PDS}/.well-known/oauth-protected-resource`, () => json({ error: 'unavailable' }, 503), 'Bluesky PDS metadata answered 503'],
     ['PDS metadata', 'can\'t be reached', `${PDS}/.well-known/oauth-protected-resource`, () => { throw new TypeError('fetch failed') }, 'Bluesky PDS metadata couldn\'t be reached (TypeError)'],
