@@ -2201,6 +2201,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         updateProofInputs();
         proofIdentityEl.value = linkedIdentity;
         if (proofProofEl) proofProofEl.value = 'oauth';
+        clearSignInFillOnPlatformChange(proofPlatformEl, proofIdentityEl, proofProofEl, pending.platform, linkedIdentity);
       }
       const linked = 'Success. Your ' + pending.platform + ' account is now linked: ' + linkedIdentity + '. ';
       if (formChanged) {
@@ -2233,6 +2234,20 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       const onEdit = () => { if (JSON.stringify(els.map(el => el.value)) !== filledIn) forget(); };
       els.forEach(el => { el.addEventListener('input', onEdit); el.addEventListener('change', onEdit); });
       if (publishBtn) publishBtn.addEventListener('click', forget);
+    }
+
+    // The account and "oauth" a sign-in fills in belong to the signed-in
+    // platform. Once another platform is picked (by hand or from the platform
+    // list), clear whichever of them the person hasn't changed, so Publish
+    // can't send them for that platform. Anything the person typed stays.
+    function clearSignInFillOnPlatformChange(platformEl, identityEl, proofEl, platform, identity) {
+      const onChange = () => {
+        if (platformEl.value === platform) return;
+        if (identityEl.value === identity) identityEl.value = '';
+        if (proofEl && proofEl.value === 'oauth') proofEl.value = '';
+        platformEl.removeEventListener('change', onChange);
+      };
+      platformEl.addEventListener('change', onChange);
     }
 
     function showStatus(msg, type) {

@@ -878,9 +878,84 @@ describe('confirming a returning sign-in', () => {
     it('stops watching once it has gone', async () => {
       const h = await signedIn()
       h.fire('publish-kind0-btn', 'click')
-      for (const id of ['proof-platform-select', 'proof-identity-input', 'proof-proof-input', 'publish-kind0-btn']) {
+      for (const id of ['proof-identity-input', 'proof-proof-input', 'publish-kind0-btn']) {
         expect(Object.values(h.fields[id].listeners).flat()).toEqual([])
       }
+      // What stays is the one watch on the platform picker for clearing the
+      // sign-in's account and "oauth" (below), which outlives the note.
+      expect(h.fields['proof-platform-select'].listeners.change).toHaveLength(1)
+      expect(h.fields['proof-platform-select'].listeners.input ?? []).toEqual([])
+    })
+  })
+
+  // A sign-in fills the post form (platform, account, proof "oauth") so
+  // Publish works. Those belong to the signed-in platform only: once another
+  // platform is picked they would publish a claim that can't be checked.
+  describe('what the sign-in filled in', () => {
+    async function signedIn() {
+      const load = await loadReturnHandler()
+      const h = harness({ search: returned(), pending: freshPending(), answers: [{ status: 200, json: { verified: true, identity: 'jack' } }] })
+      await load(h.env).handleOAuthCallbackMessage()
+      expect([h.fields['proof-platform-select'].value, h.fields['proof-identity-input'].value, h.fields['proof-proof-input'].value]).toEqual(['twitter', 'jack', 'oauth'])
+      return h
+    }
+    const pick = (h: Awaited<ReturnType<typeof signedIn>>, platform: string) => {
+      h.fields['proof-platform-select'].value = platform
+      h.fire('proof-platform-select', 'change')
+    }
+
+    it('is cleared when another platform is picked', async () => {
+      const h = await signedIn()
+      pick(h, 'github')
+      expect(h.fields['proof-identity-input'].value).toBe('')
+      expect(h.fields['proof-proof-input'].value).toBe('')
+    })
+
+    it('is cleared even after Publish was pressed for the sign-in', async () => {
+      const h = await signedIn()
+      h.fire('publish-kind0-btn', 'click')
+      pick(h, 'github')
+      expect(h.fields['proof-identity-input'].value).toBe('')
+      expect(h.fields['proof-proof-input'].value).toBe('')
+    })
+
+    it('keeps an account the person typed, and clears only the sign-in\'s "oauth"', async () => {
+      const h = await signedIn()
+      h.fields['proof-identity-input'].value = 'octocat'
+      pick(h, 'github')
+      expect(h.fields['proof-identity-input'].value).toBe('octocat')
+      expect(h.fields['proof-proof-input'].value).toBe('')
+    })
+
+    it('keeps a post link the person pasted, and clears only the sign-in\'s account', async () => {
+      const h = await signedIn()
+      h.fields['proof-proof-input'].value = 'https://gist.github.com/octocat/abc123'
+      pick(h, 'github')
+      expect(h.fields['proof-identity-input'].value).toBe('')
+      expect(h.fields['proof-proof-input'].value).toBe('https://gist.github.com/octocat/abc123')
+    })
+
+    it('stays while the signed-in platform is still picked', async () => {
+      const h = await signedIn()
+      pick(h, 'twitter')
+      expect([h.fields['proof-identity-input'].value, h.fields['proof-proof-input'].value]).toEqual(['jack', 'oauth'])
+    })
+
+    it('stops watching once there is nothing of the sign-in left to clear', async () => {
+      const h = await signedIn()
+      pick(h, 'github')
+      expect(h.fields['proof-platform-select'].listeners.change ?? []).toEqual([])
+    })
+
+    it('is not watched when the person changed the form while the sign-in was confirming', async () => {
+      const load = await loadReturnHandler()
+      const h = harness({ search: returned(), pending: freshPending() })
+      h.env.fetch = async () => {
+        h.fields['proof-identity-input'].value = 'octocat'
+        return { ok: true, status: 200, json: async () => ({ verified: true, identity: 'jack' }) }
+      }
+      await load(h.env).handleOAuthCallbackMessage()
+      expect(h.fields['proof-platform-select'].listeners.change ?? []).toEqual([])
     })
   })
 })
