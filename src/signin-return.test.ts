@@ -92,7 +92,7 @@ function startHarness(opts: { refusePending?: boolean, blockStorage?: boolean } 
     clearStatus: () => {},
     setButtonLoading: (id: string, loading: boolean) => { buttons.push([id, loading]) },
     document: { getElementById: (id: string) => fields[id] ?? null },
-    activeSigner: { getPublicKey: async () => PUBKEY },
+    activeSigner: { getPublicKey: async () => PUBKEY, signEvent: async () => ({}) },
     activeSignerSource: 'keycast',
     crypto,
     btoa,
@@ -105,23 +105,18 @@ function startHarness(opts: { refusePending?: boolean, blockStorage?: boolean } 
 async function loadStartup() {
   const source = scriptBetween(await pageHtml(), '// Start-up: a returning sign-in is handled first', '// Lookup tool Enter key')
   const pageFunctions = ['updateOAuthInputs', 'updateProofInputs', 'handleOAuthCallbackMessage', 'forgetExpiredSignIns', 'updateSignerSummary', 'maybeHandleKeycastCallback', 'applyLoginQueryHint', 'restoreKeycastSession']
-  return (opts: { blockStorage?: boolean } = {}) => {
+  return () => {
     const calls: string[] = []
-    const store = new Map<string, string>()
     const windowListeners: Record<string, (event: { persisted: boolean }) => void> = {}
     const buttons: Array<[string, boolean]> = []
     const cleared: string[] = []
     const env: Record<string, unknown> = {
       window: { addEventListener: (type: string, listener: (event: { persisted: boolean }) => void) => { windowListeners[type] = listener } },
-      localStorage: opts.blockStorage ? blockedStorage() : {
-        getItem: (k: string) => store.get(k) ?? null,
-        setItem: (k: string, v: string) => { store.set(k, v) },
-      },
       setButtonLoading: (id: string, loading: boolean) => { buttons.push([id, loading]) },
       clearStatus: (id: string) => { cleared.push(id) },
       ...Object.fromEntries(pageFunctions.map(name => [name, async () => { calls.push(name); return false }])),
     }
-    const deps = ['window', 'localStorage', 'setButtonLoading', 'clearStatus', ...pageFunctions]
+    const deps = ['window', 'setButtonLoading', 'clearStatus', ...pageFunctions]
     new Function(...deps, source)(...deps.map(d => env[d]))
     return { calls, windowListeners, buttons, cleared }
   }
@@ -453,12 +448,6 @@ describe('sign-in return on the verifier page', () => {
     expect(calls.filter(name => name === 'forgetExpiredSignIns')).toHaveLength(1)
   })
 
-  it('still checks for a returning sign-in when the browser blocks storage', async () => {
-    const startup = await loadStartup()
-    const { calls } = startup({ blockStorage: true })
-    expect(calls.filter(name => name === 'handleOAuthCallbackMessage')).toHaveLength(1)
-  })
-
   it('re-enables the sign-in button when Back restores the page from the cache', async () => {
     const startup = await loadStartup()
     const { windowListeners, buttons, cleared } = startup()
@@ -654,6 +643,9 @@ describe('starting a sign-in from the page', () => {
     expect(saved.startCheck).toBe(body.start_check)
     expect(saved.signer).toBe('keycast')
     expect(h.departures.map(d => d.url)).toEqual(['https://twitter.com/i/oauth2/authorize?state=s'])
+    // The secret stays in this browser: only its hash goes to the verifier.
+    expect(Object.keys(body).sort()).toEqual(['pubkey', 'return_url', 'start_check'])
+    expect(JSON.stringify(h.posts)).not.toContain(saved.startSecret)
     expect(JSON.stringify(h.departures)).not.toContain(saved.startSecret)
   })
 
@@ -664,6 +656,7 @@ describe('starting a sign-in from the page', () => {
     await (await loadSignInStart())(h.env).startOAuthVerification()
     expect(h.posts[0].url).toBe(`${API}/auth/bluesky/start`)
     expect(h.posts[0].body.handle).toBe('example.bsky.social')
+    expect(Object.keys(h.posts[0].body).sort()).toEqual(['handle', 'pubkey', 'return_url', 'start_check'])
     expect(JSON.parse([...h.store.values()][0])).toMatchObject({ platform: 'bluesky', handle: 'example.bsky.social' })
   })
 
@@ -683,11 +676,64 @@ describe('starting a sign-in from the page', () => {
     expect(h.statuses[h.statuses.length - 1]).toEqual(['oauth-status', 'Sign in first (Verify Here, Step 1). You confirm the link with your Divine login or Nostr signer when you come back.', 'error'])
   })
 
-  it('does not open a provider address that is not https', async () => {
+  it('does not start with a signer that cannot sign', async () => {
     const h = startHarness()
-    h.env.fetch = async () => new Response(JSON.stringify({ url: 'javascript:alert(1)' }), { status: 200 })
+    h.env.activeSigner = { getPublicKey: async () => PUBKEY }
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(h.posts).toHaveLength(0)
+    expect(h.store.size).toBe(0)
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['oauth-status', 'Sign in first (Verify Here, Step 1). You confirm the link with your Divine login or Nostr signer when you come back.', 'error'])
+  })
+
+  it.each([
+    ['an npub', 'npub1' + 'q'.repeat(58)],
+    ['too short', 'ab'.repeat(31)],
+    ['not hex', 'zz'.repeat(32)],
+  ])('does not start when the signer gives a key that is %s', async (_label, key) => {
+    const h = startHarness()
+    h.env.activeSigner = { getPublicKey: async () => key, signEvent: async () => ({}) }
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(h.posts).toHaveLength(0)
+    expect(h.store.size).toBe(0)
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['oauth-status', 'Signer returned an invalid pubkey.', 'error'])
+  })
+
+  it('starts with the key in lowercase when the signer gives it in capitals', async () => {
+    const h = startHarness()
+    h.env.activeSigner = { getPublicKey: async () => PUBKEY.toUpperCase(), signEvent: async () => ({}) }
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(h.posts[0].body.pubkey).toBe(PUBKEY)
+  })
+
+  it.each([
+    ['javascript:alert(1)'],
+    ['http://twitter.com/x'],
+    ['/relative'],
+  ])('does not open a provider address that is not https: %s', async (url) => {
+    const h = startHarness()
+    h.env.fetch = async () => new Response(JSON.stringify({ url }), { status: 200 })
     await (await loadSignInStart())(h.env).startOAuthVerification()
     expect(h.departures).toHaveLength(0)
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['oauth-status', 'Could not start sign-in.', 'error'])
+  })
+
+  it('forgets the pending sign-in, secret included, when the start fails', async () => {
+    const h = startHarness()
+    h.env.fetch = async () => new Response(JSON.stringify({ error: 'Too many requests. Try again shortly.' }), { status: 429 })
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(h.departures).toHaveLength(0)
+    expect([...h.store.keys()].filter(k => k.startsWith(PENDING_PREFIX))).toEqual([])
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['oauth-status', 'Too many requests. Try again shortly.', 'error'])
+  })
+
+  it('says it could not start the sign-in when the verifier cannot be reached', async () => {
+    const h = startHarness()
+    h.env.fetch = async () => { throw new TypeError('Failed to fetch') }
+    await (await loadSignInStart())(h.env).startOAuthVerification()
+    expect(h.departures).toHaveLength(0)
+    expect(h.store.size).toBe(0)
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['oauth-status', 'Could not start sign-in.', 'error'])
+    expect(h.buttons[h.buttons.length - 1]).toEqual(['oauth-start-btn', false])
   })
 
   it('no longer remembers the account box between visits', async () => {
@@ -698,10 +744,7 @@ describe('starting a sign-in from the page', () => {
 
   it('still fills the account box from the app\'s ?pubkey= address', async () => {
     const html = await pageHtml()
-    const source = [
-      scriptBetween(html, 'function extractHexFromText(text)', 'async function normalizePubkeyInput(raw)'),
-      scriptBetween(html, 'function setAccountInputValue(value)', 'async function connectBrowserSigner()'),
-    ].join('\n')
+    const source = scriptBetween(html, 'function extractHexFromText(text)', 'async function connectBrowserSigner()')
     const accountBox = { value: '' }
     const env: Record<string, unknown> = {
       window: { location: { search: `?pubkey=${PUBKEY}`, pathname: '/', hash: '' }, history: { replaceState: () => {} } },
@@ -715,6 +758,54 @@ describe('starting a sign-in from the page', () => {
     page.applyLoginQueryHint()
     expect(accountBox.value).toBe(PUBKEY)
     expect(page.signer()).toBe(PUBKEY)
+  })
+})
+
+// Runs the page's real getActivePubkey with a stand-in account box, the
+// signed-in key, and a fetch that records any lookup.
+async function loadActivePubkey(box: string, signedIn: string | null) {
+  const source = scriptBetween(await pageHtml(), 'async function getActivePubkey()', 'function setButtonLoading(buttonId, isLoading, loadingText)')
+  const fetched: string[] = []
+  const env: Record<string, unknown> = {
+    document: { getElementById: (id: string) => (id === 'verify-pubkey-input' ? { value: box } : null) },
+    fetch: async (url: string) => { fetched.push(url); throw new Error('no lookups') },
+  }
+  const deps = Object.keys(env)
+  const page = new Function(...deps, `let signerPubkeyHex = ${JSON.stringify(signedIn)};\n${source}\nreturn { getActivePubkey };`)(...deps.map(d => env[d]))
+  return { getActivePubkey: page.getActivePubkey as () => Promise<string>, fetched }
+}
+
+describe('the account the page acts for', () => {
+  it('is the key in the account box, when it matches the signed-in key', async () => {
+    const page = await loadActivePubkey(PUBKEY, PUBKEY)
+    await expect(page.getActivePubkey()).resolves.toBe(PUBKEY)
+  })
+
+  it('is the key from the app\'s ?pubkey= address, with no signer yet', async () => {
+    const page = await loadActivePubkey(PUBKEY, null)
+    await expect(page.getActivePubkey()).resolves.toBe(PUBKEY)
+  })
+
+  it.each([
+    ['an npub', 'npub1' + 'q'.repeat(58)],
+    ['a Divine address', 'example@divine.video'],
+    ['a profile link around a key', `https://example.com/p/${'cd'.repeat(32)}`],
+    ['a key in capitals', 'CD'.repeat(32)],
+  ])('is the signed-in key when the box holds %s', async (_label, box) => {
+    const page = await loadActivePubkey(box, PUBKEY)
+    await expect(page.getActivePubkey()).resolves.toBe(PUBKEY)
+    expect(page.fetched).toEqual([])
+  })
+
+  it('asks the person to sign in when the box holds something other than a key and nobody is signed in', async () => {
+    const page = await loadActivePubkey('example@divine.video', null)
+    await expect(page.getActivePubkey()).rejects.toThrow('Sign in first (Verify Here, Step 1).')
+    expect(page.fetched).toEqual([])
+  })
+
+  it('refuses a box key that is not the signed-in key', async () => {
+    const page = await loadActivePubkey('cd'.repeat(32), PUBKEY)
+    await expect(page.getActivePubkey()).rejects.toThrow('The account in Step 1 does not match the account you signed in with.')
   })
 })
 

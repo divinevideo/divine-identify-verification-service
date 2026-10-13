@@ -1256,34 +1256,6 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       return await nostrToolsPromise;
     }
 
-    function safeDecodeText(input) {
-      try {
-        return decodeURIComponent(input);
-      } catch {
-        return input;
-      }
-    }
-
-    async function resolveNip05ToHex(identifier) {
-      const normalized = (identifier || '').trim().toLowerCase();
-      const parts = normalized.split('@');
-      if (parts.length !== 2) {
-        throw new Error('That address does not look valid. Use format name@domain.');
-      }
-      const local = parts[0] || '_';
-      const domain = parts[1];
-      const resp = await fetch('https://' + domain + '/.well-known/nostr.json?name=' + encodeURIComponent(local));
-      if (!resp.ok) {
-        throw new Error('Could not find "' + normalized + '". Check spelling and try again.');
-      }
-      const data = await resp.json();
-      const key = data && data.names ? data.names[local] : null;
-      if (!key || !/^[0-9a-f]{64}$/i.test(key)) {
-        throw new Error('That address did not resolve to a usable Nostr key.');
-      }
-      return key.toLowerCase();
-    }
-
     function extractHexFromText(text) {
       const match = (text || '').match(/([0-9a-fA-F]{64})/);
       return match ? match[1].toLowerCase() : null;
@@ -1292,23 +1264,6 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     function extractNpubFromText(text) {
       const match = (text || '').toLowerCase().match(/(npub1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]+)/);
       return match ? match[1] : null;
-    }
-
-    async function normalizePubkeyInput(raw) {
-      const input = (raw || '').trim();
-      if (!input) throw new Error('Enter your Divine address or npub first.');
-
-      const decoded = safeDecodeText(input);
-      const hex = extractHexFromText(decoded);
-      if (hex) return hex;
-
-      const npub = extractNpubFromText(decoded);
-      if (npub) return npubToHex(npub);
-
-      const nip05Match = decoded.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);
-      if (nip05Match) return await resolveNip05ToHex(nip05Match[1]);
-
-      throw new Error('Could not read your key. Paste a Divine address, npub, profile URL, or 64-character key.');
     }
 
     function setAccountInputValue(value) {
@@ -1610,13 +1565,14 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     }
 
     async function getActivePubkey() {
+      // Only signing in or the app's ?pubkey= address fills the box. Anything
+      // in it other than a 64-character lowercase hex key is not used.
       const accountInput = document.getElementById('verify-pubkey-input').value;
-      if (accountInput && accountInput.trim()) {
-        const parsed = await normalizePubkeyInput(accountInput);
-        if (signerPubkeyHex && signerPubkeyHex !== parsed) {
+      if (/^[0-9a-f]{64}$/.test(accountInput)) {
+        if (signerPubkeyHex && signerPubkeyHex !== accountInput) {
           throw new Error('The account in Step 1 does not match the account you signed in with.');
         }
-        return parsed;
+        return accountInput;
       }
       if (signerPubkeyHex) return signerPubkeyHex;
       throw new Error('Sign in first (Verify Here, Step 1).');
@@ -1805,22 +1761,26 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     }
 
     async function startOAuthVerification() {
+      let nonce = '';
       try {
         clearStatus('verify-global-status');
         clearStatus('oauth-status');
         setButtonLoading('oauth-start-btn', true, 'Opening sign-in...');
         // A link counts once you confirm it with your signer, so a sign-in
-        // starts only with one connected (#113).
-        if (!activeSigner || typeof activeSigner.getPublicKey !== 'function') {
+        // starts only with one connected that can sign (#113).
+        if (!activeSigner || typeof activeSigner.signEvent !== 'function' || typeof activeSigner.getPublicKey !== 'function') {
           throw new Error('Sign in first (Verify Here, Step 1). You confirm the link with your Divine login or Nostr signer when you come back.');
         }
         const pubkey = String(await activeSigner.getPublicKey()).toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(pubkey)) {
+          throw new Error('Signer returned an invalid pubkey.');
+        }
         const platform = document.getElementById('oauth-platform-select').value;
         setAccountInputValue(pubkey);
 
         // The nonce ties the return to this page; the secret, which never
         // leaves this browser except to confirm, ties it to this sign-in.
-        const nonce = newSignInNonce();
+        nonce = newSignInNonce();
         const startSecret = newStartSecret();
         const startCheck = await startCheckFor(startSecret);
         // Back to this same page and host, where this sign-in is remembered.
@@ -1835,14 +1795,20 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         if (!rememberPendingSignIn(platform, pubkey, nonce, { startSecret, startCheck, signer: activeSignerSource, handle })) {
           throw new Error('This browser blocked the page from saving your sign-in, so it can\\'t be confirmed. Allow this site to store data and try again.');
         }
-        const resp = await fetch(API + '/auth/' + platform + '/start', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
+        // A network failure shows the plain message below, not the browser's own text.
+        let resp = null;
+        try {
+          resp = await fetch(API + '/auth/' + platform + '/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+        } catch {}
         let data = null;
-        try { data = await resp.json(); } catch {}
-        if (!resp.ok || !data || typeof data.url !== 'string') {
+        if (resp) {
+          try { data = await resp.json(); } catch {}
+        }
+        if (!resp || !resp.ok || !data || typeof data.url !== 'string') {
           throw new Error((data && data.error) || 'Could not start sign-in.');
         }
         let target = null;
@@ -1850,6 +1816,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         if (!target || target.protocol !== 'https:') throw new Error('Could not start sign-in.');
         window.location.href = target.toString();
       } catch (e) {
+        // A sign-in that never left can't come back, so drop it and its secret.
+        if (nonce) forgetPendingSignIn(nonce);
         setStatus('oauth-status', e.message || 'Could not start sign-in.', 'error');
         setButtonLoading('oauth-start-btn', false, '');
       }
