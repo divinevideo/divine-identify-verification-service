@@ -23,11 +23,11 @@ async function fetchMetadata(label: string, url: string): Promise<Response> {
 async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
   const resourceResp = await fetchMetadata('Bluesky PDS metadata', `${pdsUrl}/.well-known/oauth-protected-resource`)
   if (!resourceResp.ok) return null
-  let resourceMeta: { authorization_servers?: string[] }
+  let resourceMeta: { authorization_servers?: string[] } | null
   try {
     resourceMeta = await resourceResp.json() as typeof resourceMeta
   } catch { return null }
-  const issuer = resourceMeta.authorization_servers?.[0]
+  const issuer = resourceMeta?.authorization_servers?.[0]
   if (!issuer || !isSafeUrl(issuer)) return null
   return issuer
 }
@@ -78,13 +78,13 @@ async function resolveAuthServer(handle: string): Promise<{
     authorization_endpoint: string
     token_endpoint: string
     pushed_authorization_request_endpoint: string
-  }
+  } | null
   try {
     authMeta = await authResp.json() as typeof authMeta
   } catch { return null }
 
   // The metadata must describe the server it was fetched from
-  if (authMeta.issuer !== issuer) return null
+  if (!authMeta || authMeta.issuer !== issuer) return null
 
   // Validate all discovered endpoints are safe HTTPS URLs
   if (!isSafeUrl(authMeta.authorization_endpoint) ||
@@ -230,7 +230,7 @@ export async function startBlueskyOAuth(
     })
   }
 
-  let parData: { request_uri?: string }
+  let parData: { request_uri?: string } | null
   try {
     parData = await parResp.json() as typeof parData
   } catch {
@@ -239,7 +239,7 @@ export async function startBlueskyOAuth(
       headers: { 'Content-Type': 'application/json' },
     })
   }
-  if (!parData.request_uri) {
+  if (!parData?.request_uri) {
     return new Response(JSON.stringify({ error: 'Missing request_uri from Bluesky authorization server' }), {
       status: 502,
       headers: { 'Content-Type': 'application/json' },
@@ -374,7 +374,7 @@ async function processBlueskyToken(
   env: Bindings,
   bound: boolean,
 ): Promise<SignInCallbackResult> {
-  let tokenData: { sub?: string }
+  let tokenData: { sub?: string } | null
   try {
     tokenData = await tokenResp.json() as typeof tokenData
   } catch {
@@ -382,7 +382,7 @@ async function processBlueskyToken(
   }
 
   // sub is the user's DID
-  const did = tokenData.sub
+  const did = tokenData?.sub
   if (!did) {
     return { success: false, returnUrl: state.returnUrl, error: 'No DID in token response' }
   }
