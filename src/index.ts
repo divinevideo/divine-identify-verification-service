@@ -766,7 +766,7 @@ app.get('/', (c) => {
         </tr>
         <tr>
           <td><code>twitter</code></td>
-          <td>Username (e.g., <code>jack</code>)</td>
+          <td>Username (e.g., <code>example</code>)</td>
           <td>Tweet ID</td>
           <td>${twitterOAuthEnabled ? 'Yes' : 'No'}</td>
         </tr>
@@ -854,7 +854,7 @@ Content-Type: application/json
 {
   "claims": [
     { "platform": "github", "identity": "octocat", "proof": "aa5a315d61ae9438b18d", "pubkey": "7e7e..." },
-    { "platform": "twitter", "identity": "jack", "proof": "1234567890", "pubkey": "7e7e..." }
+    { "platform": "twitter", "identity": "example", "proof": "1234567890", "pubkey": "7e7e..." }
   ]
 }</pre>
 
@@ -862,7 +862,7 @@ Content-Type: application/json
       <pre>{
   "results": [
     { "platform": "github", "identity": "octocat", "verified": true, "checked_at": 1709571048, "cached": false },
-    { "platform": "twitter", "identity": "jack", "verified": false, "error": "Tweet not found", "checked_at": 1709571048, "cached": false }
+    { "platform": "twitter", "identity": "example", "verified": false, "error": "Tweet not found", "checked_at": 1709571048, "cached": false }
   ]
 }</pre>
     </section>
@@ -1645,9 +1645,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         proofInput.placeholder = 'https://gist.github.com/octocat/abc123... or abc123...';
         helper.textContent = 'Paste a gist URL and we will extract the ID for you.';
       } else if (platform === 'twitter') {
-        identityInput.placeholder = 'jack';
+        identityInput.placeholder = 'example';
         proofLabel.textContent = 'Post link or Tweet ID';
-        proofInput.placeholder = 'https://x.com/jack/status/123... or 123...';
+        proofInput.placeholder = 'https://x.com/example/status/123... or 123...';
         helper.textContent = 'Paste an X/Twitter post URL for easiest setup.';
       } else if (platform === 'mastodon') {
         identityInput.placeholder = 'mastodon.social/@example';

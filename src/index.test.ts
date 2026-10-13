@@ -415,8 +415,10 @@ describe('example accounts on the page', () => {
   it.each([
     ['by default', {}],
     ['with every sign-in set up', { ...twitterOAuthConfig, YOUTUBE_API_KEY: 'key', TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }],
-  ])('leaves none of the old sample name on the page (%s)', async (_label, env) => {
-    expect(await homeHtml('https://verifier.divine.video/', env)).not.toMatch(/alice/i)
+  ])('leaves none of the old sample names on the page (%s)', async (_label, env) => {
+    const html = await homeHtml('https://verifier.divine.video/', env)
+    expect(html).not.toMatch(/alice/i)
+    expect(html).not.toMatch(/\bjack\b/i)
   })
 
   it('shows the reserved example names in the fields people fill in', async () => {
@@ -426,6 +428,8 @@ describe('example accounts on the page', () => {
     expect(html).toContain('<input id="oauth-bluesky-handle-input" class="field-input" type="text" placeholder="example.bsky.social">')
     expect(html).toContain("identityInput.placeholder = 'mastodon.social/@example';")
     expect(html).toContain("throw new Error('Enter your Bluesky handle (example: example.bsky.social).');")
+    expect(html).toContain("identityInput.placeholder = 'example';")
+    expect(html).toContain("proofInput.placeholder = 'https://x.com/example/status/123... or 123...';")
   })
 })
 
