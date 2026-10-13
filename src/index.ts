@@ -940,7 +940,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     const KEYCAST_HASH_KEY = 'verifyer_keycast_hash_v1';
     const NOSTR_TOOLS_NIP46_URL = 'https://esm.sh/nostr-tools@2.23.3/nip46?bundle';
     const NOSTR_TOOLS_PURE_URL = 'https://esm.sh/nostr-tools@2.23.3/pure?bundle';
-    const PROFILE_RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.primal.net'];
+    // Divine's own relay, where a person's linked accounts are expected to be.
+    const DIVINE_RELAY = 'wss://relay.divine.video';
+    const PROFILE_RELAYS = [DIVINE_RELAY, 'wss://relay.damus.io', 'wss://relay.primal.net'];
     const VERIFY_BATCH_SIZE = ${MAX_BATCH_SIZE};
     // NIP-46 traffic needs relays that accept kind 24133 events.
     const REMOTE_SIGNER_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.snort.social', 'wss://relay.primal.net'];
@@ -1249,6 +1251,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         ]).then(function(modules) {
           return { nip46: modules[0], pure: modules[1] };
         });
+        // Forget a failed import so the next call imports again.
+        nostrToolsPromise.catch(function() { nostrToolsPromise = null; });
       }
       return await nostrToolsPromise;
     }
@@ -1971,22 +1975,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         }
 
         setStatus('publish-status', 'Loading identity event...', 'loading');
-        let identityEvent = null;
-        for (const relay of PROFILE_RELAYS) {
-          try {
-            identityEvent = await fetchIdentityEvent(relay, signerPubkey);
-            if (identityEvent) break;
-          } catch {}
-        }
-        // Fall back to kind 0 for pre-migration profiles
-        if (!identityEvent) {
-          for (const relay of PROFILE_RELAYS) {
-            try {
-              identityEvent = await fetchProfileLegacy(relay, signerPubkey);
-              if (identityEvent) break;
-            } catch {}
-          }
-        }
+        const current = await readLinkedAccounts(signerPubkey);
+        if (!current.read) throw new Error(LINKED_ACCOUNTS_UNREAD);
+        const identityEvent = current.event;
 
         const tags = Array.isArray(identityEvent?.tags) ? identityEvent.tags.filter(Array.isArray) : [];
         // Only carry forward i-tags (kind 10011 has no content or other tag types)
@@ -2422,6 +2413,89 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       return fetchEventByKind(relayUrl, pubkey, 0);
     }
 
+    // Shown instead of publishing when the current list couldn't be read, since
+    // publishing then would drop the accounts already linked.
+    const LINKED_ACCOUNTS_UNREAD = "Couldn't load your current linked accounts, so nothing was published. Please try again in a moment.";
+    const LINKED_ACCOUNTS_LIST_UNREAD = "Couldn't load your linked accounts right now. Please try again in a moment.";
+
+    // Asks one relay, in one request, for the person's identity event (kind
+    // 10011) and profile (kind 0). Resolves with the events it sent once it says
+    // it has sent them all; rejects if it can't be reached, refuses, hangs up or
+    // takes longer than 8 seconds.
+    function fetchLinkedAccountEvents(relayUrl, pubkey) {
+      return new Promise((resolve, reject) => {
+        let ws;
+        const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 8000);
+        try {
+          ws = new WebSocket(relayUrl);
+        } catch { clearTimeout(timeout); reject(new Error('ws failed')); return; }
+        const subId = 'links_' + Math.random().toString(36).slice(2, 8);
+        const events = [];
+        ws.onopen = () => {
+          ws.send(JSON.stringify(['REQ', subId,
+            { kinds: [10011], authors: [pubkey], limit: 1 },
+            { kinds: [0], authors: [pubkey], limit: 1 }]));
+        };
+        ws.onmessage = (msg) => {
+          try {
+            const data = JSON.parse(msg.data);
+            if (data[0] === 'EVENT' && data[1] === subId) {
+              events.push(data[2]);
+            } else if (data[0] === 'EOSE' && data[1] === subId) {
+              clearTimeout(timeout);
+              ws.send(JSON.stringify(['CLOSE', subId]));
+              ws.close();
+              resolve(events);
+            } else if (data[0] === 'CLOSED' && data[1] === subId) {
+              clearTimeout(timeout);
+              ws.close();
+              reject(new Error('refused'));
+            }
+          } catch {}
+        };
+        ws.onerror = () => { clearTimeout(timeout); reject(new Error('ws error')); };
+        ws.onclose = () => { clearTimeout(timeout); reject(new Error('ws closed')); };
+      });
+    }
+
+    // NIP-01: of two copies of a replaceable event, the later created_at wins,
+    // and on a tie the lowest id.
+    function newerEvent(a, b) {
+      if (!a) return b;
+      return b.created_at > a.created_at || (b.created_at === a.created_at && b.id < a.id) ? b : a;
+    }
+
+    // Relays can each hold a different copy, so ask them all at once and keep the
+    // newest identity event, or for profiles from before it, the newest kind 0
+    // profile. Each event is checked before it is used. read is true only when
+    // Divine's relay answered and everything it sent passed the checks; the other
+    // relays can supply a newer copy but can't stand in for it.
+    async function readLinkedAccounts(pubkey) {
+      const answers = await Promise.all(PROFILE_RELAYS.map(relay => fetchLinkedAccountEvents(relay, pubkey).catch(() => null)));
+      let verifyEvent = null;
+      if (answers.some(answer => answer && answer.length > 0)) {
+        try {
+          verifyEvent = (await loadNostrTools()).pure.verifyEvent;
+        } catch {
+          return { read: false, event: null };
+        }
+      }
+      let read = false;
+      let identityEvent = null;
+      let profile = null;
+      for (let i = 0; i < answers.length; i++) {
+        const answer = answers[i];
+        if (!answer) continue;
+        const usable = answer.filter(e => e && e.pubkey === pubkey && (e.kind === 10011 || e.kind === 0) && verifyEvent(e));
+        if (PROFILE_RELAYS[i] === DIVINE_RELAY) read = usable.length === answer.length;
+        for (const e of usable) {
+          if (e.kind === 10011) identityEvent = newerEvent(identityEvent, e);
+          else profile = newerEvent(profile, e);
+        }
+      }
+      return { read, event: identityEvent || profile };
+    }
+
     function fetchEventByKind(relayUrl, pubkey, kind) {
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 8000);
@@ -2467,20 +2541,11 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
           return;
         }
 
-        let event = null;
-        for (const relay of PROFILE_RELAYS) {
-          try {
-            event = await fetchIdentityEvent(relay, pubkey);
-            if (event) break;
-          } catch {}
-        }
-        if (!event) {
-          for (const relay of PROFILE_RELAYS) {
-            try {
-              event = await fetchProfileLegacy(relay, pubkey);
-              if (event) break;
-            } catch {}
-          }
+        const { read, event } = await readLinkedAccounts(pubkey);
+        if (!read) {
+          container.textContent = '';
+          setStatus('manage-status', LINKED_ACCOUNTS_LIST_UNREAD, 'error');
+          return;
         }
 
         const iTags = event ? (event.tags || []).filter(t => t[0] === 'i' && t[1]) : [];
@@ -2588,21 +2653,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         }
 
         // Fetch current identity event (kind 10011, fall back to kind 0)
-        let event = null;
-        for (const relay of PROFILE_RELAYS) {
-          try {
-            event = await fetchIdentityEvent(relay, signerPubkey);
-            if (event) break;
-          } catch {}
-        }
-        if (!event) {
-          for (const relay of PROFILE_RELAYS) {
-            try {
-              event = await fetchProfileLegacy(relay, signerPubkey);
-              if (event) break;
-            } catch {}
-          }
-        }
+        const current = await readLinkedAccounts(signerPubkey);
+        if (!current.read) throw new Error(LINKED_ACCOUNTS_UNREAD);
+        const event = current.event;
 
         const tags = event ? (event.tags || []).filter(Array.isArray) : [];
         const iTags = tags.filter(tag => tag[0] === 'i');
