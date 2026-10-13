@@ -155,7 +155,7 @@ function harness(opts: { search: string, pending?: unknown, statusResponse?: unk
     'proof-identity-input': field(),
     'proof-proof-input': field(),
     'proof-status': field(),
-    'advanced-proof': field({ open: false }),
+    'publish-status': field(),
     'publish-kind0-btn': field({ scrollIntoView: () => { scrolledTo.push('publish-kind0-btn') } }),
     'verify-global-status': field({ scrollIntoView: () => { scrolledTo.push('verify-global-status'); scrolledWith.push(statuses[statuses.length - 1]?.[1] ?? '') } }),
   }
@@ -217,7 +217,7 @@ describe('sign-in return on the verifier page', () => {
     })
     await load(h.env).handleOAuthCallbackMessage()
     expect(h.fetched).toEqual([`${API}/auth/twitter/status?pubkey=${PUBKEY}&identity=jack`])
-    expect(h.statuses).toEqual([CONFIRMING, ['verify-global-status', 'Success. Your twitter account is now linked: jack. You can now publish this to your Nostr profile below.', 'ok'], ['proof-status', 'Your twitter account jack is linked. Publish to add it to your Nostr profile.', 'ok']])
+    expect(h.statuses).toEqual([CONFIRMING, ['verify-global-status', 'Success. Your twitter account is now linked: jack. You can now publish this to your Nostr profile below.', 'ok'], ['publish-status', 'Your twitter account jack is linked. Publish to add it to your Nostr profile.', 'ok']])
     expect(h.fields['proof-platform-select'].value).toBe('twitter')
     expect(h.fields['proof-identity-input'].value).toBe('jack')
     expect(h.fields['proof-proof-input'].value).toBe('oauth')
@@ -697,11 +697,10 @@ describe('confirming a returning sign-in', () => {
     const h = harness({ search: returned(), pending: freshPending(), answers: [linked] })
     await load(h.env).handleOAuthCallbackMessage()
     // The top message reports the sign-in; the note beside Publish says what Publish will do.
-    expect(h.statuses.slice(-2)).toEqual([['verify-global-status', 'Success. Your twitter account is now linked: jack. You can now publish this to your Nostr profile below.', 'ok'], ['proof-status', 'Your twitter account jack is linked. Publish to add it to your Nostr profile.', 'ok']])
+    expect(h.statuses.slice(-2)).toEqual([['verify-global-status', 'Success. Your twitter account is now linked: jack. You can now publish this to your Nostr profile below.', 'ok'], ['publish-status', 'Your twitter account jack is linked. Publish to add it to your Nostr profile.', 'ok']])
     // Confirming is brought into view, then the page lands on Publish.
     expect(h.scrolledWith).toEqual([CONFIRMING[1]])
     expect(h.scrolledTo).toEqual(['verify-global-status', 'publish-kind0-btn'])
-    expect(h.fields['advanced-proof'].open).toBe(true)
   })
 
   it('brings the message into view when it cannot confirm the sign-in', async () => {
@@ -737,7 +736,7 @@ describe('confirming a returning sign-in', () => {
     expect(h.statuses[h.statuses.length - 1]).toEqual(['verify-global-status', 'Success. Your twitter account is now linked: jack. The Publish form below was left as you changed it.', 'ok'])
     // Nothing was filled in to publish, so there's no note beside Publish
     // and the page stays on the message.
-    expect(h.statuses.filter(([id]) => id === 'proof-status')).toEqual([])
+    expect(h.statuses.filter(([id]) => id === 'publish-status')).toEqual([])
     for (const id of ['proof-platform-select', 'proof-identity-input', 'proof-proof-input', 'publish-kind0-btn']) {
       expect(Object.values(h.fields[id].listeners).flat()).toEqual([])
     }
@@ -838,7 +837,7 @@ describe('confirming a returning sign-in', () => {
       const load = await loadReturnHandler()
       const h = harness({ search: returned(), pending: freshPending(), answers: [{ status: 200, json: { verified: true, identity: 'jack' } }] })
       await load(h.env).handleOAuthCallbackMessage()
-      expect(h.fields['proof-status']).toMatchObject({ textContent: READY, hidden: false })
+      expect(h.fields['publish-status']).toMatchObject({ textContent: READY, hidden: false })
       return h
     }
     const setStatus = (h: { env: Record<string, unknown> }) => h.env.setStatus as (id: string, msg: string, type: string) => void
@@ -851,29 +850,29 @@ describe('confirming a returning sign-in', () => {
       const h = await signedIn()
       h.fields[id].value = value
       h.fire(id, event)
-      expect(h.fields['proof-status'].hidden).toBe(true)
+      expect(h.fields['publish-status'].hidden).toBe(true)
     })
 
     it('stays when an edit event leaves the form unchanged, such as typing the same letter over a selected one', async () => {
       const h = await signedIn()
       h.fields['proof-identity-input'].value = 'jack'
       h.fire('proof-identity-input', 'input')
-      expect(h.fields['proof-status'].hidden).toBe(false)
+      expect(h.fields['publish-status'].hidden).toBe(false)
     })
 
     it('goes away when Publish is clicked', async () => {
       const h = await signedIn()
       h.fire('publish-kind0-btn', 'click')
-      expect(h.fields['proof-status'].hidden).toBe(true)
+      expect(h.fields['publish-status'].hidden).toBe(true)
     })
 
-    it('leaves a newer message in that spot alone, such as a "Verify this link" result', async () => {
+    it('leaves a newer message in that spot alone, such as Publish reporting progress', async () => {
       const h = await signedIn()
-      setStatus(h)('proof-status', 'Success. This account is verified.', 'ok')
+      setStatus(h)('publish-status', 'Checking signer and profile...', 'loading')
       h.fields['proof-identity-input'].value = 'someone-else'
       h.fire('proof-identity-input', 'input')
       h.fire('publish-kind0-btn', 'click')
-      expect(h.fields['proof-status']).toMatchObject({ textContent: 'Success. This account is verified.', hidden: false })
+      expect(h.fields['publish-status']).toMatchObject({ textContent: 'Checking signer and profile...', hidden: false })
     })
 
     it('stops watching once it has gone', async () => {

@@ -170,7 +170,7 @@ describe('verifier tiktok oauth gating', () => {
 
   it('does not advertise TikTok in the no-posting sign-in instructions', async () => {
     const html = await homeHtml('https://verifier.divine.video/', twitterOAuthConfig)
-    const marker = 'just sign in from this page'
+    const marker = 'sign in to it from this page'
     const idx = html.indexOf(marker)
     expect(idx).toBeGreaterThan(-1)
     const sentence = html.slice(html.lastIndexOf('>', idx) + 1, idx + marker.length)
@@ -190,7 +190,7 @@ describe('verifier tiktok oauth gating', () => {
 
   it('renders a grammatical Quick Connect list', async () => {
     const html = await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, YOUTUBE_API_KEY: 'key' })
-    expect(html).toContain('For Twitter/X, Bluesky, and YouTube, just sign in')
+    expect(html).toContain('For Twitter/X, Bluesky, and YouTube, sign in to it from this page.')
   })
 
   it('documents recognition of existing TikTok OAuth verifications', async () => {
@@ -238,20 +238,6 @@ describe('verifier twitter oauth gating', () => {
     expect(oauthSelect).not.toContain('value="twitter"')
   })
 
-  it('points Twitter users to proof posts instead of sign-in when it is not configured', async () => {
-    const html = await homeHtml()
-    expect(html).toContain('For Bluesky, just sign in from this page.')
-    expect(html).toContain('No posting required for Bluesky.')
-    expect(html).toContain('For Twitter, GitHub, Mastodon, Telegram, Discord, and TikTok, use the advanced section')
-  })
-
-  it('describes Twitter as a sign-in platform when it is configured', async () => {
-    const html = await homeHtml('https://verifier.divine.video/', twitterOAuthConfig)
-    expect(html).toContain('For Twitter/X and Bluesky, just sign in from this page.')
-    expect(html).toContain('No posting required for Twitter and Bluesky.')
-    expect(html).toContain('For GitHub, Mastodon, Telegram, Discord, and TikTok, use the advanced section')
-  })
-
   it('leaves TikTok out of the post-link list once its sign-in is enabled', async () => {
     const html = await homeHtml('https://verifier.divine.video/', {
       TIKTOK_CLIENT_KEY: 'test-client-key',
@@ -259,19 +245,19 @@ describe('verifier twitter oauth gating', () => {
       OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
       TIKTOK_OAUTH_ENABLED: 'true',
     })
-    expect(html).toContain('For Twitter, GitHub, Mastodon, Telegram, and Discord, use the advanced section')
+    expect(html).toContain('For Twitter, GitHub, Mastodon, Telegram, and Discord, post your npub there')
   })
 
   it('tells people in the sign-in card which platforms use a post link instead', async () => {
     const card = (html: string) => {
-      const start = html.indexOf('Quick Connect (no posting)')
+      const start = html.indexOf('id="quick-connect"')
       expect(start).toBeGreaterThan(-1)
       const end = html.indexOf('id="oauth-start-btn"', start)
       expect(end).toBeGreaterThan(start)
       return html.slice(start, end)
     }
-    expect(card(await homeHtml())).toContain('For Twitter, GitHub, Mastodon, Telegram, Discord, and TikTok, use Step 3 below to paste a post link instead.')
-    expect(card(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig))).toContain('For GitHub, Mastodon, Telegram, Discord, and TikTok, use Step 3 below to paste a post link instead.')
+    expect(card(await homeHtml())).toContain('For Twitter, GitHub, Mastodon, Telegram, Discord, and TikTok, <a href="#link-with-post">link with a post instead</a>.')
+    expect(card(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig))).toContain('For GitHub, Mastodon, Telegram, Discord, and TikTok, <a href="#link-with-post">link with a post instead</a>.')
   })
 
   it('reads the post-link hint before the picker and ties it to the picker for screen readers', async () => {
@@ -280,12 +266,6 @@ describe('verifier twitter oauth gating', () => {
     expect(hint).toBeGreaterThan(-1)
     expect(hint).toBeLessThan(html.indexOf('<label for="oauth-platform-select"'))
     expect(html).toContain('<select id="oauth-platform-select" class="field-select" aria-describedby="oauth-platform-help">')
-  })
-
-  it('describes Step 3 as the path for platforms without Quick Connect', async () => {
-    const html = await homeHtml()
-    expect(html).toContain('Use this for platforms without Quick Connect, or if you would rather not sign in.')
-    expect(html).not.toContain('Use this only if you do not want Quick Connect.')
   })
 
   it('marks Twitter sign-in as unavailable in the supported-platform table', async () => {
@@ -307,6 +287,116 @@ describe('verifier twitter oauth gating', () => {
     const docs = oauthDocsSection(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig))
     expect(docs).toContain('<h2>OAuth Verification (Twitter, Bluesky)</h2>')
     expect(docs).toContain('/auth/twitter/start?pubkey=hex64')
+  })
+})
+
+describe('the two ways to link an account', () => {
+  const tiktokOAuthOn = {
+    TIKTOK_CLIENT_KEY: 'test-client-key',
+    TIKTOK_CLIENT_SECRET: 'test-client-secret',
+    OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
+    TIKTOK_OAUTH_ENABLED: 'true',
+  }
+
+  // Where each platform pill links to, by platform.
+  function pillTargets(html: string): Record<string, string> {
+    const pills = [...html.matchAll(/<a class="platform-pill" href="#([a-z-]+)" data-platform="([a-z]+)"/g)]
+    return Object.fromEntries(pills.map(([, target, platform]) => [platform, target]))
+  }
+
+  // Each card runs from its id to the next card's id, in page order.
+  function between(html: string, from: string, to: string): string {
+    const start = html.indexOf(from)
+    const end = html.indexOf(to, start)
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    return html.slice(start, end)
+  }
+  const postCard = (html: string) => between(html, 'id="link-with-post"', 'id="quick-connect"')
+  const quickConnectCard = (html: string) => between(html, 'id="quick-connect"', 'id="publish-step"')
+  const publishCard = (html: string) => between(html, 'id="publish-step"', '</section>')
+  const howToGetVerified = (html: string) => between(html, '<section id="how-to-verify">', '</section>')
+
+  it('sends each platform pill to the way it can be linked today', async () => {
+    expect(pillTargets(await homeHtml())).toEqual({
+      twitter: 'link-with-post',
+      github: 'link-with-post',
+      bluesky: 'quick-connect',
+      mastodon: 'link-with-post',
+      telegram: 'link-with-post',
+      discord: 'link-with-post',
+      tiktok: 'link-with-post',
+    })
+  })
+
+  it('sends Twitter, TikTok and YouTube pills to Quick Connect once their sign-in is set up', async () => {
+    const targets = pillTargets(await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, ...tiktokOAuthOn, YOUTUBE_API_KEY: 'key' }))
+    expect(targets.twitter).toBe('quick-connect')
+    expect(targets.tiktok).toBe('quick-connect')
+    expect(targets.youtube).toBe('quick-connect')
+    expect(targets.github).toBe('link-with-post')
+  })
+
+  it.each([
+    ['by default', {}],
+    ['with every sign-in set up', { ...twitterOAuthConfig, ...tiktokOAuthOn, YOUTUBE_API_KEY: 'key' }],
+  ])('only picks a platform the target card offers (%s)', async (_label, env) => {
+    const html = await homeHtml('https://verifier.divine.video/', env)
+    const targets = Object.entries(pillTargets(html))
+    expect(targets.length).toBeGreaterThan(0)
+    for (const [platform, target] of targets) {
+      const select = sliceSelect(html, target === 'quick-connect' ? 'oauth-platform-select' : 'proof-platform-select')
+      expect(select).toContain(`value="${platform}"`)
+    }
+  })
+
+  it('names the platform and the way to link it for screen readers', async () => {
+    const html = await homeHtml()
+    expect(html).toContain('<a class="platform-pill" href="#quick-connect" data-platform="bluesky" aria-label="Link Bluesky by signing in">')
+    expect(html).toContain('<a class="platform-pill" href="#link-with-post" data-platform="twitter" aria-label="Link Twitter / X with a post">')
+  })
+
+  it('puts each picker in the card its pills link to', async () => {
+    const html = await homeHtml()
+    expect(postCard(html)).toContain('id="proof-platform-select"')
+    expect(quickConnectCard(html)).toContain('id="oauth-platform-select"')
+  })
+
+  // Post first while sign-in covers only Bluesky (Matt, #83).
+  it('shows linking with a post before Quick Connect', async () => {
+    const html = await homeHtml()
+    expect(html.indexOf('id="link-with-post"')).toBeLessThan(html.indexOf('id="quick-connect"'))
+  })
+
+  it('shows the post form open, not folded away', async () => {
+    const html = await homeHtml()
+    expect(html).not.toContain('id="advanced-proof"')
+    expect(postCard(html)).not.toContain('<details')
+    expect(postCard(html)).toContain('Works for every platform.')
+  })
+
+  it('gives Publish its own step after both ways to link', async () => {
+    const html = await homeHtml()
+    expect(postCard(html)).not.toContain('id="publish-kind0-btn"')
+    expect(publishCard(html)).toContain('id="publish-kind0-btn"')
+    expect(publishCard(html)).toContain('id="publish-status"')
+    expect(publishCard(html)).toContain('Nothing shows on your profile until you publish.')
+  })
+
+  it('says in Step 1 that publishing needs a connected signer', async () => {
+    const step1 = between(await homeHtml(), 'Connect your Nostr signer</h3>', 'id="link-with-post"')
+    expect(step1).toContain('You need a connected signer to publish.')
+    expect(step1).toContain("You'll still need to connect a signer to publish it.")
+  })
+
+  it.each([
+    ['by default', {}, 'For Bluesky, sign in to it from this page. For Twitter, GitHub, Mastodon, Telegram, Discord, and TikTok, post your npub there, then paste the link to that post.'],
+    ['with Twitter sign-in set up', twitterOAuthConfig, 'For Twitter/X and Bluesky, sign in to it from this page. For GitHub, Mastodon, Telegram, Discord, and TikTok, post your npub there, then paste the link to that post.'],
+  ])('describes both ways to link, then Publish, in How to Get Verified (%s)', async (_label, env, linkStep) => {
+    const section = howToGetVerified(await homeHtml('https://verifier.divine.video/', env))
+    expect(section).toContain(linkStep)
+    expect(section).toContain('Press Publish to add the link to your profile.')
+    expect(section).not.toContain('advanced section')
   })
 })
 
