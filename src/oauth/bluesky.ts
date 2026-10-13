@@ -1,7 +1,7 @@
 import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString, generateDPoPKeyPair, importDPoPPrivateKey, createDPoPProof } from './crypto'
-import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification, getOAuthVerification, oauthVerificationKey } from './state'
-import { forgetHandleLookup } from './signin-account'
+import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
+import { tidyEarlierBlueskySignIn } from './signin-records'
 import { getHandleFromDidDocument, getPdsEndpoint, resolveDidDocument, resolveHandle } from '../atproto'
 import { isSafeUrl } from '../utils/validation'
 import { fetchPublic } from '../utils/safe-fetch'
@@ -395,25 +395,7 @@ async function processBlueskyToken(
     return { success: false, returnUrl: state.returnUrl, error: 'Bluesky account not confirmed' }
   }
 
-  // Tidying up after earlier sign-ins is best effort; the new link is saved
-  // either way, and one step failing doesn't skip the other.
-  try {
-    await forgetHandleLookup(env, handle)
-  } catch (err) {
-    console.warn('Bluesky sign-in: earlier handle lookup not cleared:', err)
-  }
-  try {
-    // A handle change leaves a record under the old handle. Remove it while it
-    // still belongs to this account, so it can't verify again if that handle
-    // ever points back here.
-    const previous = await getOAuthVerification(env.CACHE_KV, 'bluesky', did, state.pubkey)
-    if (previous?.handle && previous.handle.toLowerCase() !== handle.toLowerCase()) {
-      const old = await getOAuthVerification(env.CACHE_KV, 'bluesky', previous.handle, state.pubkey)
-      if (old?.account_id === did) await env.CACHE_KV.delete(oauthVerificationKey('bluesky', previous.handle, state.pubkey))
-    }
-  } catch (err) {
-    console.warn('Bluesky sign-in: earlier handle record not removed:', err)
-  }
+  await tidyEarlierBlueskySignIn(env, state.pubkey, did, handle)
 
   const checkedAt = Math.floor(Date.now() / 1000)
 

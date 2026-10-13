@@ -7,8 +7,8 @@ import { handleBlueskyCallback } from './bluesky'
 import { generateDPoPKeyPair } from './crypto'
 import { createBinding } from './binding'
 
-// An account linked by signing in to Bluesky stays verified for 30 days, or
-// until it is unlinked (#58).
+// An account linked by signing in to Bluesky, once its owner confirms it
+// (#113), stays verified for 30 days, or until it is unlinked (#58).
 // A Bluesky link is tied to the account's DID, so a handle that now points
 // somewhere else stops verifying.
 
@@ -58,10 +58,16 @@ async function check(env: Bindings, identity = HANDLE) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('how long a sign-in record lasts', () => {
-  it('keeps a Bluesky sign-in for 30 days', async () => {
+  it('keeps a confirmed Bluesky sign-in for 30 days', async () => {
+    const { kv } = createEnv()
+    await storeOAuthVerification(kv as unknown as KVNamespace, { platform: 'bluesky', identity: HANDLE, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1, account_id: DID, confirmed: true })
+    expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 30 * 86400 })
+  })
+
+  it('keeps an unconfirmed Bluesky sign-in for a day', async () => {
     const { kv } = createEnv()
     await storeOAuthVerification(kv as unknown as KVNamespace, { platform: 'bluesky', identity: HANDLE, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1, account_id: DID })
-    expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 30 * 86400 })
+    expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 86400 })
   })
 
   it('still expires a Bluesky sign-in saved without its account', async () => {
@@ -254,7 +260,8 @@ describe('finishing a Bluesky sign-in', () => {
     expect(savedByDid.handle).toBe(HANDLE)
     expect(savedByDid.bound).toBe(false)
     for (const identity of [HANDLE, DID]) {
-      expect(kv.put.mock.calls.find(c => c[0] === oauthVerificationKey('bluesky', identity, PUBKEY))?.[2]).toEqual({ expirationTtl: 30 * 86400 })
+      // Unconfirmed until the owner confirms it (#113).
+      expect(kv.put.mock.calls.find(c => c[0] === oauthVerificationKey('bluesky', identity, PUBKEY))?.[2]).toEqual({ expirationTtl: 86400 })
     }
   })
 

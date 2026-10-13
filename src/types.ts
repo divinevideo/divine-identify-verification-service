@@ -61,6 +61,12 @@ export interface OAuthVerification {
   handle?: string
   // Finished in the browser that started it (see src/oauth/binding.ts).
   bound?: boolean
+  // Set once the account owner confirmed the sign-in (#113). Records without
+  // it stop counting when confirmation is required.
+  confirmed?: true
+  // The confirming event, so a later unlink can tell a newer list from an older one (#76).
+  confirm_event_id?: string
+  confirm_created_at?: number
 }
 
 export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord' | 'youtube' | 'tiktok'
