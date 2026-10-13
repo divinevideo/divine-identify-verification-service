@@ -1,6 +1,6 @@
 // ABOUTME: Owner confirmation of sign-in links (#113): the settings, the
 // ABOUTME: start check, the one-time code and the value that binds them.
-import type { Bindings } from '../types'
+import type { Bindings, OAuthPlatform } from '../types'
 import { base64url, generateRandomString } from './crypto'
 
 // A sign-in waits this long for its owner to confirm it.
@@ -58,4 +58,62 @@ export function sameToken(a: string, b: string): boolean {
   let diff = 0
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
   return diff === 0
+}
+
+/** The account a provider confirmed for a sign-in. */
+export interface SignedInAccount {
+  platform: OAuthPlatform
+  identity: string
+  // Bluesky: the DID and the handle, so the link is saved under both.
+  account_id?: string
+  handle?: string
+}
+
+/** A finished sign-in waiting for its owner to confirm it. */
+export interface PendingSignIn extends SignedInAccount {
+  pubkey: string
+  // Absent for a sign-in started without one, which can never be confirmed.
+  startCheck?: string
+  finishedAt: number
+}
+
+/** Which event confirmed a code, so the same event sent again gets the same answer. */
+export interface UsedCode {
+  event_id: string
+  platform: OAuthPlatform
+  identity: string
+}
+
+// Only a hash of the code is ever stored, so a KV listing reveals nothing usable.
+const pendingKey = async (code: string) => `oauth_pending:${await sha256Hex(code)}`
+const usedKey = async (code: string) => `oauth_confirmed:${await sha256Hex(code)}`
+
+async function readJson<T>(kv: KVNamespace, key: string): Promise<T | null> {
+  const raw = await kv.get(key)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return null
+  }
+}
+
+export async function storePendingSignIn(kv: KVNamespace, code: string, pending: PendingSignIn): Promise<void> {
+  await kv.put(await pendingKey(code), JSON.stringify(pending), { expirationTtl: CONFIRM_TTL_SECONDS })
+}
+
+export async function getPendingSignIn(kv: KVNamespace, code: string): Promise<PendingSignIn | null> {
+  return readJson<PendingSignIn>(kv, await pendingKey(code))
+}
+
+export async function deletePendingSignIn(kv: KVNamespace, code: string): Promise<void> {
+  await kv.delete(await pendingKey(code))
+}
+
+export async function storeUsedCode(kv: KVNamespace, code: string, used: UsedCode): Promise<void> {
+  await kv.put(await usedKey(code), JSON.stringify(used), { expirationTtl: CONFIRM_TTL_SECONDS })
+}
+
+export async function getUsedCode(kv: KVNamespace, code: string): Promise<UsedCode | null> {
+  return readJson<UsedCode>(kv, await usedKey(code))
 }

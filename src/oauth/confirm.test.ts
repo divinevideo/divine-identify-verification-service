@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import type { Bindings } from '../types'
 import {
   CONFIRM_TTL_SECONDS, signInConfirmationMode, confirmCodePlacement, isSignInToken,
   sha256Hex, startCheckFor, confirmBindingFor, newConfirmCode, sameToken,
+  storePendingSignIn, getPendingSignIn, deletePendingSignIn, storeUsedCode, getUsedCode,
 } from './confirm'
 
 // The same values are pinned in the page tests and in divine-mobile, so every
@@ -69,5 +70,55 @@ describe('hashing a sign-in', () => {
     expect(sameToken(VECTOR.startCheck, VECTOR.startCheck)).toBe(true)
     expect(sameToken(VECTOR.startCheck, VECTOR.startCheck.slice(0, 42) + 'x')).toBe(false)
     expect(sameToken(VECTOR.startCheck, VECTOR.startCheck.slice(0, 42))).toBe(false)
+    expect(sameToken(VECTOR.startCheck, 'x' + VECTOR.startCheck.slice(1))).toBe(false)
+  })
+})
+
+function recordingKV() {
+  const store = new Map<string, string>()
+  const put = vi.fn(async (key: string, value: string, _opts?: { expirationTtl?: number }) => { store.set(key, value) })
+  const kv = {
+    get: async (key: string) => store.get(key) ?? null,
+    put,
+    delete: async (key: string) => { store.delete(key) },
+  } as unknown as KVNamespace
+  return { kv, store, put }
+}
+
+describe('pending sign-ins', () => {
+  const pending = { platform: 'twitter' as const, identity: 'jack', pubkey: 'a'.repeat(64), startCheck: VECTOR.startCheck, finishedAt: 1 }
+
+  it('stores a pending sign-in under the hash of its code, for ten minutes', async () => {
+    const { kv, store, put } = recordingKV()
+    await storePendingSignIn(kv, VECTOR.code, pending)
+    expect([...store.keys()]).toEqual([`oauth_pending:${VECTOR.codeHex}`])
+    expect(put.mock.calls[0][2]).toEqual({ expirationTtl: 600 })
+    expect(JSON.stringify([...store.entries()])).not.toContain(VECTOR.code)
+    expect(await getPendingSignIn(kv, VECTOR.code)).toEqual(pending)
+  })
+
+  it('finds nothing for another code, and nothing once deleted', async () => {
+    const { kv } = recordingKV()
+    await storePendingSignIn(kv, VECTOR.code, pending)
+    expect(await getPendingSignIn(kv, 'D'.repeat(43))).toBeNull()
+    await deletePendingSignIn(kv, VECTOR.code)
+    expect(await getPendingSignIn(kv, VECTOR.code)).toBeNull()
+  })
+
+  it('treats an unreadable stored value as nothing', async () => {
+    const { kv, store } = recordingKV()
+    store.set(`oauth_pending:${VECTOR.codeHex}`, '{not json')
+    expect(await getPendingSignIn(kv, VECTOR.code)).toBeNull()
+  })
+})
+
+describe('used codes', () => {
+  it('remembers which event used a code, for ten minutes, under the hash of the code', async () => {
+    const { kv, store, put } = recordingKV()
+    await storeUsedCode(kv, VECTOR.code, { event_id: 'e'.repeat(64), platform: 'bluesky', identity: 'alice.bsky.social' })
+    expect([...store.keys()]).toEqual([`oauth_confirmed:${VECTOR.codeHex}`])
+    expect(put.mock.calls[0][2]).toEqual({ expirationTtl: 600 })
+    expect(await getUsedCode(kv, VECTOR.code)).toEqual({ event_id: 'e'.repeat(64), platform: 'bluesky', identity: 'alice.bsky.social' })
+    expect(await getUsedCode(kv, 'D'.repeat(43))).toBeNull()
   })
 })
