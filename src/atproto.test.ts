@@ -17,8 +17,9 @@ describe('isMalformedDid', () => {
     expect(isMalformedDid(did)).toBe(true)
   })
 
-  // A did:web is held to atproto's DID syntax: letters, digits and ._:%- only,
-  // not ending in : or %, and each % followed by an escape that decodes.
+  // A did:web is held to atproto's DID syntax: letters, digits and ._%- only
+  // (no ":", since atproto supports hostname-level did:web only), not ending
+  // in %, and each % followed by an escape that decodes.
   it.each([
     'did:web:',
     'did:web:%',
@@ -30,6 +31,8 @@ describe('isMalformedDid', () => {
     'did:web:example.com#key',
     'did:web:exam ple.com',
     'did:web:example.com%2Fpath',
+    'did:web:example.com%5Cpath',
+    'did:web:example.com:user:alice',
   ])('%s is not a did:web', did => {
     expect(isMalformedDid(did)).toBe(true)
   })
@@ -39,6 +42,8 @@ describe('isMalformedDid', () => {
     'did:plc:ewvi7nxzyoun6zhxrhs64oiz',
     'did:web:example.com',
     'did:web:user.example.com',
+    // A port is written as an escaped colon.
+    'did:web:localhost%3A8080',
     // Not a DID at all, and no business of this check.
     'alice.bsky.social',
   ])('%s is not reported as malformed', did => {

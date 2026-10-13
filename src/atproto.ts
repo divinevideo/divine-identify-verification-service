@@ -10,9 +10,10 @@ export type DidDocument = {
 // A did:plc is "did:plc:" and 24 lowercase base32 characters (a-z, 2-7), per
 // the did:plc spec (did-method-plc, website/spec/v0.1/did-plc.md).
 const DID_PLC = /^did:plc:[a-z2-7]{24}$/
-// atproto's general DID syntax (atproto.com/specs/did): letters, digits and
-// ._:%- only, and not ending in : or %.
-const DID_WEB = /^did:web:[a-zA-Z0-9._:%-]*[a-zA-Z0-9._-]$/
+// atproto's DID syntax (atproto.com/specs/did) without ":", because atproto
+// supports hostname-level did:web only, so a ":" would start a path (a port is
+// written as %3A): letters, digits and ._%- only, and not ending in %.
+const DID_WEB = /^did:web:[a-zA-Z0-9._%-]*[a-zA-Z0-9._-]$/
 
 // The host a did:web names, or null when the DID is malformed: characters
 // outside the syntax, a % that isn't a valid escape, or a path (atproto
