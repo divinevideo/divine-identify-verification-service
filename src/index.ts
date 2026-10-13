@@ -940,7 +940,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     const KEYCAST_HASH_KEY = 'verifyer_keycast_hash_v1';
     const NOSTR_TOOLS_NIP46_URL = 'https://esm.sh/nostr-tools@2.23.3/nip46?bundle';
     const NOSTR_TOOLS_PURE_URL = 'https://esm.sh/nostr-tools@2.23.3/pure?bundle';
-    const PROFILE_RELAYS = ['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.primal.net'];
+    // Divine's own relay, where a person's linked accounts are expected to be.
+    const DIVINE_RELAY = 'wss://relay.divine.video';
+    const PROFILE_RELAYS = [DIVINE_RELAY, 'wss://relay.damus.io', 'wss://relay.primal.net'];
     const VERIFY_BATCH_SIZE = ${MAX_BATCH_SIZE};
     // NIP-46 traffic needs relays that accept kind 24133 events.
     const REMOTE_SIGNER_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.snort.social', 'wss://relay.primal.net'];
@@ -1249,6 +1251,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
         ]).then(function(modules) {
           return { nip46: modules[0], pure: modules[1] };
         });
+        // Forget a failed import so the next call imports again.
+        nostrToolsPromise.catch(function() { nostrToolsPromise = null; });
       }
       return await nostrToolsPromise;
     }
@@ -2405,6 +2409,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
     // Shown instead of publishing when the current list couldn't be read, since
     // publishing then would drop the accounts already linked.
     const LINKED_ACCOUNTS_UNREAD = "Couldn't load your current linked accounts, so nothing was published. Please try again in a moment.";
+    const LINKED_ACCOUNTS_LIST_UNREAD = "Couldn't load your linked accounts right now. Please try again in a moment.";
 
     // Asks one relay, in one request, for the person's identity event (kind
     // 10011) and profile (kind 0). Resolves with the events it sent once it says
@@ -2455,9 +2460,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
 
     // Relays can each hold a different copy, so ask them all at once and keep the
     // newest identity event, or for profiles from before it, the newest kind 0
-    // profile. Each event is checked before it is used. read is false when no
-    // relay could be read (none answered, or everything they sent was set aside),
-    // as opposed to relays answering that the person has no list yet.
+    // profile. Each event is checked before it is used. read is true when a relay
+    // returned a copy that passed the checks, or Divine's relay answered that the
+    // person has no list yet; anything else leaves the current list unknown.
     async function readLinkedAccounts(pubkey) {
       const answers = await Promise.all(PROFILE_RELAYS.map(relay => fetchLinkedAccountEvents(relay, pubkey).catch(() => null)));
       let verifyEvent = null;
@@ -2471,10 +2476,11 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
       let read = false;
       let identityEvent = null;
       let profile = null;
-      for (const answer of answers) {
+      for (let i = 0; i < answers.length; i++) {
+        const answer = answers[i];
         if (!answer) continue;
         const usable = answer.filter(e => e && e.pubkey === pubkey && (e.kind === 10011 || e.kind === 0) && verifyEvent(e));
-        if (answer.length === 0 || usable.length > 0) read = true;
+        if (usable.length > 0 || (answer.length === 0 && PROFILE_RELAYS[i] === DIVINE_RELAY)) read = true;
         for (const e of usable) {
           if (e.kind === 10011) identityEvent = newerEvent(identityEvent, e);
           else profile = newerEvent(profile, e);
@@ -2528,7 +2534,12 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
           return;
         }
 
-        const { event } = await readLinkedAccounts(pubkey);
+        const { read, event } = await readLinkedAccounts(pubkey);
+        if (!read) {
+          container.textContent = '';
+          setStatus('manage-status', LINKED_ACCOUNTS_LIST_UNREAD, 'error');
+          return;
+        }
 
         const iTags = event ? (event.tags || []).filter(t => t[0] === 'i' && t[1]) : [];
         if (iTags.length === 0) {

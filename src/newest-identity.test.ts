@@ -13,6 +13,9 @@ const OTHER_PUBKEY = 'cd'.repeat(32)
 const GOOD_SIG = 'aa'.repeat(64)
 const BAD_SIG = 'bb'.repeat(64)
 const UNREAD = 'Couldn\'t load your current linked accounts, so nothing was published. Please try again in a moment.'
+const LIST_UNREAD = 'Couldn\'t load your linked accounts right now. Please try again in a moment.'
+// Divine's own relay, where a person's list is expected to be.
+const DIVINE = 'wss://relay.divine.video'
 
 async function pageHtml(): Promise<string> {
   const res = await worker.fetch(new Request(`${API}/`), {} as never)
@@ -28,7 +31,7 @@ function scriptBetween(html: string, from: string, to: string): string {
   return html.slice(start, end)
 }
 
-const DEPS = ['document', 'fetch', 'API', 'PROFILE_RELAYS', 'WebSocket', 'setTimeout', 'clearTimeout', 'loadNostrTools',
+const DEPS = ['document', 'fetch', 'API', 'DIVINE_RELAY', 'PROFILE_RELAYS', 'WebSocket', 'setTimeout', 'clearTimeout', 'loadNostrTools',
   'publishEventToRelay', 'activeSigner', 'getActivePubkey', 'signerPubkeyHex', 'setStatus', 'clearStatus', 'setButtonLoading',
   'setAccountInputValue', 'updateSignerSummary', 'currentProofContext', 'renderLinkedVerifications', 'buildNip98EventForRevoke',
   'OAUTH_PLATFORMS_SET']
@@ -74,6 +77,11 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
   const timers = new Map<number, { fn: () => void, ms: number }>()
   let nextTimer = 1
   const dialog = { style: { display: '' }, dataset: opts.removing ?? {} }
+  const elements = new Map<string, { textContent: string, innerHTML: string }>()
+  const element = (id: string) => {
+    if (!elements.has(id)) elements.set(id, { textContent: '', innerHTML: '' })
+    return elements.get(id)!
+  }
 
   class StandInSocket {
     onopen?: () => void
@@ -112,6 +120,7 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
 
   const env: Record<string, unknown> = {
     API,
+    DIVINE_RELAY: DIVINE,
     PROFILE_RELAYS: Object.keys(relays),
     WebSocket: StandInSocket,
     setTimeout: (fn: () => void, ms: number) => { const id = nextTimer++; timers.set(id, { fn, ms }); return id },
@@ -120,7 +129,7 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
       if (opts.noChecker) throw new TypeError('Failed to fetch dynamically imported module')
       return { pure: { verifyEvent: (e: NostrEvent) => { checked.push(e); return e.sig === GOOD_SIG } } }
     },
-    document: { getElementById: (id: string) => id === 'remove-confirm-dialog' ? dialog : { textContent: '', innerHTML: '' } },
+    document: { getElementById: (id: string) => id === 'remove-confirm-dialog' ? dialog : element(id) },
     fetch: async () => ({ ok: true }),
     publishEventToRelay: async (_relay: string, signed: NostrEvent) => {
       published.push(signed)
@@ -151,7 +160,7 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
   const fireTimers = () => {
     for (const [id, timer] of [...timers]) { timers.delete(id); timer.fn() }
   }
-  return { env, published, publishedTags, errors, listed, steps, requests, checked, timers, fireTimers }
+  return { env, published, publishedTags, errors, listed, steps, requests, checked, timers, fireTimers, element }
 }
 
 const GITHUB = iTag('github', 'octocat', 'gist1')
@@ -219,10 +228,10 @@ describe('publishing a linked account', () => {
     ])
   })
 
-  it('still uses the newest copy when another relay can\'t be reached', async () => {
+  it('still uses the newest copy when Divine\'s relay can\'t be reached', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': 'unreachable',
+      [DIVINE]: 'unreachable',
       'wss://two.example': [event(10011, 100, [GITHUB])],
       'wss://three.example': [event(10011, 200, [GITHUB, MASTODON])],
     })
@@ -319,12 +328,22 @@ describe('publishing a linked account', () => {
 
   it('adds the first linked account for someone with none yet', async () => {
     const page = await loadPage()
-    const h = harness({ 'wss://one.example': [], 'wss://two.example': [], 'wss://three.example': 'unreachable' })
+    const h = harness({ [DIVINE]: [], 'wss://two.example': 'unreachable', 'wss://three.example': 'unreachable' })
 
     await page(h.env).publishIdentityTagToNostr()
 
     expect(h.errors()).toEqual([])
     expect(h.publishedTags()).toEqual([NEW_CLAIM])
+  })
+
+  it('publishes nothing when Divine\'s relay can\'t be reached and the others have no copy', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: 'unreachable', 'wss://two.example': [], 'wss://three.example': [] })
+
+    await page(h.env).publishIdentityTagToNostr()
+
+    expect(h.published).toEqual([])
+    expect(h.errors()).toEqual([['publish-status', UNREAD, 'error']])
   })
 
   it('publishes nothing when no relay could be read', async () => {
@@ -340,9 +359,9 @@ describe('publishing a linked account', () => {
   it('publishes nothing when every copy the relays sent was ignored', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [event(10011, 100, [GITHUB], { sig: BAD_SIG })],
+      [DIVINE]: [event(10011, 100, [GITHUB], { sig: BAD_SIG })],
       'wss://two.example': [event(10011, 200, [GITHUB], { pubkey: OTHER_PUBKEY })],
-      'wss://three.example': 'unreachable',
+      'wss://three.example': [],
     })
 
     await page(h.env).publishIdentityTagToNostr()
@@ -354,7 +373,7 @@ describe('publishing a linked account', () => {
   it('publishes nothing when the relays sent copies but they couldn\'t be checked', async () => {
     const page = await loadPage()
     const h = harness({
-      'wss://one.example': [],
+      [DIVINE]: [],
       'wss://two.example': [event(10011, 100, [GITHUB])],
       'wss://three.example': [],
     }, { noChecker: true })
@@ -367,7 +386,7 @@ describe('publishing a linked account', () => {
 
   it('doesn\'t need the checker when no relay sent a copy', async () => {
     const page = await loadPage()
-    const h = harness({ 'wss://one.example': [], 'wss://two.example': [], 'wss://three.example': [] }, { noChecker: true })
+    const h = harness({ [DIVINE]: [], 'wss://two.example': [], 'wss://three.example': [] }, { noChecker: true })
 
     await page(h.env).publishIdentityTagToNostr()
 
@@ -387,7 +406,7 @@ describe('publishing a linked account', () => {
 
   it('leaves no timer running when a socket can\'t be opened', async () => {
     const page = await loadPage()
-    const h = harness({ 'wss://one.example': 'throws', 'wss://two.example': [], 'wss://three.example': [] })
+    const h = harness({ [DIVINE]: [], 'wss://two.example': 'throws', 'wss://three.example': 'throws' })
 
     await page(h.env).publishIdentityTagToNostr()
 
@@ -422,6 +441,28 @@ describe('listing linked accounts to manage', () => {
 
     expect(h.listed).toEqual([[GITHUB, MASTODON]])
   })
+
+  it('says the list couldn\'t be loaded when it couldn\'t be read', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: 'unreachable', 'wss://two.example': [], 'wss://three.example': 'refuses' })
+
+    await page(h.env).loadLinkedVerifications()
+
+    expect(h.listed).toEqual([])
+    expect(h.errors()).toEqual([['manage-status', LIST_UNREAD, 'error']])
+    expect(h.element('manage-links-container').textContent).toBe('')
+  })
+
+  it('says there are none when the list was read and is empty', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [], 'wss://two.example': 'unreachable', 'wss://three.example': [] })
+
+    await page(h.env).loadLinkedVerifications()
+
+    expect(h.listed).toEqual([])
+    expect(h.errors()).toEqual([])
+    expect(h.element('manage-links-container').textContent).toBe('No linked verifications found.')
+  })
 })
 
 describe('removing a linked account', () => {
@@ -454,13 +495,53 @@ describe('removing a linked account', () => {
     expect(h.publishedTags()).toEqual([GITHUB, BLUESKY])
   })
 
-  it('publishes nothing when no relay could be read', async () => {
+  it('publishes nothing when the current list couldn\'t be read', async () => {
     const page = await loadPage()
-    const h = harness({ 'wss://one.example': 'unreachable', 'wss://two.example': 'unreachable', 'wss://three.example': 'refuses' }, { removing })
+    const h = harness({ [DIVINE]: 'unreachable', 'wss://two.example': [], 'wss://three.example': 'refuses' }, { removing })
 
     await page(h.env).executeRemoveVerification()
 
     expect(h.published).toEqual([])
     expect(h.errors()).toEqual([['manage-status', UNREAD, 'error']])
+  })
+})
+
+describe('loading nostr-tools', () => {
+  // Runs the page's real loader. Functions made with new Function can't use
+  // import() here, so the loader's two import() calls go to a stand-in that
+  // counts them and fails until `available` is set.
+  async function loadLoader() {
+    const source = scriptBetween(await pageHtml(), 'async function loadNostrTools()', 'function safeDecodeText(input)')
+    expect(source.match(/\bimport\(/g)).toHaveLength(2)
+    let imports = 0
+    const state = { available: false }
+    const importModule = async (address: string) => {
+      imports++
+      if (!state.available) throw new TypeError(`Failed to fetch dynamically imported module: ${address}`)
+      return { address }
+    }
+    const loadNostrTools = new Function('importModule', 'NOSTR_TOOLS_NIP46_URL', 'NOSTR_TOOLS_PURE_URL',
+      `let nostrToolsPromise = null;\n${source.replace(/\bimport\(/g, 'importModule(')}\nreturn loadNostrTools;`)(importModule, 'nip46-address', 'pure-address')
+    return { loadNostrTools: loadNostrTools as () => Promise<{ nip46: { address: string }, pure: { address: string } }>, state, imports: () => imports }
+  }
+
+  it('tries again after an import fails', async () => {
+    const l = await loadLoader()
+    await expect(l.loadNostrTools()).rejects.toThrow('Failed to fetch')
+    await expect(l.loadNostrTools()).rejects.toThrow('Failed to fetch')
+    expect(l.imports()).toBe(4)
+
+    l.state.available = true
+    const tools = await l.loadNostrTools()
+    expect(tools).toEqual({ nip46: { address: 'nip46-address' }, pure: { address: 'pure-address' } })
+  })
+
+  it('keeps a successful import', async () => {
+    const l = await loadLoader()
+    l.state.available = true
+    const first = await l.loadNostrTools()
+    const second = await l.loadNostrTools()
+    expect(second).toBe(first)
+    expect(l.imports()).toBe(2)
   })
 })
