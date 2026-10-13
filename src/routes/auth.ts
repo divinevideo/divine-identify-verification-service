@@ -7,7 +7,6 @@ import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
 import { deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
 import { getCountedSignIn } from '../oauth/signin-records'
-import { createBinding, bindingSetCookie, BINDING_COOKIE, BINDING_CLEAR_COOKIE } from '../oauth/binding'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
@@ -205,34 +204,9 @@ auth.post('/nostr/login', async (c) => {
   })
 })
 
-// The start functions return Response.redirect, whose headers can't be
-// changed, so the cookie goes on a copy. Errors get no cookie.
-function withBindingCookie(response: Response, value: string): Response {
-  if (response.status !== 302) return response
-  const headers = new Headers(response.headers)
-  headers.append('Set-Cookie', bindingSetCookie(value))
-  return new Response(null, { status: 302, headers })
-}
-
 // Start OAuth flow
 // GET /auth/:platform/start?pubkey=hex&return_url=https://...&handle=user.bsky.social (handle required for bluesky)
 auth.get('/:platform/start', async (c) => {
-  // The provider always returns to OAUTH_REDIRECT_BASE, and the binding
-  // cookie only comes back to the host that set it, so start there. Compare
-  // host only, not scheme: a request can reach this worker over a different
-  // scheme than the public base (a tunnel in local development, or a proxy
-  // in front of it). A request that already reached the worker on localhost
-  // is treated as local development and never redirected, since the live
-  // verifier is never reached that way.
-  const base = c.env.OAUTH_REDIRECT_BASE
-  if (base) {
-    const here = new URL(c.req.url)
-    const finishing = new URL(base)
-    if (here.host !== finishing.host && !isLocalHostname(here.hostname)) {
-      return c.redirect(`${finishing.origin}${here.pathname}${here.search}`, 302)
-    }
-  }
-
   const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
   const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
   if (!ipLimit.allowed) {
@@ -254,11 +228,10 @@ auth.get('/:platform/start', async (c) => {
   }
 
   const normalizedPubkey = normalizePubkey(pubkey)
-  const binding = await createBinding()
 
   switch (platform) {
     case 'twitter':
-      return withBindingCookie(await startTwitterOAuth(c.env, normalizedPubkey, returnUrl, binding.hash), binding.value)
+      return await startTwitterOAuth(c.env, normalizedPubkey, returnUrl, undefined)
 
     case 'bluesky': {
       // People type handles the way Bluesky shows them, with a leading @.
@@ -266,18 +239,18 @@ auth.get('/:platform/start', async (c) => {
       if (!bareHandle) {
         return c.json({ error: 'Missing handle parameter (e.g., user.bsky.social)' }, 400)
       }
-      return withBindingCookie(await startBlueskyOAuth(c.env, normalizedPubkey, bareHandle, returnUrl, binding.hash), binding.value)
+      return await startBlueskyOAuth(c.env, normalizedPubkey, bareHandle, returnUrl, undefined)
     }
 
     case 'youtube':
-      return withBindingCookie(await startYouTubeOAuth(c.env, normalizedPubkey, returnUrl, binding.hash), binding.value)
+      return await startYouTubeOAuth(c.env, normalizedPubkey, returnUrl, undefined)
 
     case 'tiktok': {
       const allowSandbox = getCookie(c, 'tiktok_oauth_review') === '1'
       if (!isTikTokOAuthUsable(c.env, allowSandbox)) {
         return c.json({ error: 'TikTok OAuth not configured' }, 503)
       }
-      return withBindingCookie(await startTikTokOAuth(c.env, normalizedPubkey, returnUrl, binding.hash), binding.value)
+      return await startTikTokOAuth(c.env, normalizedPubkey, returnUrl, undefined)
     }
 
     default:
@@ -292,13 +265,7 @@ const SIGN_IN_LABELS: Record<OAuthPlatform, string> = {
   bluesky: 'Bluesky',
 }
 
-// Every way a sign-in finishes clears the binding cookie. Successful sign-ins
-// are logged as bound or unbound, with nothing that identifies the person.
 function finishSignIn(c: Context<{ Bindings: Bindings }>, platform: OAuthPlatform, result: SignInCallbackResult): Response {
-  c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
-  if (result.success) {
-    console.info(`${platform} sign-in finished: ${result.bound ? 'bound' : 'unbound'}`)
-  }
   const params: Record<string, string> = result.success
     ? { oauth_verified: 'true', platform, identity: result.identity || '' }
     : { oauth_error: 'Verification failed' }
@@ -321,7 +288,6 @@ async function redirectAfterUnfinishedSignIn(
   // a misconfigured app can be told apart from a person saying no. The
   // description and the state id are never logged.
   console.warn(`${platform} sign-in returned an error:`, /^[a-z_]{1,64}$/.test(providerError) ? providerError : 'other')
-  c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
 
   // The page shows this after "Sign-in was not completed: ". `access_denied`
   // means the request was refused, usually by the person; any other code means
@@ -368,12 +334,10 @@ auth.get('/twitter/callback', async (c) => {
   }
 
   try {
-    const bindingCookie = getCookie(c, BINDING_COOKIE)
-    const result = await handleTwitterCallback(c.env, code, state, bindingCookie)
+    const result = await handleTwitterCallback(c.env, code, state)
     return finishSignIn(c, 'twitter', result)
   } catch (err) {
     console.error('Twitter callback error:', err instanceof Error ? err.message : err)
-    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -391,12 +355,10 @@ auth.get('/youtube/callback', async (c) => {
   }
 
   try {
-    const bindingCookie = getCookie(c, BINDING_COOKIE)
-    const result = await handleYouTubeCallback(c.env, code, state, bindingCookie)
+    const result = await handleYouTubeCallback(c.env, code, state)
     return finishSignIn(c, 'youtube', result)
   } catch (err) {
     console.error('YouTube callback error:', err instanceof Error ? err.message : err)
-    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -414,12 +376,10 @@ auth.get('/tiktok/callback', async (c) => {
   }
 
   try {
-    const bindingCookie = getCookie(c, BINDING_COOKIE)
-    const result = await handleTikTokCallback(c.env, code, state, bindingCookie)
+    const result = await handleTikTokCallback(c.env, code, state)
     return finishSignIn(c, 'tiktok', result)
   } catch (err) {
     console.error('TikTok callback error:', err instanceof Error ? err.message : err)
-    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -438,12 +398,10 @@ auth.get('/bluesky/callback', async (c) => {
   }
 
   try {
-    const bindingCookie = getCookie(c, BINDING_COOKIE)
-    const result = await handleBlueskyCallback(c.env, code, state, iss, bindingCookie)
+    const result = await handleBlueskyCallback(c.env, code, state, iss)
     return finishSignIn(c, 'bluesky', result)
   } catch (err) {
     console.error('Bluesky callback error:', err instanceof Error ? err.message : err)
-    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })

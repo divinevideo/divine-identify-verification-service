@@ -1,7 +1,6 @@
 import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
-import { isSignInBound } from './binding'
 
 const TWITTER_AUTH_URL = 'https://twitter.com/i/oauth2/authorize'
 const TWITTER_TOKEN_URL = 'https://api.twitter.com/2/oauth2/token'
@@ -20,7 +19,7 @@ export async function startTwitterOAuth(
   env: Bindings,
   pubkey: string,
   returnUrl: string,
-  bindingHash: string,
+  startCheck: string | undefined,
 ): Promise<Response> {
   // The explicit checks after isTwitterOAuthUsable let TypeScript see both values are set.
   if (!isTwitterOAuthUsable(env) || !env.TWITTER_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
@@ -39,7 +38,7 @@ export async function startTwitterOAuth(
     codeVerifier: verifier,
     returnUrl,
     createdAt: Date.now(),
-    bindingHash,
+    ...(startCheck ? { startCheck } : {}),
   }
 
   await storeOAuthState(env.CACHE_KV, stateId, state)
@@ -62,7 +61,6 @@ export async function handleTwitterCallback(
   env: Bindings,
   code: string,
   stateId: string,
-  bindingCookie: string | undefined,
 ): Promise<SignInCallbackResult> {
   const state = await getOAuthState(env.CACHE_KV, stateId)
   if (!state || state.platform !== 'twitter') {
@@ -70,8 +68,6 @@ export async function handleTwitterCallback(
   }
 
   await deleteOAuthState(env.CACHE_KV, stateId)
-
-  const bound = await isSignInBound(state, bindingCookie)
 
   if (!env.TWITTER_CLIENT_ID || !env.TWITTER_CLIENT_SECRET || !env.OAUTH_REDIRECT_BASE) {
     return { success: false, returnUrl: state.returnUrl, error: 'Twitter OAuth not configured' }
@@ -136,8 +132,7 @@ export async function handleTwitterCallback(
     verified: true,
     method: 'oauth',
     checked_at: Math.floor(Date.now() / 1000),
-    bound,
   })
 
-  return { success: true, returnUrl: state.returnUrl, identity, bound }
+  return { success: true, returnUrl: state.returnUrl, identity }
 }

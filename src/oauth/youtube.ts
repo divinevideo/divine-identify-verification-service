@@ -1,7 +1,6 @@
 import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification } from './state'
-import { isSignInBound } from './binding'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -20,7 +19,7 @@ export async function startYouTubeOAuth(
   env: Bindings,
   pubkey: string,
   returnUrl: string,
-  bindingHash: string,
+  startCheck: string | undefined,
 ): Promise<Response> {
   // The explicit checks after isYouTubeOAuthUsable let TypeScript see both values are set.
   if (!isYouTubeOAuthUsable(env) || !env.GOOGLE_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
@@ -39,7 +38,7 @@ export async function startYouTubeOAuth(
     codeVerifier: verifier,
     returnUrl,
     createdAt: Date.now(),
-    bindingHash,
+    ...(startCheck ? { startCheck } : {}),
   }
 
   await storeOAuthState(env.CACHE_KV, stateId, state)
@@ -63,7 +62,6 @@ export async function handleYouTubeCallback(
   env: Bindings,
   code: string,
   stateId: string,
-  bindingCookie: string | undefined,
 ): Promise<SignInCallbackResult> {
   const state = await getOAuthState(env.CACHE_KV, stateId)
   if (!state || state.platform !== 'youtube') {
@@ -71,8 +69,6 @@ export async function handleYouTubeCallback(
   }
 
   await deleteOAuthState(env.CACHE_KV, stateId)
-
-  const bound = await isSignInBound(state, bindingCookie)
 
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.OAUTH_REDIRECT_BASE) {
     return { success: false, returnUrl: state.returnUrl, error: 'YouTube OAuth not configured' }
@@ -140,8 +136,7 @@ export async function handleYouTubeCallback(
     verified: true,
     method: 'oauth',
     checked_at: Math.floor(Date.now() / 1000),
-    bound,
   })
 
-  return { success: true, returnUrl: state.returnUrl, identity, bound }
+  return { success: true, returnUrl: state.returnUrl, identity }
 }

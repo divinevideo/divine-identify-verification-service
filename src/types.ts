@@ -43,8 +43,9 @@ export interface OAuthState {
   // Bluesky: the account and handle the sign-in started with
   did?: string
   handle?: string
-  // SHA-256 (hex) of the binding cookie set at start.
-  bindingHash?: string
+  // Hash of the start secret the client keeps (#113). Absent for a sign-in
+  // started without one, which can never be confirmed.
+  startCheck?: string
 }
 
 export interface OAuthVerification {
@@ -59,8 +60,6 @@ export interface OAuthVerification {
   account_id?: string
   // The linked handle, so unlinking by handle or by DID removes both records.
   handle?: string
-  // Finished in the browser that started it (see src/oauth/binding.ts).
-  bound?: boolean
   // Set once the account owner confirmed the sign-in (#113). Records without
   // it stop counting when confirmation is required.
   confirmed?: true
@@ -155,5 +154,4 @@ export interface SignInCallbackResult {
   returnUrl: string
   error?: string
   identity?: string
-  bound?: boolean
 }
