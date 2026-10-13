@@ -104,3 +104,62 @@ describe('signing in inside the Divine app', () => {
     expect(h.statuses.map(([, msg]) => msg).join(' ')).not.toContain('No Nostr extension found')
   })
 })
+
+// Runs the page's real updateSignerSummary against a stub Step 1. The signer
+// state lives in the loaded code, so clearSigner can drop it between calls.
+async function summaryHarness(opts: { embedded: boolean, signer: boolean, source: string }) {
+  const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+  const source = scriptBetween(html, 'function signerSourceLabel(source)', 'function isBrowserSignerAvailable()')
+  const elements: Record<string, { hidden?: boolean, style?: { display: string }, textContent?: string }> = {
+    'step1-signin-options': { hidden: false },
+    'step1-remote-signer-options': { hidden: false },
+    'signer-session-summary': { style: { display: 'none' }, textContent: '' },
+  }
+  const document = { getElementById: (id: string) => elements[id] ?? null }
+  const window = opts.embedded ? { __divineEmbedded: true } : {}
+  const signer = opts.signer ? extension : null
+  const page = new Function('document', 'window', 'signer', 'source', 'key', `
+    let activeSigner = signer;
+    let activeSignerSource = signer ? source : null;
+    let signerPubkeyHex = signer ? key : null;
+    ${source}
+    return {
+      updateSignerSummary,
+      clearSigner() { activeSigner = null; activeSignerSource = null; signerPubkeyHex = null; },
+    };`)(document, window, signer, opts.source, KEY)
+  return { page, elements, clearSigner: page.clearSigner as () => void }
+}
+
+describe('Step 1 inside the Divine app', () => {
+  it('inside the Divine app, Step 1 shows only that you are signed in', async () => {
+    const h = await summaryHarness({ embedded: true, signer: true, source: 'embedded' })
+    h.page.updateSignerSummary()
+    expect(h.elements['step1-signin-options'].hidden).toBe(true)
+    expect(h.elements['step1-remote-signer-options'].hidden).toBe(true)
+    expect(h.elements['signer-session-summary'].style?.display).toBe('block')
+    expect(h.elements['signer-session-summary'].textContent).toContain('Connected via your Divine account.')
+  })
+
+  it('in a browser, Step 1 keeps every way to sign in', async () => {
+    const h = await summaryHarness({ embedded: false, signer: true, source: 'keycast' })
+    h.page.updateSignerSummary()
+    expect(h.elements['step1-signin-options'].hidden).toBe(false)
+    expect(h.elements['step1-remote-signer-options'].hidden).toBe(false)
+  })
+
+  it('inside the Divine app, Step 1 keeps the ways to sign in after signing in with the Divine login instead', async () => {
+    const h = await summaryHarness({ embedded: true, signer: true, source: 'keycast' })
+    h.page.updateSignerSummary()
+    expect(h.elements['step1-signin-options'].hidden).toBe(false)
+    expect(h.elements['step1-remote-signer-options'].hidden).toBe(false)
+  })
+
+  it('inside the Divine app, Step 1 shows the ways to sign in again once the signer is gone', async () => {
+    const h = await summaryHarness({ embedded: true, signer: true, source: 'embedded' })
+    h.page.updateSignerSummary()
+    h.clearSigner()
+    h.page.updateSignerSummary()
+    expect(h.elements['step1-signin-options'].hidden).toBe(false)
+    expect(h.elements['step1-remote-signer-options'].hidden).toBe(false)
+  })
+})

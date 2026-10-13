@@ -291,7 +291,22 @@ describe('verifier twitter oauth gating', () => {
   it('documents Twitter sign-in when it is configured', async () => {
     const docs = oauthDocsSection(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig))
     expect(docs).toContain('<h2>OAuth Verification (Twitter, Bluesky)</h2>')
-    expect(docs).toContain('/auth/twitter/start?pubkey=hex64')
+    expect(docs).toContain('POST https://verifier.divine.video/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}')
+  })
+
+  it('documents the sign-in start as a POST with a start check, and the confirm step', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), { OAUTH_REDIRECT_BASE: 'https://verifier.divine.video', TWITTER_CLIENT_ID: 'x', TWITTER_CLIENT_SECRET: 'y' } as never)).text()
+    expect(html).toContain('POST https://verifier.divine.video/auth/bluesky/start')
+    expect(html).toContain('POST https://verifier.divine.video/auth/confirm')
+    expect(html).not.toContain('GET https://verifier.divine.video/auth/bluesky/start?')
+  })
+
+  it('gives the hashing rule for the start check and the binding, as the README does', async () => {
+    const docs = oauthDocsSection(await homeHtml())
+    expect(docs).toContain(`"start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"`)
+    expect(docs).toContain("The new claim's tag carries a fourth value, <code>base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))</code>.")
+    expect(docs).toContain('keeps a random start secret (32 random bytes written as 43 base64url characters), sends its hash as <code>start_check</code>')
+    expect(docs).toContain('Both hashes in this flow (the start check and the binding) are SHA-256 over the UTF-8 text shown, meaning the 43-character strings and not the raw bytes, written as base64url without padding.')
   })
 })
 
@@ -422,6 +437,30 @@ describe('signing in with a Divine login first', () => {
     expect(end).toBeGreaterThan(start)
     return html.slice(start, end)
   }
+
+  it('wraps Step 1\'s sign-in options so the Divine app can hide them once signed in', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    const options = html.slice(html.indexOf('id="step1-signin-options"'), html.indexOf('id="signer-session-summary"'))
+    expect(options).toContain('id="connect-keycast-btn"')
+    expect(options).toContain('id="connect-nostr-btn"')
+    expect(options).toContain('id="verify-pubkey-input"')
+    expect(options).toContain('<p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>')
+    // The wrapper closes before the signed-in summary, so the summary still
+    // shows: one more </div> than <div, the wrapper's own.
+    expect((options.match(/<\/div>/g) ?? []).length).toBe((options.match(/<div\b/g) ?? []).length + 1)
+  })
+
+  it('wraps the remote signer options too, after the signed-in summary', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    const summary = html.indexOf('id="signer-session-summary"')
+    const remote = html.slice(html.indexOf('id="step1-remote-signer-options"'), html.indexOf('<div id="verify-login-status"'))
+    expect(summary).toBeGreaterThan(-1)
+    expect(summary).toBeLessThan(html.indexOf('id="step1-remote-signer-options"'))
+    expect(summary).toBeLessThan(html.indexOf('id="remote-signer-details"'))
+    expect(remote).toContain('id="remote-signer-details"')
+    // The wrapper closes before the login status, which stays visible.
+    expect((remote.match(/<\/div>/g) ?? []).length).toBe((remote.match(/<div\b/g) ?? []).length + 1)
+  })
 
   it('leads Step 1 with the Divine login', async () => {
     const card = step1(await homeHtml())

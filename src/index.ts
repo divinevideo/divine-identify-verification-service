@@ -149,9 +149,9 @@ app.get('/', (c) => {
     ? ' Existing TikTok OAuth verifications remain recognized.'
     : ''
   const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
-  const twitterOAuthInlineExample = twitterOAuthEnabled ? `GET ${origin}/auth/twitter/start?pubkey=hex64&amp;return_url=${origin}/#verify-here\n` : ''
-  const ytOAuthInlineExample = hasYouTube ? `\nGET ${origin}/auth/youtube/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
-  const ttOAuthInlineExample = hasTikTok && tiktokOAuthEnabled ? `\nGET ${origin}/auth/tiktok/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
+  const twitterOAuthInlineExample = twitterOAuthEnabled ? `POST ${origin}/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}\n` : ''
+  const ytOAuthInlineExample = hasYouTube ? `\nPOST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : ''
+  const ttOAuthInlineExample = hasTikTok && tiktokOAuthEnabled ? `\nPOST ${origin}/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}` : ''
   const extraLookupPlatforms = (hasYouTube ? ",'youtube'" : '') + (hasTikTok ? ",'tiktok'" : '')
   const oauthPlatformOptions = oauthPlatforms.map(platform => `<option value="${platform.value}">${platform.optionLabel}</option>`).join('')
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
@@ -621,6 +621,7 @@ app.get('/', (c) => {
       <div class="verify-card">
         <span class="step-pill">Step 1</span>
         <h3 style="margin-top:0;">Sign in with your Divine login</h3>
+        <div id="step1-signin-options">
         <p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
           <button id="connect-keycast-btn" class="verify-btn verify-btn-primary" type="button">Sign in with Divine login</button>
@@ -628,7 +629,9 @@ app.get('/', (c) => {
         </div>
         <label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you sign in)</label>
         <input id="verify-pubkey-input" class="field-input" type="text" readonly placeholder="Filled in when you sign in">
+        </div>
         <p id="signer-session-summary" class="field-help" style="display:none;"></p>
+        <div id="step1-remote-signer-options">
         <details class="advanced-proof" id="remote-signer-details" style="margin-top:0.75rem;">
           <summary>Remote signer options: bunker and Nostr Connect</summary>
           <div class="advanced-proof-inner">
@@ -651,6 +654,7 @@ app.get('/', (c) => {
             </div>
           </div>
         </details>
+        </div>
         <div id="verify-login-status" class="status-row"></div>
         <div id="verify-global-status" class="status-row"></div>
       </div>
@@ -888,15 +892,17 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     <section id="oauth">
       <h2>OAuth Verification (${oauthPlatformNames.join(', ')})</h2>
       <p>Users can verify by logging in instead of posting a proof.</p>
-      <p>The verifier page only reports sign-ins it started itself. The <code>return_url</code> in these examples is the verifier page; a Divine app that starts its own sign-in should return to its own page on a Divine site and confirm the result with the status check below.</p>
+      <p>The verifier page only reports sign-ins it started itself. A client starting its own sign-in keeps a random start secret (32 random bytes written as 43 base64url characters), sends its hash as <code>start_check</code>, and gets back the provider page to open. The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>. The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.</p>
+      <p>The new claim's tag carries a fourth value, <code>base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))</code>. Both hashes in this flow (the start check and the binding) are SHA-256 over the UTF-8 text shown, meaning the 43-character strings and not the raw bytes, written as base64url without padding.</p>
 
       <h3>Start OAuth</h3>
-      <pre>${twitterOAuthInlineExample}GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=example.bsky.social&amp;return_url=${origin}/#verify-here${ytOAuthInlineExample}${ttOAuthInlineExample}</pre>
+      <pre>${twitterOAuthInlineExample}POST ${origin}/auth/bluesky/start  {"pubkey":"hex64","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}${ytOAuthInlineExample}${ttOAuthInlineExample}
+POST ${origin}/auth/confirm  {"code":"…","start_secret":"…","event":{signed kind 10011}}</pre>
 
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
 
-      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.${tiktokOAuthHistoryNote}</div>
+      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A sign-in counts once you confirm it by publishing; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">
@@ -1003,6 +1009,13 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     }
 
     function updateSignerSummary() {
+      // Inside the Divine app you're signed in through the app, so Step 1 shows
+      // just that, without the other ways to sign in.
+      const signedInThroughApp = !!(window.__divineEmbedded && activeSigner && activeSignerSource === 'embedded');
+      for (const id of ['step1-signin-options', 'step1-remote-signer-options']) {
+        const options = document.getElementById(id);
+        if (options) options.hidden = signedInThroughApp;
+      }
       const el = document.getElementById('signer-session-summary');
       if (!el) return;
       const parts = [];
