@@ -158,6 +158,16 @@ describe('a platform that does not answer', () => {
     type Step = keyof typeof STEPS
     type Answer = number | 'unreachable' | Response
 
+    // Requests the stub below has no answer for. Throwing isn't enough to fail
+    // a test: a lookup reports a failed fetch as an outage, which is what most
+    // of these tests expect.
+    let unexpected: string[] = []
+    afterEach(() => {
+      const requested = unexpected
+      unexpected = []
+      expect(requested).toEqual([])
+    })
+
     // Every step answers as a working, existing account with no identity-link
     // record, unless `answers` says otherwise. The proof post doesn't exist.
     function bluesky(answers: Partial<Record<Step | 'post', Answer>> = {}) {
@@ -175,6 +185,7 @@ describe('a platform that does not answer', () => {
           return answer(answers['identity-link record lookup'], () => Response.json({ records: [] }))
         }
         if (url.includes('getPostThread')) return answer(answers.post, () => new Response(null, { status: 404 }))
+        unexpected.push(url)
         throw new Error(`unexpected fetch ${url}`)
       }))
     }
