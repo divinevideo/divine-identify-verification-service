@@ -18,7 +18,7 @@ export type Bindings = {
   TIKTOK_CLIENT_KEY?: string
   TIKTOK_CLIENT_SECRET?: string
   TIKTOK_OAUTH_ENABLED?: string
-  // Base URL for OAuth callbacks (e.g., https://verify.divine.video)
+  // Base URL for OAuth callbacks (e.g., https://verifier.divine.video)
   OAUTH_REDIRECT_BASE?: string
   // "required" once enough people have an app that confirms sign-ins (#113);
   // anything else counts unconfirmed sign-ins for a day.
