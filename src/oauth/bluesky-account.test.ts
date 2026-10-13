@@ -144,6 +144,21 @@ describe('Bluesky sign-in confirms the account it started with', () => {
     expect(result.success).toBe(false)
     expect(recorded).toEqual([])
   })
+
+  // A DID document lookup that doesn't answer leaves the account unconfirmed,
+  // the same as one that finds nothing.
+  it.each([
+    ['answers 503', () => json({ error: 'unavailable' }, 503)],
+    ['can\'t be reached', () => { throw new TypeError('fetch failed') }],
+  ])('refuses when the DID document lookup %s', async (_label, outage) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const answers = network(DID, [alice])
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === `https://plc.directory/${DID}` ? outage() : answers(input))
+    const { result, recorded } = await signInReturning(DID, [alice], fetchMock as typeof fetch)
+    expect(result).toMatchObject({ success: false, error: 'Bluesky account not confirmed' })
+    expect(recorded).toEqual([])
+  })
 })
 
 function discovery(metadataIssuer = ISSUER) {
@@ -183,5 +198,31 @@ describe('Bluesky sign-in discovery', () => {
     const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
     const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
     expect(response.status).toBe(400)
+  })
+
+  // Sign-in treats an account lookup that doesn't answer as one that finds
+  // nothing, and answers as it does for a handle it can't find.
+  it.each([
+    ['handle', 'answers 503', 'com.atproto.identity.resolveHandle', () => json({ error: 'unavailable' }, 503)],
+    ['handle', 'can\'t be reached', 'com.atproto.identity.resolveHandle', () => { throw new TypeError('fetch failed') }],
+    ['DID document', 'answers 503', `https://plc.directory/${DID}`, () => json({ error: 'unavailable' }, 503)],
+    ['DID document', 'can\'t be reached', `https://plc.directory/${DID}`, () => { throw new TypeError('fetch failed') }],
+  ])('a %s lookup that %s stops the sign-in before it starts', async (_step, _label, lookupUrl, outage) => {
+    const answers = discovery()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes(lookupUrl) ? outage() : answers(input)))
+    const cache = kv()
+    const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'Could not discover Bluesky authorization server for this handle' })
+    expect([...cache.store.keys()]).toEqual([])
+  })
+
+  it('doesn\'t mistake a failure in its own lookup code for a lookup that found nothing', async () => {
+    vi.stubGlobal('fetch', discovery())
+    const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
+    // A lone surrogate can't be put in a URL, so building the lookup throws.
+    await expect(startBlueskyOAuth(env, PUBKEY, '\uD800', 'https://verifier.divine.video/', BINDING_HASH)).rejects.toThrow(URIError)
   })
 })
