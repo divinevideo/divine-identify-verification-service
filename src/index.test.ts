@@ -168,6 +168,11 @@ describe('verifier tiktok oauth gating', () => {
     expect(response.headers.get('vary')).toBe('Cookie')
   })
 
+  it('tells the browser not to send the page address to other sites', async () => {
+    const response = await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+  })
+
   it('does not advertise TikTok in the no-posting sign-in instructions', async () => {
     const html = await homeHtml('https://verifier.divine.video/', twitterOAuthConfig)
     const marker = 'sign in to it from this page'

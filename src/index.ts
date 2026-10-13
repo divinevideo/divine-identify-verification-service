@@ -157,6 +157,9 @@ app.get('/', (c) => {
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
   c.header('Cache-Control', 'private, no-store')
+  // The page holds a sign-in's one-time code in its address for a moment;
+  // never send its address to other sites.
+  c.header('Referrer-Policy', 'no-referrer')
   // TODO(#39): Remove cookie variance when the OAuth reviewer override is retired.
   c.header('Vary', 'Cookie')
   return c.html(`<!DOCTYPE html>
@@ -2017,14 +2020,15 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
 
     // A sign-in this page started, remembered across the trip to the provider so
     // the page only reports results for sign-ins it actually began. Kept in
-    // localStorage under the sign-in's one-time code, so a return that opens
-    // in another tab of the same browser still finds it.
+    // localStorage under the sign-in's id (the signin nonce), so a return that
+    // opens in another tab of the same browser still finds it.
     const PENDING_SIGN_IN_KEY = 'verifier_pending_sign_in:';
     // The verifier keeps a sign-in open for 10 minutes and enforces that itself.
     // Its clock starts a little after this page's (at the click), so allow one
     // more minute here rather than turn away a sign-in the verifier recorded.
     const PENDING_SIGN_IN_MAX_AGE_MS = 11 * 60 * 1000;
     const SIGN_IN_PLATFORMS = ['twitter', 'bluesky', 'youtube', 'tiktok'];
+    const SIGN_IN_LABELS = { twitter: 'Twitter', bluesky: 'Bluesky', youtube: 'YouTube', tiktok: 'TikTok' };
     const UNCONFIRMED_SIGN_IN = 'This page could not confirm a sign-in. Start the sign-in again from this page.';
 
     function newSignInNonce() {
@@ -2146,49 +2150,6 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       bringIntoViewOnceLoaded(document.getElementById('verify-global-status'));
     }
 
-    // Asks the verifier whether this account really is linked, and returns the
-    // account name it recorded, or '' if it can't say so. Asks up to three
-    // times, within one 10-second limit, when a request fails outright: a
-    // network error, a server error, or an answer that isn't JSON. A clear
-    // answer, linked or not, is final.
-    async function confirmSignIn(pending, identity) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10000);
-      const url = API + '/auth/' + pending.platform + '/status?' + new URLSearchParams({ pubkey: pending.pubkey, identity }).toString();
-      try {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          if (attempt > 0) {
-            // Wait a moment before trying again, but not past the 10 seconds.
-            await new Promise(resolve => {
-              const wait = setTimeout(resolve, 250 * attempt);
-              controller.signal.addEventListener('abort', () => { clearTimeout(wait); resolve(); }, { once: true });
-            });
-          }
-          if (controller.signal.aborted) return '';
-          let resp;
-          try {
-            resp = await fetch(url, { signal: controller.signal });
-          } catch {
-            // Past the 10 seconds: stop now rather than wait to try again.
-            if (controller.signal.aborted) return '';
-            continue;
-          }
-          if (resp.status >= 500) continue;
-          let data;
-          try {
-            data = await resp.json();
-          } catch {
-            if (controller.signal.aborted) return '';
-            continue;
-          }
-          return resp.ok && data && data.verified === true ? String(data.identity || identity) : '';
-        }
-        return '';
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-
     // Only messages the verifier's sign-in callbacks actually send are shown.
     function signInErrorMessage(reason) {
       if (reason === 'Verification failed') return 'Sign-in was not completed: the account could not be verified.';
@@ -2196,71 +2157,102 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       return 'Sign-in was not completed.';
     }
 
+    const NOT_STARTED_HERE = 'This sign-in wasn\\'t started on this page, so it wasn\\'t linked. If someone sent you a sign-in link, don\\'t continue.';
+    // Set when this page load carried a sign-in return, so start-up doesn't
+    // also pick up a waiting sign-in from before.
+    let signInReturnHandled = false;
+
+    // The verifier puts the one-time code after the # (or, if set to, in the query).
+    function signInCodeFromAddress() {
+      const fromFragment = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('oauth_confirm');
+      if (fromFragment) return fromFragment;
+      return new URLSearchParams(window.location.search).get('oauth_confirm') || '';
+    }
+
+    // An extension (or the Divine app's frame) used to start is connected again
+    // with its public key only; the confirmation it signs proves the key.
+    async function reattachSigner(source) {
+      if (activeSigner) return;
+      if ((source === 'browser' || source === 'embedded') && isBrowserSignerAvailable()) {
+        try { await activateSigner(createBrowserSigner(), source, ''); } catch {}
+      }
+    }
+
+    // Fills in the post form, which Publish reads, so Publish confirms this
+    // sign-in, and says which account signed in.
+    function showWaitingSignIn(pending) {
+      const proofPlatformEl = document.getElementById('proof-platform-select');
+      const proofIdentityEl = document.getElementById('proof-identity-input');
+      const proofProofEl = document.getElementById('proof-proof-input');
+      if (proofPlatformEl && proofIdentityEl) {
+        proofPlatformEl.value = pending.platform;
+        // Setting the value does not fire 'change', so update the labels here.
+        updateProofInputs();
+        proofIdentityEl.value = pending.identity;
+        if (proofProofEl) proofProofEl.value = 'oauth';
+        clearSignInFillOnPlatformChange(proofPlatformEl, proofIdentityEl, proofProofEl, pending.platform, pending.identity);
+      }
+      const label = SIGN_IN_LABELS[pending.platform] || pending.platform;
+      const signedIn = 'Signed in to ' + label + ' as ' + pending.identity + '. Publish to link it to your Divine account.';
+      setStatus('verify-global-status', signedIn, 'ok');
+      // Publish is the next step, and on a phone it is too far below the
+      // message for both to fit on screen. So put the same note beside Publish
+      // and land there.
+      setStatus('publish-status', signedIn, 'ok');
+      watchPublishNote(signedIn, [proofPlatformEl, proofIdentityEl, proofProofEl]);
+      bringIntoViewOnceLoaded(document.getElementById('publish-kind0-btn'));
+    }
+
     async function handleOAuthCallbackMessage() {
       const params = new URLSearchParams(window.location.search);
+      const code = signInCodeFromAddress();
       const verified = params.get('oauth_verified') === 'true';
       const reason = params.get('oauth_error');
-      if (!verified && !reason) return;
+      if (!code && !verified && !reason) return;
+      signInReturnHandled = true;
 
       const platform = params.get('platform') || '';
       const identity = params.get('identity') || '';
       const nonce = params.get('signin') || '';
-      params.delete('signin');
-      params.delete('oauth_verified');
-      params.delete('platform');
-      params.delete('identity');
-      params.delete('oauth_error');
-      const cleanUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
-      window.history.replaceState({}, '', cleanUrl);
+      ['signin', 'oauth_verified', 'platform', 'identity', 'oauth_error', 'oauth_confirm'].forEach(name => params.delete(name));
+      // The code leaves the address before anything else can read it, and
+      // before this function first waits on anything.
+      const hash = window.location.hash.indexOf('oauth_confirm') !== -1 ? '#verify-here' : window.location.hash;
+      window.history.replaceState({}, '', window.location.pathname + (params.toString() ? '?' + params.toString() : '') + hash);
 
-      // A return is used once, whatever it reports.
       const pending = readPendingSignIn(nonce);
-      forgetPendingSignIn(nonce);
-      if (!verified) {
+      if (reason) {
+        if (pending) forgetPendingSignIn(nonce);
         showSignInStatus(signInErrorMessage(reason), 'error');
         return;
       }
-      if (!pending || pending.nonce !== nonce || pending.platform !== platform || !identity) {
-        showSignInStatus(UNCONFIRMED_SIGN_IN, 'error');
+      const handleMatches = !pending || pending.platform !== 'bluesky' || !pending.handle
+        || identity.toLowerCase() === pending.handle;
+      if (!code || !pending || pending.nonce !== nonce || pending.platform !== platform || !identity || !handleMatches) {
+        if (pending) forgetPendingSignIn(nonce);
+        showSignInStatus(code ? NOT_STARTED_HERE : UNCONFIRMED_SIGN_IN, 'error');
         return;
       }
 
-      // Ask the verifier whether this account really is linked before saying so.
-      showSignInStatus('Confirming your sign-in...', 'loading');
-      const proofPlatformEl = document.getElementById('proof-platform-select');
+      pending.code = code;
+      pending.identity = identity;
+      pending.finishedAt = Date.now();
+      savePendingSignIn(pending);
+      await reattachSigner(pending.signer);
+      showWaitingSignIn(pending);
+    }
+
+    // After a reload (a login.divine.video round trip, or the person coming
+    // back to the tab), picks up the newest sign-in still waiting to be
+    // confirmed, unless the post form already holds something else.
+    async function resumeWaitingSignIn() {
+      if (signInReturnHandled) return;
+      const pending = newestWaitingSignIn();
+      if (!pending) return;
       const proofIdentityEl = document.getElementById('proof-identity-input');
-      const proofProofEl = document.getElementById('proof-proof-input');
-      const formBefore = JSON.stringify([proofPlatformEl, proofIdentityEl, proofProofEl].map(el => el ? el.value : ''));
-      const linkedIdentity = await confirmSignIn(pending, identity);
-      if (!linkedIdentity) {
-        showSignInStatus(UNCONFIRMED_SIGN_IN, 'error');
-        return;
-      }
-
-      // Pre-fill the post form, which Publish reads, so Publish works for this
-      // sign-in, unless the person changed that form while it was confirming.
-      const formChanged = JSON.stringify([proofPlatformEl, proofIdentityEl, proofProofEl].map(el => el ? el.value : '')) !== formBefore;
-      if (proofPlatformEl && proofIdentityEl && !formChanged) {
-        proofPlatformEl.value = pending.platform;
-        // Setting the value does not fire 'change', so update the labels here.
-        updateProofInputs();
-        proofIdentityEl.value = linkedIdentity;
-        if (proofProofEl) proofProofEl.value = 'oauth';
-        clearSignInFillOnPlatformChange(proofPlatformEl, proofIdentityEl, proofProofEl, pending.platform, linkedIdentity);
-      }
-      const linked = 'Success. Your ' + pending.platform + ' account is now linked: ' + linkedIdentity + '. ';
-      if (formChanged) {
-        showSignInStatus(linked + 'The Publish form below was left as you changed it.', 'ok');
-        return;
-      }
-      // Publish is the next step, and on a phone it is too far below the
-      // message for both to fit on screen. So put a note beside Publish saying
-      // what it will do, and land there.
-      setStatus('verify-global-status', linked + 'You can now publish this to your Nostr profile below.', 'ok');
-      const note = 'Your ' + pending.platform + ' account ' + linkedIdentity + ' is linked. Publish to add it to your Nostr profile.';
-      setStatus('publish-status', note, 'ok');
-      watchPublishNote(note, [proofPlatformEl, proofIdentityEl, proofProofEl]);
-      bringIntoViewOnceLoaded(document.getElementById('publish-kind0-btn'));
+      if (proofIdentityEl && proofIdentityEl.value && proofIdentityEl.value !== pending.identity) return;
+      await reattachSigner(pending.signer);
+      showWaitingSignIn(pending);
     }
 
     // The note beside Publish says what Publish will do, so it goes as soon as
@@ -2857,6 +2849,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     updateOAuthInputs();
     updateProofInputs();
     handleOAuthCallbackMessage();
+    resumeWaitingSignIn();
     // Sign-ins that failed to start or were abandoned never come back to be
     // used up, so drop the expired ones here too.
     forgetExpiredSignIns();
