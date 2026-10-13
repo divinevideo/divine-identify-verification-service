@@ -298,23 +298,27 @@ describe('a platform that does not answer', () => {
 
     // The warning names the lookup, so operators can tell which service is down.
     it.each([
-      ['handle lookup', 'Bluesky handle lookup answered 503'],
-      ['DID document lookup', 'PLC directory answered 503'],
-      ['identity-link record lookup', 'PDS answered 503'],
-    ] as const)('logs which lookup didn\'t answer: the %s', async (step, logged) => {
+      ['handle lookup', 503, 'Bluesky handle lookup answered 503'],
+      ['DID document lookup', 503, 'PLC directory answered 503'],
+      ['identity-link record lookup', 503, 'PDS answered 503'],
+      ['identity-link record lookup', 'unreachable', 'PDS couldn\'t be reached (TypeError)'],
+    ] as const)('logs which lookup didn\'t answer: the %s (%s)', async (step, outage, logged) => {
       const { env } = createEnv()
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      bluesky({ [step]: 503 })
+      bluesky({ [step]: outage })
       await verify(env, 'bluesky', CLAIMS.bluesky)
       expect(warn).toHaveBeenCalledWith(expect.any(String), logged)
     })
 
-    it('logs which lookup didn\'t answer: a did:web host', async () => {
+    it.each([
+      ['answering 503', () => platformAnswers(503), 'did:web host answered 503'],
+      ['unreachable', platformUnreachable, 'did:web host couldn\'t be reached (TypeError)'],
+    ] as const)('logs which lookup didn\'t answer: a did:web host (%s)', async (_label, outage, logged) => {
       const { env } = createEnv()
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      platformAnswers(503)
+      outage()
       await verify(env, 'bluesky', { identity: 'did:web:example.com', proof: '' })
-      expect(warn).toHaveBeenCalledWith(expect.any(String), 'did:web host answered 503')
+      expect(warn).toHaveBeenCalledWith(expect.any(String), logged)
     })
   })
 
