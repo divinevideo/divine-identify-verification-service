@@ -296,12 +296,25 @@ describe('a platform that does not answer', () => {
       expect(logError).toHaveBeenCalledWith('bluesky check failed:', expect.any(TypeError))
     })
 
-    it('logs which lookup didn\'t answer', async () => {
+    // The warning names the lookup, so operators can tell which service is down.
+    it.each([
+      ['handle lookup', 'Bluesky handle lookup answered 503'],
+      ['DID document lookup', 'PLC directory answered 503'],
+      ['identity-link record lookup', 'PDS answered 503'],
+    ] as const)('logs which lookup didn\'t answer: the %s', async (step, logged) => {
       const { env } = createEnv()
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      bluesky({ 'DID document lookup': 503 })
+      bluesky({ [step]: 503 })
       await verify(env, 'bluesky', CLAIMS.bluesky)
-      expect(warn).toHaveBeenCalledWith(expect.any(String), 'PLC directory answered 503')
+      expect(warn).toHaveBeenCalledWith(expect.any(String), logged)
+    })
+
+    it('logs which lookup didn\'t answer: a did:web host', async () => {
+      const { env } = createEnv()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      platformAnswers(503)
+      await verify(env, 'bluesky', { identity: 'did:web:example.com', proof: '' })
+      expect(warn).toHaveBeenCalledWith(expect.any(String), 'did:web host answered 503')
     })
   })
 
