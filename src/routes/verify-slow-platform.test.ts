@@ -182,3 +182,79 @@ describe('a platform that goes quiet', () => {
     })
   })
 })
+
+describe('a check made of several slow requests', () => {
+  // A Bluesky check asks four things in a row: the handle, its DID document, its
+  // server's identity-link records, and the proof post. Each can answer just
+  // inside the limit on one request, and together they still take far longer.
+  const DID = `did:plc:${'a'.repeat(24)}`
+  const PDS = 'https://pds.example.com'
+  function slowBluesky(eachMs: number): Fetch {
+    const answer = (url: string): Response => {
+      if (url.includes('com.atproto.identity.resolveHandle')) return Response.json({ did: DID })
+      if (url.startsWith(`https://plc.directory/${DID}`)) return Response.json({ service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] })
+      if (url.startsWith(PDS)) return Response.json({ records: [] })
+      return new Response(null, { status: 404 }) // the proof post
+    }
+    return (url) => new Promise((resolve) => setTimeout(() => resolve(answer(url)), eachMs))
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('gives up after fifteen seconds: "couldn\'t check right now", remembered for 5 minutes', async () => {
+    vi.useFakeTimers()
+    const { env, kv } = createEnv()
+    const logWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    stubFetch(slowBluesky(4900)) // four requests: 19.6 seconds in all
+
+    const answer = verify(env, 'bluesky', CLAIMS.bluesky)
+    await vi.advanceTimersByTimeAsync(15_000)
+    const body = await answer
+
+    expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable', cached: false })
+    expect(body.error).toMatch(/Bluesky couldn't be checked right now/)
+    expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
+    expect(logWarn).toHaveBeenCalledWith("bluesky couldn't be checked:", "Bluesky didn't finish within 15 seconds")
+    expect(logError).not.toHaveBeenCalled()
+  })
+
+  it('lets a check that finishes inside the budget give its own answer', async () => {
+    vi.useFakeTimers()
+    const { env } = createEnv()
+    stubFetch(slowBluesky(3000)) // four requests: 12 seconds in all
+
+    const answer = verify(env, 'bluesky', CLAIMS.bluesky)
+    await vi.advanceTimersByTimeAsync(12_000)
+    const body = await answer
+
+    expect(body).toMatchObject({ verified: false, error: 'Bluesky post not found' })
+    expect(body.code).not.toBe('temporarily_unavailable')
+  })
+
+  it('answers a batch at fifteen seconds with every claim in it: the slow one unavailable, the others as they were', async () => {
+    vi.useFakeTimers()
+    const { env } = createEnv()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const slow = slowBluesky(4900)
+    stubFetch((url, init) => (url.startsWith('https://t.me/') ? Promise.resolve(new Response(null, { status: 404 })) : slow(url, init)))
+
+    const batch = worker.fetch(new Request('https://example.com/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        claims: [
+          { platform: 'bluesky', ...CLAIMS.bluesky, pubkey: PUBKEY },
+          { platform: 'telegram', ...CLAIMS.telegram, pubkey: PUBKEY },
+        ],
+      }),
+    }), env)
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    const { results } = await (await batch).json() as { results: Array<Record<string, unknown>> }
+    expect(results[0]).toMatchObject({ platform: 'bluesky', verified: false, code: 'temporarily_unavailable' })
+    expect(results[1]).toMatchObject({ platform: 'telegram', verified: false, error: 'Telegram message not found' })
+  })
+})

@@ -5,11 +5,13 @@ import {
   discardBody,
   fetchFromPlatform,
   MAX_RESPONSE_BYTES,
+  PLATFORM_CHECK_TIME_BUDGET_MS,
   PLATFORM_REQUEST_TIMEOUT_MS,
   PlatformUnavailableError,
   readJson,
   readText,
   throwIfUnanswered,
+  withinTimeBudget,
 } from './base'
 
 const encode = (text: string) => new TextEncoder().encode(text)
@@ -42,6 +44,7 @@ function bigBody(total: number) {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -150,6 +153,53 @@ describe('discardBody', () => {
     const read = new Response('x')
     await read.text()
     await expect(discardBody(read)).resolves.toBeUndefined()
+  })
+})
+
+describe('withinTimeBudget', () => {
+  it('allows a whole check fifteen seconds, three times the limit on one request', () => {
+    expect(PLATFORM_CHECK_TIME_BUDGET_MS).toBe(15_000)
+    expect(PLATFORM_CHECK_TIME_BUDGET_MS).toBe(3 * PLATFORM_REQUEST_TIMEOUT_MS)
+  })
+
+  it('answers with the work when it finishes in time, and leaves no timer running', async () => {
+    vi.useFakeTimers()
+    const work = new Promise<string>((resolve) => setTimeout(() => resolve('done'), 1000))
+
+    const answer = withinTimeBudget(work, 15_000, 'Example')
+    await vi.advanceTimersByTimeAsync(1000)
+
+    await expect(answer).resolves.toBe('done')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('gives up on work that runs past the budget, as the platform not answering', async () => {
+    vi.useFakeTimers()
+    const answer = withinTimeBudget(new Promise<string>(() => {}), 15_000, 'Example')
+    const outcome = expect(answer).rejects.toThrow("Example didn't finish within 15 seconds")
+
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    await outcome
+    await expect(answer).rejects.toBeInstanceOf(PlatformUnavailableError)
+  })
+
+  it('does not give up a moment early', async () => {
+    vi.useFakeTimers()
+    let settled = false
+    const answer = withinTimeBudget(new Promise<string>(() => {}), 15_000, 'Example')
+    answer.catch(() => { settled = true })
+
+    await vi.advanceTimersByTimeAsync(14_999)
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toBe(true)
+  })
+
+  it('passes on the work\'s own failure', async () => {
+    const failure = new Error('boom')
+    await expect(withinTimeBudget(Promise.reject(failure), 15_000, 'Example')).rejects.toBe(failure)
   })
 })
 
