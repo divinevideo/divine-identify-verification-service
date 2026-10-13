@@ -461,6 +461,8 @@ app.get('/', (c) => {
     .verify-step-gap { margin-top: 1.25rem; }
     /* Room above a card when a platform pill jumps to it. */
     .verify-card { scroll-margin-top: 16px; }
+    /* Card titles under a step heading: h4 for structure, styled like the step titles. */
+    .verify-card h4 { font-size: 1.05rem; color: var(--dark); margin: 0 0 0.5rem; }
     .advanced-proof {
       margin-top: 1rem;
       border: 2px dashed rgba(7, 36, 27, 0.25);
@@ -661,7 +663,7 @@ app.get('/', (c) => {
       <div class="verify-step-grid">
         <div class="verify-card" id="link-with-post">
           <span class="step-pill">Link with a post</span>
-          <h3 style="margin-top:0;">Link with a post</h3>
+          <h4>Link with a post</h4>
           <p style="margin-bottom:0.75rem;">Works for every platform. Post your npub publicly on the account you want to link, then paste the link to that post here.</p>
           <label for="proof-platform-select" class="field-label">Platform</label>
           <select id="proof-platform-select" class="field-select">
@@ -679,7 +681,7 @@ app.get('/', (c) => {
 
         <div class="verify-card" id="quick-connect">
           <span class="step-pill">Quick Connect</span>
-          <h3 style="margin-top:0;">Sign in, no posting</h3>
+          <h4>Sign in, no posting</h4>
           <p>Works for ${quickConnectPlatformList}. Sign in to the account you want to link.</p>
           <p id="oauth-platform-help" class="field-help">For ${proofPostOnlyPlatformList}, <a href="#link-with-post">link with a post instead</a>.</p>
           <label for="oauth-platform-select" class="field-label">Platform</label>
@@ -2677,21 +2679,20 @@ GET ${origin}/verify/mastodon/mastodon.social/@alice/109876543210?pubkey=7e7e...
 
     // A platform pill links to the card where that platform can be linked.
     // Also pick the platform there, so the form is ready when the person lands
-    // on it. The browser's jump to the card comes after this handler and
-    // takes focus away, so focus the first field once it has happened, without
-    // scrolling: the jump has already placed the card.
+    // on it. Setting a picker's value fires nothing, so send 'change' as a
+    // person's pick would: that refreshes the form's labels, and clears the
+    // note beside Publish once it no longer matches the form. The browser's
+    // jump to the card comes after this handler and takes focus away, so focus
+    // the first field once it has happened, without scrolling: the jump has
+    // already placed the card.
     function pickPlatformFromPill(pill) {
       const platform = pill.dataset.platform;
-      let next;
-      if (pill.getAttribute('href') === '#quick-connect') {
-        document.getElementById('oauth-platform-select').value = platform;
-        updateOAuthInputs();
-        next = platform === 'bluesky' ? 'oauth-bluesky-handle-input' : 'oauth-start-btn';
-      } else {
-        document.getElementById('proof-platform-select').value = platform;
-        updateProofInputs();
-        next = 'proof-identity-input';
-      }
+      const toQuickConnect = pill.getAttribute('href') === '#quick-connect';
+      const picker = document.getElementById(toQuickConnect ? 'oauth-platform-select' : 'proof-platform-select');
+      picker.value = platform;
+      picker.dispatchEvent(new Event('change'));
+      const next = !toQuickConnect ? 'proof-identity-input'
+        : platform === 'bluesky' ? 'oauth-bluesky-handle-input' : 'oauth-start-btn';
       setTimeout(() => document.getElementById(next).focus({ preventScroll: true }), 0);
     }
     document.querySelectorAll('.platform-pill').forEach(pill => {

@@ -362,7 +362,16 @@ describe('the two ways to link an account', () => {
     expect(quickConnectCard(html)).toContain('id="oauth-platform-select"')
   })
 
-  // Post first while sign-in covers only Bluesky (Matt, #83).
+  // The two choices sit under the Step 2 heading, so screen-reader heading
+  // navigation reads them as part of that step.
+  it('titles both choices one level below the Step 2 heading', async () => {
+    const html = await homeHtml()
+    expect(between(html, 'Link your account. Pick one.', 'id="link-with-post"')).toContain('</h3>')
+    expect(postCard(html)).toContain('<h4>Link with a post</h4>')
+    expect(quickConnectCard(html)).toContain('<h4>Sign in, no posting</h4>')
+  })
+
+  // Post first while sign-in covers only Bluesky (#83).
   it('shows linking with a post before Quick Connect', async () => {
     const html = await homeHtml()
     expect(html.indexOf('id="link-with-post"')).toBeLessThan(html.indexOf('id="quick-connect"'))
