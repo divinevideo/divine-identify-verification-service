@@ -20,6 +20,11 @@ export type Bindings = {
   TIKTOK_OAUTH_ENABLED?: string
   // Base URL for OAuth callbacks (e.g., https://verify.divine.video)
   OAUTH_REDIRECT_BASE?: string
+  // "required" once enough people have an app that confirms sign-ins (#113);
+  // anything else counts unconfirmed sign-ins for a day.
+  SIGNIN_CONFIRMATION?: string
+  // "query" puts the sign-in's one-time code in the query instead of after the #.
+  SIGNIN_CODE_PLACEMENT?: string
 }
 
 export type OAuthPlatform = 'twitter' | 'bluesky' | 'youtube' | 'tiktok'
