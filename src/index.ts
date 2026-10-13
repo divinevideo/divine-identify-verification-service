@@ -2157,6 +2157,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       return 'Sign-in was not completed.';
     }
 
+    // The verifier's one-time code: 32 random bytes, base64url without padding.
+    const SIGN_IN_CODE_FORMAT = /^[A-Za-z0-9_-]{43}$/;
     const NOT_STARTED_HERE = 'This sign-in wasn\\'t started on this page, so it wasn\\'t linked. If someone sent you a sign-in link, don\\'t continue.';
     // Set when this page load carried a sign-in return, so start-up doesn't
     // also pick up a waiting sign-in from before.
@@ -2228,18 +2230,27 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       }
       const handleMatches = !pending || pending.platform !== 'bluesky' || !pending.handle
         || identity.toLowerCase() === pending.handle;
-      if (!code || !pending || pending.nonce !== nonce || pending.platform !== platform || !identity || !handleMatches) {
+      // A sign-in comes back once. The same return again (a reload before the
+      // address was cleaned) is that sign-in; any other return for a sign-in
+      // that already came back is refused, and the sign-in dropped.
+      const cameBack = !!pending && !!pending.code;
+      const sameReturn = cameBack && pending.code === code && pending.identity === identity;
+      if (!SIGN_IN_CODE_FORMAT.test(code) || !pending || pending.nonce !== nonce || pending.platform !== platform || !identity || !handleMatches
+        || (cameBack && !sameReturn)) {
         if (pending) forgetPendingSignIn(nonce);
         showSignInStatus(code ? NOT_STARTED_HERE : UNCONFIRMED_SIGN_IN, 'error');
         return;
       }
 
-      pending.code = code;
-      pending.identity = identity;
-      pending.finishedAt = Date.now();
-      savePendingSignIn(pending);
-      await reattachSigner(pending.signer);
+      if (!sameReturn) {
+        pending.code = code;
+        pending.identity = identity;
+        pending.finishedAt = Date.now();
+        savePendingSignIn(pending);
+      }
+      // Shown before reconnecting the signer, which may wait on a prompt.
       showWaitingSignIn(pending);
+      await reattachSigner(pending.signer);
     }
 
     // After a reload (a login.divine.video round trip, or the person coming
@@ -2251,8 +2262,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       if (!pending) return;
       const proofIdentityEl = document.getElementById('proof-identity-input');
       if (proofIdentityEl && proofIdentityEl.value && proofIdentityEl.value !== pending.identity) return;
-      await reattachSigner(pending.signer);
       showWaitingSignIn(pending);
+      await reattachSigner(pending.signer);
     }
 
     // The note beside Publish says what Publish will do, so it goes as soon as

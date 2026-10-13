@@ -637,6 +637,82 @@ describe('coming back from a sign-in', () => {
     expect(h.statuses).toHaveLength(0)
   })
 
+  it('does not pick up a sign-in that came back more than 11 minutes ago', async () => {
+    const h = returnHarness({ search: '', hash: '#verify-here' })
+    h.store.set(PENDING_KEY, waitingEntry({ code: CODE, identity: 'example', startedAt: Date.now() - 13 * 60 * 1000, finishedAt: Date.now() - 12 * 60 * 1000 }))
+    await h.page.resumeWaitingSignIn()
+    expect(h.statuses).toEqual([])
+    expect(h.fields['proof-identity-input'].value).toBe('')
+  })
+
+  // The verifier keeps a returned code for 10 minutes from the return, not from the start.
+  it('still picks up a sign-in started 15 minutes ago that came back 2 minutes ago', async () => {
+    const h = returnHarness({ search: '', hash: '#verify-here' })
+    h.store.set(PENDING_KEY, waitingEntry({ code: CODE, identity: 'example', startedAt: Date.now() - 15 * 60 * 1000, finishedAt: Date.now() - 2 * 60 * 1000 }))
+    await h.page.resumeWaitingSignIn()
+    expect(h.fields['proof-identity-input'].value).toBe('example')
+  })
+
+  it('drops a sign-in that comes back a second time with a different code', async () => {
+    const earlier = 'D'.repeat(43)
+    const h = returnHarness({ ...back(), pending: startedEntry({ code: earlier, identity: 'jack', finishedAt: Date.now() }) })
+    await h.page.handleOAuthCallbackMessage()
+    expect(h.statuses).toEqual([NOT_STARTED])
+    expect(h.store.has(PENDING_KEY)).toBe(false)
+    expect(h.fields['proof-identity-input'].value).toBe('')
+  })
+
+  it('drops a sign-in whose code comes back again naming a different account', async () => {
+    const h = returnHarness({ ...back(), pending: startedEntry({ code: CODE, identity: 'someone-else', finishedAt: Date.now() }) })
+    await h.page.handleOAuthCallbackMessage()
+    expect(h.statuses).toEqual([NOT_STARTED])
+    expect(h.store.has(PENDING_KEY)).toBe(false)
+  })
+
+  it('treats the same return again (a reload before the address was cleaned) as the same sign-in', async () => {
+    const finishedAt = Date.now() - 60 * 1000
+    const h = returnHarness({ ...back(), pending: startedEntry({ code: CODE, identity: 'jack', finishedAt }) })
+    await h.page.handleOAuthCallbackMessage()
+    expect(h.statuses).toEqual([['verify-global-status', SIGNED_IN, 'ok'], ['publish-status', SIGNED_IN, 'ok']])
+    // Its 11 minutes still count from the first return.
+    expect(savedEntry(h)).toMatchObject({ code: CODE, identity: 'jack', finishedAt })
+  })
+
+  it('accepts a Bluesky handle that comes back in different capitals', async () => {
+    const h = returnHarness({ search: `?signin=${NONCE}&platform=bluesky&identity=Alice.Bsky.Social`, hash: `#oauth_confirm=${CODE}`, pending: startedEntry({ platform: 'bluesky', handle: 'alice.bsky.social' }) })
+    await h.page.handleOAuthCallbackMessage()
+    expect(savedEntry(h).code).toBe(CODE)
+  })
+
+  it.each([
+    ['too short', 'C'.repeat(42)],
+    ['too long', 'C'.repeat(44)],
+    ['not base64url', 'C'.repeat(42) + '+'],
+    ['padded', 'C'.repeat(42) + '='],
+  ])('drops a code that is %s, storing nothing', async (_label, code) => {
+    const h = returnHarness({ search: `?signin=${NONCE}&platform=twitter&identity=jack`, hash: `#oauth_confirm=${encodeURIComponent(code)}`, pending: startedEntry() })
+    await h.page.handleOAuthCallbackMessage()
+    expect(h.statuses).toEqual([NOT_STARTED])
+    expect(h.store.has(PENDING_KEY)).toBe(false)
+    expect(h.replaced).toEqual(['/#verify-here'])
+  })
+
+  it('says which account signed in while the extension is still asking to connect', async () => {
+    const h = returnHarness({ ...back(), pending: startedEntry({ signer: 'browser' }), env: { activateSigner: () => new Promise(() => {}) } })
+    void h.page.handleOAuthCallbackMessage()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(h.statuses).toEqual([['verify-global-status', SIGNED_IN, 'ok'], ['publish-status', SIGNED_IN, 'ok']])
+    expect(h.fields['proof-identity-input'].value).toBe('jack')
+  })
+
+  it('says which account signed in after a reload while the extension is still asking to connect', async () => {
+    const h = returnHarness({ search: '', hash: '#verify-here', env: { activateSigner: () => new Promise(() => {}) } })
+    h.store.set(PENDING_KEY, waitingEntry({ signer: 'browser', code: CODE, identity: 'example', finishedAt: Date.now() }))
+    void h.page.resumeWaitingSignIn()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(h.fields['proof-identity-input'].value).toBe('example')
+  })
+
   it('does not pick up an older waiting sign-in on the load that brought a sign-in back', async () => {
     // Well formed, so the page can read it.
     const older = 'd'.repeat(32)
