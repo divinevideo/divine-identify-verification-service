@@ -148,20 +148,35 @@ describe('Bluesky sign-in confirms the account it started with', () => {
     expect(recorded).toEqual([])
   })
 
-  // A DID document lookup that doesn't answer leaves the account unconfirmed,
-  // the same as one that finds nothing.
+  // A lookup that doesn't answer leaves the account unconfirmed, the same as
+  // one that finds nothing.
   it.each([
-    ['answers 503', () => json({ error: 'unavailable' }, 503)],
-    ['can\'t be reached', () => { throw new TypeError('fetch failed') }],
-  ])('refuses when the DID document lookup %s, and logs it as an outage', async (_label, outage) => {
+    ['DID document', 'answers 503', `https://plc.directory/${DID}`, () => json({ error: 'unavailable' }, 503)],
+    ['DID document', 'answers 403', `https://plc.directory/${DID}`, () => json({ error: 'forbidden' }, 403)],
+    ['DID document', 'answers 200 with a page that isn\'t JSON', `https://plc.directory/${DID}`, () => new Response('<html>blocked</html>', { status: 200, headers: { 'Content-Type': 'text/html' } })],
+    ['DID document', 'can\'t be reached', `https://plc.directory/${DID}`, () => { throw new TypeError('fetch failed') }],
+    ['PDS metadata', 'answers 503', `${PDS}/.well-known/oauth-protected-resource`, () => json({ error: 'unavailable' }, 503)],
+    ['PDS metadata', 'can\'t be reached', `${PDS}/.well-known/oauth-protected-resource`, () => { throw new TypeError('fetch failed') }],
+  ])('refuses when the %s lookup %s, and logs it as an outage', async (_step, _label, lookupUrl, outage) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const answers = network(DID, [alice])
     const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
-      String(input) === `https://plc.directory/${DID}` ? outage() : answers(input))
+      String(input) === lookupUrl ? outage() : answers(input))
     const { result, recorded } = await signInReturning(DID, [alice], fetchMock as typeof fetch)
     expect(result).toMatchObject({ success: false, error: 'Bluesky account not confirmed' })
     expect(recorded).toEqual([])
     expect(warn).toHaveBeenCalledWith('Bluesky sign-in not confirmed: lookup_unavailable')
+  })
+
+  it('doesn\'t log a PDS that answers without the metadata as an outage', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const answers = network(DID, [alice])
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === `${PDS}/.well-known/oauth-protected-resource` ? json({ error: 'not found' }, 404) : answers(input))
+    const { result, recorded } = await signInReturning(DID, [alice], fetchMock as typeof fetch)
+    expect(result).toMatchObject({ success: false, error: 'Bluesky account not confirmed' })
+    expect(recorded).toEqual([])
+    expect(warn).toHaveBeenCalledWith('Bluesky sign-in not confirmed: authorization_server')
   })
 
   it('logs a failure while reading the account that isn\'t an outage as a lookup failure', async () => {
@@ -221,9 +236,17 @@ describe('Bluesky sign-in discovery', () => {
   it.each([
     ['handle', 'answers 503', 'com.atproto.identity.resolveHandle', () => json({ error: 'unavailable' }, 503), 'Bluesky handle lookup answered 503'],
     ['handle', 'can\'t be reached', 'com.atproto.identity.resolveHandle', () => { throw new TypeError('fetch failed') }, 'Bluesky handle lookup couldn\'t be reached (TypeError)'],
+    ['handle', 'answers 403', 'com.atproto.identity.resolveHandle', () => json({ error: 'forbidden' }, 403), 'Bluesky handle lookup answered 403'],
+    ['handle', 'answers 200 with a page that isn\'t JSON', 'com.atproto.identity.resolveHandle', () => new Response('<html>blocked</html>', { status: 200 }), 'Bluesky handle lookup answered something that isn\'t JSON'],
     ['DID document', 'answers 503', `https://plc.directory/${DID}`, () => json({ error: 'unavailable' }, 503), 'PLC directory answered 503'],
+    ['DID document', 'answers 401', `https://plc.directory/${DID}`, () => json({ error: 'unauthorized' }, 401), 'PLC directory answered 401'],
+    ['DID document', 'answers 200 with a page that isn\'t JSON', `https://plc.directory/${DID}`, () => new Response('<html>blocked</html>', { status: 200 }), 'PLC directory answered something that isn\'t JSON'],
     ['DID document', 'can\'t be reached', `https://plc.directory/${DID}`, () => { throw new TypeError('fetch failed') }, 'PLC directory couldn\'t be reached (TypeError)'],
-  ])('a %s lookup that %s stops the sign-in before it starts, and is logged', async (_step, _label, lookupUrl, outage, logged) => {
+    ['PDS metadata', 'answers 503', `${PDS}/.well-known/oauth-protected-resource`, () => json({ error: 'unavailable' }, 503), 'Bluesky PDS metadata answered 503'],
+    ['PDS metadata', 'can\'t be reached', `${PDS}/.well-known/oauth-protected-resource`, () => { throw new TypeError('fetch failed') }, 'Bluesky PDS metadata couldn\'t be reached (TypeError)'],
+    ['authorization server metadata', 'answers 503', `${ISSUER}/.well-known/oauth-authorization-server`, () => json({ error: 'unavailable' }, 503), 'Bluesky authorization server metadata answered 503'],
+    ['authorization server metadata', 'can\'t be reached', `${ISSUER}/.well-known/oauth-authorization-server`, () => { throw new TypeError('fetch failed') }, 'Bluesky authorization server metadata couldn\'t be reached (TypeError)'],
+  ])('the %s lookup that %s stops the sign-in before it starts, and is logged', async (_step, _label, lookupUrl, outage, logged) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const answers = discovery()
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
@@ -235,6 +258,21 @@ describe('Bluesky sign-in discovery', () => {
     expect(await response.json()).toEqual({ error: 'Could not discover Bluesky authorization server for this handle' })
     expect([...cache.store.keys()]).toEqual([])
     expect(warn).toHaveBeenCalledWith('Bluesky sign-in discovery:', logged)
+  })
+
+  // A server that answers without the metadata is a "no", not an outage.
+  it.each([
+    ['PDS metadata', `${PDS}/.well-known/oauth-protected-resource`],
+    ['authorization server metadata', `${ISSUER}/.well-known/oauth-authorization-server`],
+  ])('the %s lookup that answers 404 stops the sign-in without being logged as an outage', async (_step, lookupUrl) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const answers = discovery()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === lookupUrl ? json({ error: 'not found' }, 404) : answers(input)))
+    const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    expect(response.status).toBe(400)
+    expect(warn).not.toHaveBeenCalled()
   })
 
   it('doesn\'t mistake a failure in its own lookup code for a lookup that found nothing', async () => {

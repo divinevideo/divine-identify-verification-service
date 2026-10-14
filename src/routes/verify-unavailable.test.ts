@@ -257,6 +257,65 @@ describe('a platform that does not answer', () => {
       expect(rememberedFor(kv)).toBe(FAILED_TTL)
     })
 
+    // bsky.social and the PLC directory take no credential from this service,
+    // so a 401, a 403 or a page that isn't JSON from either isn't about the
+    // account: it's the service refusing or misbehaving.
+    describe.each(['handle lookup', 'DID document lookup'] as const)('the %s refusing or answering oddly', step => {
+      const oddAnswers = [
+        ['answers 401', () => new Response(null, { status: 401 })],
+        ['answers 403', () => new Response(null, { status: 403 })],
+        ['answers 200 with a page that isn\'t JSON', () => new Response('<html>blocked</html>', { status: 200, headers: { 'Content-Type': 'text/html' } })],
+        ['answers 200 with an empty body', () => new Response('', { status: 200 })],
+      ] as const
+
+      it.each(oddAnswers)('that %s is "couldn\'t check right now", remembered for 5 minutes', async (_label, answer) => {
+        const { env, kv } = createEnv()
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
+        bluesky({ [step]: answer() })
+        const body = await verify(env, 'bluesky', { identity: CLAIMS.bluesky.identity, proof: '' })
+        expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable', cached: false })
+        expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
+        expect(logError).not.toHaveBeenCalled()
+      })
+
+      it('that is refused still lets a post that proves the claim verify it', async () => {
+        const { env } = createEnv()
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+        bluesky({ [step]: 403, post: postProving(hexToNpub(PUBKEY)) })
+        const body = await verify(env, 'bluesky', CLAIMS.bluesky)
+        expect(body).toMatchObject({ verified: true, method: 'proof_post' })
+      })
+    })
+
+    // The account's own server and a did:web website are the person's, and a
+    // 403 or a page of its own is how they say "nothing here".
+    it.each([
+      ['answering 401', () => new Response(null, { status: 401 })],
+      ['answering 403', () => new Response(null, { status: 403 })],
+      ['answering 200 with a page that isn\'t JSON', () => new Response('<html>home</html>', { status: 200, headers: { 'Content-Type': 'text/html' } })],
+    ])('the identity-link record lookup %s is still a rejection, remembered for 15 minutes', async (_label, answer) => {
+      const { env, kv } = createEnv()
+      bluesky({ 'identity-link record lookup': answer() })
+      const body = await verify(env, 'bluesky', { identity: CLAIMS.bluesky.identity, proof: '' })
+      expect(body).toMatchObject({ verified: false, error: 'No identity link record found and no Bluesky post proof provided' })
+      expect(body.code).not.toBe('temporarily_unavailable')
+      expect(rememberedFor(kv)).toBe(FAILED_TTL)
+    })
+
+    it.each([
+      ['answering 401', () => new Response(null, { status: 401 })],
+      ['answering 403', () => new Response(null, { status: 403 })],
+      ['answering 200 with a page that isn\'t JSON', () => new Response('<html>home</html>', { status: 200, headers: { 'Content-Type': 'text/html' } })],
+    ])('a did:web host %s is still a rejection, remembered for 15 minutes', async (_label, answer) => {
+      const { env, kv } = createEnv()
+      vi.stubGlobal('fetch', vi.fn(async () => answer()))
+      const body = await verify(env, 'bluesky', { identity: 'did:web:example.com', proof: '' })
+      expect(body).toMatchObject({ verified: false, error: 'No identity link record found and no Bluesky post proof provided' })
+      expect(body.code).not.toBe('temporarily_unavailable')
+      expect(rememberedFor(kv)).toBe(FAILED_TTL)
+    })
+
     it('a did:web host that can\'t be reached is "couldn\'t check right now"', async () => {
       const { env, kv } = createEnv()
       vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -300,6 +359,8 @@ describe('a platform that does not answer', () => {
     it.each([
       ['handle lookup', 503, 'Bluesky handle lookup answered 503'],
       ['DID document lookup', 503, 'PLC directory answered 503'],
+      ['handle lookup', 403, 'Bluesky handle lookup answered 403'],
+      ['DID document lookup', 401, 'PLC directory answered 401'],
       ['identity-link record lookup', 503, 'PDS answered 503'],
       ['identity-link record lookup', 'unreachable', 'PDS couldn\'t be reached (TypeError)'],
     ] as const)('logs which lookup didn\'t answer: the %s (%s)', async (step, outage, logged) => {
