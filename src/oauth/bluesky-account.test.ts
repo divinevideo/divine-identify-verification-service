@@ -80,6 +80,15 @@ const alice: Account = { did: DID, handles: [HANDLE], pds: PDS, authServer: ISSU
 describe('Bluesky sign-in token exchange', () => {
   const redirected = () => new Response(null, { status: 307, headers: { Location: 'https://elsewhere.example/oauth/token' } })
 
+  it('refuses a token response that is a JSON null the way it does one without a DID', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(json(null))
+
+    const { result, recorded } = await signInReturning(DID, [alice], fetchMock)
+
+    expect(result).toMatchObject({ success: false, error: 'No DID in token response' })
+    expect(recorded).toEqual([])
+  })
+
   it('does not follow a redirect from the token endpoint', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(redirected())
 
@@ -173,6 +182,17 @@ describe('Bluesky sign-in confirms the account it started with', () => {
     const answers = network(DID, [alice])
     const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
       String(input) === `${PDS}/.well-known/oauth-protected-resource` ? json({ error: 'not found' }, 404) : answers(input))
+    const { result, recorded } = await signInReturning(DID, [alice], fetchMock as typeof fetch)
+    expect(result).toMatchObject({ success: false, error: 'Bluesky account not confirmed' })
+    expect(recorded).toEqual([])
+    expect(warn).toHaveBeenCalledWith('Bluesky sign-in not confirmed: authorization_server')
+  })
+
+  it('refuses when the PDS metadata is a JSON null, and logs it as the authorization server not matching', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const answers = network(DID, [alice])
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === `${PDS}/.well-known/oauth-protected-resource` ? json(null) : answers(input))
     const { result, recorded } = await signInReturning(DID, [alice], fetchMock as typeof fetch)
     expect(result).toMatchObject({ success: false, error: 'Bluesky account not confirmed' })
     expect(recorded).toEqual([])
@@ -273,6 +293,36 @@ describe('Bluesky sign-in discovery', () => {
     const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
     expect(response.status).toBe(400)
     expect(warn).not.toHaveBeenCalled()
+  })
+
+  // A server that answers 200 with a body that isn't a JSON object (here
+  // `null`) has given no usable answer, the same as one that answers `{}`: a
+  // "no", not an outage.
+  it.each([
+    ['the PDS metadata', `${PDS}/.well-known/oauth-protected-resource`],
+    ['the authorization server metadata', `${ISSUER}/.well-known/oauth-authorization-server`],
+  ])('answers the usual 400 when %s is a JSON null, without logging an outage', async (_label, nullUrl) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const answers = discovery()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === nullUrl ? json(null) : answers(input)))
+    const cache = kv()
+    const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'Could not discover Bluesky authorization server for this handle' })
+    expect([...cache.store.keys()]).toEqual([])
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('refuses the sign-in the way it does a response without a request_uri when the pushed authorization response is a JSON null', async () => {
+    const answers = discovery()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === `${ISSUER}/oauth/par` ? json(null, 201) : answers(input)))
+    const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    expect(response.status).toBe(502)
+    expect(await response.json()).toEqual({ error: 'Missing request_uri from Bluesky authorization server' })
   })
 
   it('doesn\'t mistake a failure in its own lookup code for a lookup that found nothing', async () => {
