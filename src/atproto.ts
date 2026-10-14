@@ -1,41 +1,58 @@
 import { isSafeUrl } from './utils/validation'
 import { fetchPublic } from './utils/safe-fetch'
-import { fetchFromPlatform, throwIfUnanswered } from './platforms/base'
+import { fetchFromPlatform, PlatformUnavailableError, throwIfUnanswered } from './platforms/base'
 
 export type DidDocument = {
   alsoKnownAs?: string[]
   service?: Array<{ id?: string; serviceEndpoint?: string }>
 }
 
-// These lookups answer null when they get no usable answer (no such account,
-// or one this service can't use), and throw a PlatformUnavailableError when
-// the service didn't answer or couldn't be reached, so an outage isn't taken
-// for a missing account.
+type Fetcher = (url: string, init?: RequestInit) => Promise<Response>
 
-export async function resolveHandle(handle: string): Promise<string | null> {
-  const resolveUrl = `https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`
-  const resolveResp = await fetchFromPlatform('Bluesky handle lookup', resolveUrl)
-  throwIfUnanswered(resolveResp, 'Bluesky handle lookup')
-  if (!resolveResp.ok) return null
-
+// What an account lookup's answer means, decided once for the three lookups
+// here. A lookup answers null when the account isn't there or the answer is one
+// this service can't use, and throws a PlatformUnavailableError when the
+// service didn't answer or couldn't be reached, so an outage isn't taken for a
+// missing account.
+//
+// A 400 or 404 means the account isn't there. bsky.social's 400 reads the same
+// for a handle that doesn't exist and for a custom-domain handle it briefly
+// couldn't resolve (sign-in remembers it for less time for that reason, in
+// src/oauth/signin-account.ts), so a 400 stays "not there".
+//
+// bsky.social and the PLC directory are the two services named here, and
+// neither takes a credential from this service, so a 401, a 403 or a page that
+// isn't JSON from either can't be about the account: they didn't answer. A
+// did:web host is the person's own website, and a static host answers a 403 or
+// a page of its own for a file it doesn't have, so there those mean "not
+// there", as they do for the record list on the account's own server
+// (src/platforms/bluesky.ts). Pass `fetcher` (fetchPublic) when the host comes
+// from the claim, as for fetchFromPlatform; that marks the host as the
+// person's.
+async function lookUp(label: string, url: string, fetcher?: Fetcher): Promise<unknown> {
+  const resp = await fetchFromPlatform(label, url, undefined, fetcher)
+  throwIfUnanswered(resp, label)
+  const namedByUs = !fetcher
+  if (namedByUs && (resp.status === 401 || resp.status === 403)) {
+    throw new PlatformUnavailableError(`${label} answered ${resp.status}`)
+  }
+  if (!resp.ok) return null
   try {
-    const resolveData = await resolveResp.json() as { did?: string }
-    return resolveData.did || null
+    return await resp.json()
   } catch {
+    if (namedByUs) throw new PlatformUnavailableError(`${label} answered something that isn't JSON`)
     return null
   }
 }
 
+export async function resolveHandle(handle: string): Promise<string | null> {
+  const resolved = await lookUp('Bluesky handle lookup', `https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`) as { did?: string } | null
+  return resolved?.did || null
+}
+
 export async function resolveDidDocument(did: string): Promise<DidDocument | null> {
   if (did.startsWith('did:plc:')) {
-    const didResp = await fetchFromPlatform('PLC directory', `https://plc.directory/${did}`)
-    throwIfUnanswered(didResp, 'PLC directory')
-    if (!didResp.ok) return null
-    try {
-      return await didResp.json() as DidDocument
-    } catch {
-      return null
-    }
+    return await lookUp('PLC directory', `https://plc.directory/${did}`) as DidDocument | null
   }
 
   if (did.startsWith('did:web:')) {
@@ -43,14 +60,7 @@ export async function resolveDidDocument(did: string): Promise<DidDocument | nul
     if (domain.includes('/') || domain.includes('\\')) return null
     const didWebUrl = `https://${domain}/.well-known/did.json`
     if (!isSafeUrl(didWebUrl)) return null
-    const didResp = await fetchFromPlatform('did:web host', didWebUrl, undefined, fetchPublic)
-    throwIfUnanswered(didResp, 'did:web host')
-    if (!didResp.ok) return null
-    try {
-      return await didResp.json() as DidDocument
-    } catch {
-      return null
-    }
+    return await lookUp('did:web host', didWebUrl, fetchPublic) as DidDocument | null
   }
 
   return null
