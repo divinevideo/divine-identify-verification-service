@@ -921,7 +921,7 @@ Content-Type: application/json
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
 
-      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A sign-in counts once you confirm it by publishing; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.${tiktokOAuthHistoryNote}</div>
+      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. Once confirmation is required, a sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">
@@ -2019,10 +2019,10 @@ Content-Type: application/json
         // value tied to this sign-in, and the verifier checks it first (#113).
         // A post proof publishes as before, whatever sign-in is waiting.
         const waiting = link.proof === 'oauth' ? findWaitingSignIn(link.platform, link.identity, signerPubkey) : null;
-        // A sign-in for this account started by another Divine account (the
-        // signer came back as someone else) is neither confirmed nor published.
-        if (!waiting && link.proof === 'oauth' && waitingSignIns().some(pending => pending.platform === link.platform
-          && String(pending.identity || '').toLowerCase() === link.identity.toLowerCase())) {
+        // A sign-in link that matches none of this platform's waiting sign-ins
+        // (another Divine account, or another platform account) is neither
+        // confirmed nor published.
+        if (!waiting && link.proof === 'oauth' && waitingSignIns().some(pending => pending.platform === link.platform)) {
           throw new Error('The account in Step 1 does not match the account you signed in with.');
         }
         nextTags.push(waiting
@@ -2285,11 +2285,13 @@ Content-Type: application/json
     // also pick up a waiting sign-in from before.
     let signInReturnHandled = false;
 
-    // The verifier puts the one-time code after the # (or, if set to, in the query).
+    // The verifier puts the one-time code after the # (or, if set to, in the
+    // query). The query is read first: the verifier always replaces that name
+    // in the query it returns to.
     function signInCodeFromAddress() {
-      const fromFragment = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('oauth_confirm');
-      if (fromFragment) return fromFragment;
-      return new URLSearchParams(window.location.search).get('oauth_confirm') || '';
+      const fromQuery = new URLSearchParams(window.location.search).get('oauth_confirm');
+      if (fromQuery) return fromQuery;
+      return new URLSearchParams(window.location.hash.replace(/^#/, '')).get('oauth_confirm') || '';
     }
 
     // An extension (or the Divine app's frame) used to start is connected again
@@ -2340,7 +2342,8 @@ Content-Type: application/json
       ['signin', 'oauth_verified', 'platform', 'identity', 'oauth_error', 'oauth_confirm'].forEach(name => params.delete(name));
       // The code leaves the address before anything else can read it, and
       // before this function first waits on anything.
-      const hash = window.location.hash.indexOf('oauth_confirm') !== -1 ? '#verify-here' : window.location.hash;
+      // A return with a code, wherever it was, goes back to the section anchor.
+      const hash = code ? '#verify-here' : window.location.hash;
       window.history.replaceState({}, '', window.location.pathname + (params.toString() ? '?' + params.toString() : '') + hash);
 
       const pending = readPendingSignIn(nonce);

@@ -269,12 +269,12 @@ describe('a finished sign-in started with a start check', () => {
     expect(info.mock.calls).toEqual([[`${platform} sign-in finished: awaiting confirmation`]])
   })
 
-  it('puts the code in the query when set to', async () => {
+  it('puts the code in the query when set to, and drops the whole fragment', async () => {
     const env = baseEnv({ SIGNIN_CODE_PLACEMENT: 'query' })
     const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
     const code = location.searchParams.get('oauth_confirm') as string
     expect(code).toMatch(CODE)
-    expect(location.hash).toBe('#verify-here')
+    expect(location.hash).toBe('')
     const { getPendingSignIn } = await import('../oauth/confirm')
     expect(await getPendingSignIn(env.CACHE_KV, code)).toMatchObject({ platform: 'twitter', startCheck: START_CHECK })
   })
@@ -320,6 +320,24 @@ describe('a finished sign-in started with a start check', () => {
     expect(codes[0]).toMatch(CODE)
     expect(location.hash).toBe('')
   })
+
+  it('replaces a fragment that carried the code\'s name percent-encoded', async () => {
+    const env = baseEnv()
+    const returnUrl = `${BASE}/?signin=n#oauth%5Fconfirm=old`
+    const { location } = await finishWithState('twitter', env, { returnUrl, startCheck: START_CHECK })
+    const code = new URLSearchParams(location.hash.slice(1)).get('oauth_confirm') as string
+    expect(code).toMatch(CODE)
+    expect(location.hash).toBe(`#oauth_confirm=${code}`)
+  })
+
+  it('with the code in the query: drops a fragment that carried the code\'s name percent-encoded', async () => {
+    const env = baseEnv({ SIGNIN_CODE_PLACEMENT: 'query' })
+    const returnUrl = `${BASE}/?signin=n#oauth%5Fconfirm=old`
+    const { location } = await finishWithState('twitter', env, { returnUrl, startCheck: START_CHECK })
+    expect(location.searchParams.getAll('oauth_confirm')).toHaveLength(1)
+    expect(location.searchParams.get('oauth_confirm')).toMatch(CODE)
+    expect(location.hash).toBe('')
+  })
 })
 
 describe('a finished sign-in started without a start check (installed app)', () => {
@@ -335,6 +353,19 @@ describe('a finished sign-in started without a start check (installed app)', () 
       expect(JSON.parse(raw as string).confirmed).toBeUndefined()
     }
     expect(info.mock.calls).toEqual([[`${platform} sign-in finished: installed app, unconfirmed`]])
+  })
+
+  it('drops a fragment that carried the code\'s name percent-encoded, though it sends no code', async () => {
+    const env = baseEnv()
+    const { location } = await finishWithState('twitter', env, { returnUrl: 'https://divine.video/app/callback#oauth%5Fconfirm=old' })
+    expect(location.searchParams.get('oauth_confirm')).toBeNull()
+    expect(location.hash).toBe('')
+  })
+
+  it('drops a fragment that mentions the code\'s name in any form, though it sends no code', async () => {
+    const env = baseEnv()
+    const { location } = await finishWithState('twitter', env, { returnUrl: 'https://divine.video/app/callback#/done?oauth_confirm=old' })
+    expect(location.hash).toBe('')
   })
 })
 
@@ -650,17 +681,25 @@ describe('POST /auth/confirm', () => {
   })
 
   it('accepts an event dated long ago, and refuses one more than ten minutes ahead', async () => {
-    const env = baseEnv()
-    const s = await startedAndFinished('twitter', env)
-    const ahead = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]], Math.floor(Date.now() / 1000) + 601)
-    expect((await confirm(env, { code: s.code, start_secret: s.secret, event: ahead })).json.code).toBe('invalid_event')
-    const old = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]], 1_600_000_000)
-    const before = Math.floor(Date.now() / 1000)
-    expect((await confirm(env, { code: s.code, start_secret: s.secret, event: old })).status).toBe(200)
-    // The record keeps the event's date for ordering and the server's time as when it was checked.
-    const record = JSON.parse((await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', s.pubkey))) as string)
-    expect(record.confirm_created_at).toBe(1_600_000_000)
-    expect(record.checked_at).toBeGreaterThanOrEqual(before)
+    // A fixed clock, so the ten-minute limit can't move a second between the
+    // event being dated and the verifier checking it.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-13T12:00:00Z'))
+    try {
+      const env = baseEnv()
+      const s = await startedAndFinished('twitter', env)
+      const now = Math.floor(Date.now() / 1000)
+      const ahead = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]], now + 601)
+      expect((await confirm(env, { code: s.code, start_secret: s.secret, event: ahead })).json.code).toBe('invalid_event')
+      const old = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]], 1_600_000_000)
+      expect((await confirm(env, { code: s.code, start_secret: s.secret, event: old })).status).toBe(200)
+      // The record keeps the event's date for ordering and the server's time as when it was checked.
+      const record = JSON.parse((await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', s.pubkey))) as string)
+      expect(record.confirm_created_at).toBe(1_600_000_000)
+      expect(record.checked_at).toBe(now)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('cannot confirm a sign-in started without a start check, even before the switch', async () => {

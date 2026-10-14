@@ -29,16 +29,30 @@ describe('sign-in confirmation settings', () => {
     expect(signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'required' }))).toBe('required')
   })
 
-  it('warns about any other confirmation setting and treats it as optional', () => {
+  it('reads the setting without regard to spaces around it or capitals', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(signInConfirmationMode(env({ SIGNIN_CONFIRMATION: ' Required ' }))).toBe('required')
+      expect(signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'OPTIONAL' }))).toBe('optional')
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('treats any other setting, empty included, as required, and warns naming the value it got', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       signInConfirmationMode(env({}))
       signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'optional' }))
       signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'required' }))
       expect(warn).not.toHaveBeenCalled()
-      expect(signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'Required' }))).toBe('optional')
-      expect(warn).toHaveBeenCalledTimes(1)
-      expect(warn.mock.calls[0].join(' ')).not.toContain('Required')
+      expect(signInConfirmationMode(env({ SIGNIN_CONFIRMATION: 'requird' }))).toBe('required')
+      expect(signInConfirmationMode(env({ SIGNIN_CONFIRMATION: '' }))).toBe('required')
+      expect(warn).toHaveBeenCalledTimes(2)
+      expect(warn.mock.calls[0].join(' ')).toContain('"requird"')
+      expect(warn.mock.calls[0].join(' ')).toContain('treating it as required')
+      expect(warn.mock.calls[1].join(' ')).toContain('""')
     } finally {
       warn.mockRestore()
     }

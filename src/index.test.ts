@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import worker from './index'
 
 describe('verifier cors', () => {
@@ -28,6 +28,26 @@ describe('verifier cors', () => {
 
     expect(response.status).toBe(200)
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*')
+  })
+})
+
+describe('verifier health', () => {
+  const healthWith = async (env: Record<string, unknown>) => {
+    const response = await worker.fetch(new Request('https://verifier.divine.video/health'), env as never)
+    expect(response.status).toBe(200)
+    return (await response.json() as { signin_confirmation?: string }).signin_confirmation
+  }
+
+  it('reports whether unconfirmed sign-ins count, as the service reads its setting', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(await healthWith({})).toBe('optional')
+      expect(await healthWith({ SIGNIN_CONFIRMATION: 'optional' })).toBe('optional')
+      expect(await healthWith({ SIGNIN_CONFIRMATION: ' Required ' })).toBe('required')
+      expect(await healthWith({ SIGNIN_CONFIRMATION: 'requird' })).toBe('required')
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
 
@@ -329,7 +349,7 @@ Content-Type: application/json
     const docs = oauthDocsSection(await homeHtml())
     expect(docs).toContain("The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>.")
     expect(docs).toContain('The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.')
-    expect(docs).toContain('A sign-in counts once you confirm it by publishing; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.')
+    expect(docs).toContain('Once confirmation is required, a sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.')
   })
 
   it('documents YouTube and TikTok sign-in starts as POSTs with a start check when they are on', async () => {

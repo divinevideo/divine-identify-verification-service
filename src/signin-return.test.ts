@@ -588,6 +588,34 @@ describe('coming back from a sign-in', () => {
     expect(h.replaced[h.replaced.length - 1]).toBe('/#verify-here')
   })
 
+  it('takes the code from the query over one after the #', async () => {
+    const h = returnHarness({ search: `?signin=${NONCE}&platform=twitter&identity=example&oauth_confirm=${CODE}`, hash: '#oauth_confirm=' + 'D'.repeat(43) })
+    h.store.set(PENDING_KEY, waitingEntry())
+    await h.page.handleOAuthCallbackMessage()
+    expect(JSON.parse(h.store.get(PENDING_KEY) as string).code).toBe(CODE)
+    expect(h.replaced).toEqual(['/#verify-here'])
+  })
+
+  it('puts the section anchor back when the code came in the query with no fragment', async () => {
+    const h = returnHarness({ search: `?signin=${NONCE}&platform=twitter&identity=example&oauth_confirm=${CODE}`, hash: '' })
+    h.store.set(PENDING_KEY, waitingEntry())
+    await h.page.handleOAuthCallbackMessage()
+    expect(h.replaced).toEqual(['/#verify-here'])
+  })
+
+  it('removes a fragment that carries the code\'s name percent-encoded', async () => {
+    const h = returnHarness({ search: `?signin=${NONCE}&platform=twitter&identity=example`, hash: '#oauth%5Fconfirm=' + CODE })
+    h.store.set(PENDING_KEY, waitingEntry())
+    await h.page.handleOAuthCallbackMessage()
+    expect(h.replaced).toEqual(['/#verify-here'])
+  })
+
+  it('keeps the fragment of a return that carries no code, even one mentioning the code\'s name', async () => {
+    const h = returnHarness({ search: `?oauth_error=${encodeURIComponent('Verification failed')}`, hash: '#not-oauth_confirm' })
+    await h.page.handleOAuthCallbackMessage()
+    expect(h.replaced).toEqual(['/#not-oauth_confirm'])
+  })
+
   it('handles a return that carries only the code (no oauth_verified, as once confirmation is required)', async () => {
     const h = returnHarness({ search: `?signin=${NONCE}&platform=twitter&identity=example`, hash: '#oauth_confirm=' + CODE })
     h.store.set(PENDING_KEY, waitingEntry())

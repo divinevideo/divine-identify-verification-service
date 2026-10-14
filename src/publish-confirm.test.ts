@@ -48,7 +48,7 @@ type ConfirmBody = { code: string, start_secret: string, event: SignedEvent }
 
 async function publishHarness(opts: {
   confirmAnswers: Answer[], deadlinePassed?: boolean, noWaitingSignIn?: boolean, pendingPubkey?: string,
-  proof?: string, olderSignIn?: boolean, relayFailures?: number,
+  pendingIdentity?: string, proof?: string, olderSignIn?: boolean, relayFailures?: number,
 }) {
   const html = await pageHtml()
   const source = [
@@ -80,7 +80,7 @@ async function publishHarness(opts: {
   if (!opts.noWaitingSignIn) {
     store.set(PENDING_KEY, JSON.stringify({
       platform: 'twitter', pubkey: opts.pendingPubkey ?? PUBKEY, nonce: NONCE, startedAt: now, finishedAt: now,
-      startSecret: START_SECRET, startCheck: START_CHECK, code: CODE, identity: 'example', signer: 'keycast',
+      startSecret: START_SECRET, startCheck: START_CHECK, code: CODE, identity: opts.pendingIdentity ?? 'example', signer: 'keycast',
     }))
   }
 
@@ -370,6 +370,16 @@ describe('publishing a link that is waiting for confirmation', () => {
     await h.page.publishIdentityTagToNostr()
     expect(h.confirmBodies).toHaveLength(0)
     expect(h.published).toHaveLength(0)
+    expect(h.lastStatus()).toEqual(['publish-status', ACCOUNT_MISMATCH, 'error'])
+    expect(h.store.has(PENDING_KEY)).toBe(true)
+  })
+
+  it('does not publish a sign-in link when the waiting sign-in for that platform is for another account', async () => {
+    const h = await publishHarness({ confirmAnswers: [LINKED], pendingIdentity: 'someone_else' })
+    await h.page.publishIdentityTagToNostr()
+    expect(h.confirmBodies).toHaveLength(0)
+    expect(h.sentToRelays).toHaveLength(0)
+    expect(h.signCount).toBe(0)
     expect(h.lastStatus()).toEqual(['publish-status', ACCOUNT_MISMATCH, 'error'])
     expect(h.store.has(PENDING_KEY)).toBe(true)
   })

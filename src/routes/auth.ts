@@ -170,11 +170,17 @@ function buildReturnUrl(
     const url = new URL(returnUrl)
     for (const name of RESERVED_RETURN_NAMES) url.searchParams.delete(name)
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
-    if (url.hash.includes('oauth_confirm')) url.hash = ''
-    if (confirm) {
-      // After the #, the fragment is exactly the code; clients put back their own.
-      if (confirm.placement === 'query') url.searchParams.set('oauth_confirm', confirm.code)
-      else url.hash = `oauth_confirm=${confirm.code}`
+    // A supplied fragment that mentions the code's name in any form,
+    // percent-encoded included, is dropped.
+    if (url.hash.includes('oauth_confirm') || new URLSearchParams(url.hash.slice(1)).has('oauth_confirm')) url.hash = ''
+    // With a code, none of the supplied fragment is kept: it becomes exactly
+    // the code, or is emptied when the code goes in the query. Clients put
+    // back their own.
+    if (confirm?.placement === 'query') {
+      url.searchParams.set('oauth_confirm', confirm.code)
+      url.hash = ''
+    } else if (confirm) {
+      url.hash = `oauth_confirm=${confirm.code}`
     }
     return url.toString()
   } catch {

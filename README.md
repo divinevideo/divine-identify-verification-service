@@ -7,7 +7,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 ## Features
 
 - **Eight platforms** — GitHub, Twitter/X, Bluesky, Mastodon, Telegram, Discord, YouTube, and TikTok, verified through a single API.
-- **Two verification methods**: a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A sign-in link counts once the Divine account owner confirms it; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
+- **Two verification methods**: a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A sign-in link counts once the Divine account owner confirms it (until confirmation is required, a finished sign-in also counts unconfirmed for 24 hours); a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
 - **Batch and single verification** — check up to 10 claims in one request, or verify a single claim over JSON or a shareable URL that returns HTML for browsers and JSON for API clients.
 - **NIP-05 verification** — confirm that a NIP-05 identifier resolves to a given pubkey.
 - **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and platform outages for 5 minutes (answered with the code `temporarily_unavailable`, meaning "try again", not a rejection).
@@ -92,8 +92,8 @@ Configuration lives in `wrangler.toml`.
 
 - `DISCORD_VERIFY_CHANNEL_ID` — the Discord channel used for message-based Discord verification.
 - `TIKTOK_OAUTH_ENABLED` — set to `"true"` only after production OAuth credentials pass an end-to-end check; defaults to `"false"`.
-- `SIGNIN_CONFIRMATION`: `"optional"` (default): sign-ins from app versions that can't confirm still count, for 24 hours. `"required"`: only confirmed sign-ins count, and `GET /auth/:platform/start` is refused.
-- `SIGNIN_CODE_PLACEMENT`: `"fragment"` (default) or `"query"`: where the one-time code goes in the return address.
+- `SIGNIN_CONFIRMATION`: `"optional"` (default): every finished sign-in also counts unconfirmed for 24 hours, so app versions that can't confirm keep working. `"required"`: only confirmed sign-ins count, and `GET /auth/:platform/start` is refused. Capitals and surrounding spaces are ignored. Any other value, empty included, is treated as `"required"` and logged as a warning. `GET /health` reports the mode in effect as `signin_confirmation`.
+- `SIGNIN_CODE_PLACEMENT`: `"fragment"` (default) or `"query"`: where the one-time code goes in the return address. Either way, a return with a code keeps none of the fragment the return address carried.
 
 **Secrets** (set with `wrangler secret put …`, never committed):
 

@@ -13,12 +13,13 @@ export type SignInConfirmationMode = 'optional' | 'required'
 // TODO(#113): remove once SIGNIN_CONFIRMATION is "required".
 export function signInConfirmationMode(env: Bindings): SignInConfirmationMode {
   const setting = env.SIGNIN_CONFIRMATION
-  if (setting === 'required') return 'required'
-  // A mistyped setting still counts unconfirmed sign-ins, so say so in the logs.
-  if (setting !== undefined && setting !== 'optional') {
-    console.warn('SIGNIN_CONFIRMATION is not "optional" or "required"; treating it as optional')
-  }
-  return 'optional'
+  // Unset (as in tests) counts unconfirmed sign-ins; wrangler.toml sets it.
+  if (setting === undefined) return 'optional'
+  const mode = setting.trim().toLowerCase()
+  if (mode === 'optional' || mode === 'required') return mode
+  // Any other value, empty included, counts only confirmed sign-ins.
+  console.warn(`SIGNIN_CONFIRMATION is ${JSON.stringify(setting)}, not "optional" or "required"; treating it as required`)
+  return 'required'
 }
 
 export type ConfirmCodePlacement = 'fragment' | 'query'
