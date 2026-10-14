@@ -6,28 +6,35 @@ import { getHandleFromDidDocument, getPdsEndpoint, resolveDidDocument, resolveHa
 import { isSafeUrl } from '../utils/validation'
 import { fetchPublic } from '../utils/safe-fetch'
 import { isSignInBound } from './binding'
-import { PlatformUnavailableError } from '../platforms/base'
+import { PlatformUnavailableError, fetchFromPlatform, throwIfUnanswered } from '../platforms/base'
 
 // The AT Protocol OAuth spec requires both metadata documents to answer
 // "HTTP 200 (not 2xx or redirect)", so these two fetches follow no redirect: a
-// redirect comes back as a non-ok answer.
+// redirect comes back as a non-ok answer. A server that doesn't answer or can't
+// be reached is an outage rather than a "no", so it throws a
+// PlatformUnavailableError.
+async function fetchMetadata(label: string, url: string): Promise<Response> {
+  const response = await fetchFromPlatform(label, url, { redirect: 'manual' })
+  throwIfUnanswered(response, label)
+  return response
+}
 
 // The authorization server a PDS (resource server) declares.
 async function pdsAuthorizationServer(pdsUrl: string): Promise<string | null> {
-  const resourceResp = await fetch(`${pdsUrl}/.well-known/oauth-protected-resource`, { redirect: 'manual' })
+  const resourceResp = await fetchMetadata('Bluesky PDS metadata', `${pdsUrl}/.well-known/oauth-protected-resource`)
   if (!resourceResp.ok) return null
-  let resourceMeta: { authorization_servers?: string[] }
+  let resourceMeta: { authorization_servers?: string[] } | null
   try {
     resourceMeta = await resourceResp.json() as typeof resourceMeta
   } catch { return null }
-  const issuer = resourceMeta.authorization_servers?.[0]
+  const issuer = resourceMeta?.authorization_servers?.[0]
   if (!issuer || !isSafeUrl(issuer)) return null
   return issuer
 }
 
-// Sign-in can't start without the account, so an account lookup that didn't
-// answer stops it the same way one that found nothing does. It's logged so an
-// outage can be told apart from a handle that doesn't exist.
+// Sign-in can't start without the account or its server, so a lookup that
+// didn't answer stops it the same way one that found nothing does. It's logged
+// so an outage can be told apart from a handle that doesn't exist.
 async function orNullIfUnanswered<T>(lookup: Promise<T | null>): Promise<T | null> {
   try {
     return await lookup
@@ -58,24 +65,26 @@ async function resolveAuthServer(handle: string): Promise<{
   if (!pdsUrl) return null
 
   // 3. Get authorization server from PDS resource metadata
-  const issuer = await pdsAuthorizationServer(pdsUrl)
+  const issuer = await orNullIfUnanswered(pdsAuthorizationServer(pdsUrl))
   if (!issuer) return null
 
   // 4. Get authorization server metadata
-  const authResp = await fetch(`${issuer}/.well-known/oauth-authorization-server`, { redirect: 'manual' })
-  if (!authResp.ok) return null
+  const authResp = await orNullIfUnanswered(
+    fetchMetadata('Bluesky authorization server metadata', `${issuer}/.well-known/oauth-authorization-server`),
+  )
+  if (!authResp?.ok) return null
   let authMeta: {
     issuer: string
     authorization_endpoint: string
     token_endpoint: string
     pushed_authorization_request_endpoint: string
-  }
+  } | null
   try {
     authMeta = await authResp.json() as typeof authMeta
   } catch { return null }
 
   // The metadata must describe the server it was fetched from
-  if (authMeta.issuer !== issuer) return null
+  if (!authMeta || authMeta.issuer !== issuer) return null
 
   // Validate all discovered endpoints are safe HTTPS URLs
   if (!isSafeUrl(authMeta.authorization_endpoint) ||
@@ -221,7 +230,7 @@ export async function startBlueskyOAuth(
     })
   }
 
-  let parData: { request_uri?: string }
+  let parData: { request_uri?: string } | null
   try {
     parData = await parResp.json() as typeof parData
   } catch {
@@ -230,7 +239,7 @@ export async function startBlueskyOAuth(
       headers: { 'Content-Type': 'application/json' },
     })
   }
-  if (!parData.request_uri) {
+  if (!parData?.request_uri) {
     return new Response(JSON.stringify({ error: 'Missing request_uri from Bluesky authorization server' }), {
       status: 502,
       headers: { 'Content-Type': 'application/json' },
@@ -365,7 +374,7 @@ async function processBlueskyToken(
   env: Bindings,
   bound: boolean,
 ): Promise<SignInCallbackResult> {
-  let tokenData: { sub?: string }
+  let tokenData: { sub?: string } | null
   try {
     tokenData = await tokenResp.json() as typeof tokenData
   } catch {
@@ -373,7 +382,7 @@ async function processBlueskyToken(
   }
 
   // sub is the user's DID
-  const did = tokenData.sub
+  const did = tokenData?.sub
   if (!did) {
     return { success: false, returnUrl: state.returnUrl, error: 'No DID in token response' }
   }

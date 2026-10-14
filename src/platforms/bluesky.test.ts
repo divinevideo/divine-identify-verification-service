@@ -5,7 +5,7 @@ import { fakeResponse } from '../test-support/fake-response'
 describe('BlueskyVerifier', () => {
   const verifier = new BlueskyVerifier()
   const npub = 'npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg'
-  const did = 'did:plc:abc123'
+  const did = 'did:plc:abcdefghijklmnopqrstuvwx'
   const pdsEndpoint = 'https://example-pds.test'
 
   function didDocumentResponse() {

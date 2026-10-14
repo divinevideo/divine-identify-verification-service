@@ -1,6 +1,6 @@
 import { discardBody, fetchFromPlatform, PlatformUnavailableError, readJson, throwIfUnanswered, type PlatformVerifier } from './base'
 import { DIVINE_IDENTITY_LINK_COLLECTION, matchNostrIdentityLinkRecord } from '../identity-link'
-import { resolveAtprotoIdentityPds } from '../atproto'
+import { isMalformedDid, resolveAtprotoIdentityPds } from '../atproto'
 import { fetchPublic } from '../utils/safe-fetch'
 
 export class BlueskyVerifier implements PlatformVerifier {
@@ -12,6 +12,12 @@ export class BlueskyVerifier implements PlatformVerifier {
     proof: string,
     npub: string
   ): Promise<{ verified: boolean; error?: string; method?: 'identity_link' | 'proof_post'; provenance?: { method: 'identity_link' | 'proof_post'; collection?: string; at_uri?: string; evidence?: string[]; gateway?: { domain?: string; did?: string } } }> {
+    // A malformed account ID can't match any account, so it's a rejection
+    // however the lookups are doing: neither the record nor a post is looked up.
+    if (isMalformedDid(identity)) {
+      return { verified: false, error: 'That isn\'t a valid Bluesky account ID (DID)' }
+    }
+
     // Prefer deterministic identity-link records over public proof posts.
     let recordUnavailable: PlatformUnavailableError | null = null
     try {

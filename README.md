@@ -13,7 +13,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 - **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and platform outages for 5 minutes (answered with the code `temporarily_unavailable`, meaning "try again", not a rejection).
 - **Limits on platform requests** — each request to a platform gets 5 seconds, counted through the end of its answer, and at most 1 MB of an answer is read. A platform that doesn't answer in time is reported like any other outage (`temporarily_unavailable`).
 - **Rate limiting** — per-IP (60/min), per-pubkey (20/min), and per-platform (30/min) windows guard the Worker and upstream APIs.
-- **Interactive landing page** — a self-service verification UI served at `/`, with Nostr login (browser signer, login.divine.video, bunker, or Nostr Connect), Quick Connect OAuth, an advanced proof-post flow, a link manager, and a public lookup tool.
+- **Interactive landing page** — a self-service verification UI served at `/`, with Nostr login (browser signer, login.divine.video, bunker, or Nostr Connect), Quick Connect OAuth, linking with a post, a Publish step, a link manager, and a public lookup tool.
 - **Embeddable** — a postMessage NIP-07 bridge lets the flow run inside a trusted Divine iframe using the host's existing signer, so no second login is required.
 - **Stateless** — no database; state lives in Cloudflare KV, so the Worker scales horizontally.
 
