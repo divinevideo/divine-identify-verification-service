@@ -2232,7 +2232,7 @@ Content-Type: application/json
           });
           try { data = await resp.json(); } catch {}
         } catch {}
-        // Counted only when the verifier names the link this sign-in is for (D6).
+        // Counted only when the verifier names the link this sign-in is for.
         if (resp && resp.status === 200 && data && data.linked === true && data.platform === waiting.platform
           && typeof data.identity === 'string' && data.identity.toLowerCase() === String(waiting.identity).toLowerCase()) return;
         // Any other success isn't counted, and isn't asked again on its own.
