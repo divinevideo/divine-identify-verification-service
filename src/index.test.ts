@@ -301,6 +301,46 @@ describe('verifier twitter oauth gating', () => {
     expect(html).not.toContain('GET https://verifier.divine.video/auth/bluesky/start?')
   })
 
+  it('shows the full sign-in start and confirm requests, with their answers and error codes, as the README does', async () => {
+    const docs = oauthDocsSection(await homeHtml())
+    expect(docs).toContain(`POST https://verifier.divine.video/auth/bluesky/start
+Content-Type: application/json
+
+{"pubkey":"&lt;64 hex&gt;","return_url":"https://verifier.divine.video/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}</pre>`)
+    expect(docs).toContain('<p>The answer is <code>{"url":"https://…"}</code>, the provider page to open.</p>')
+    expect(docs).toContain(`<pre>POST https://verifier.divine.video/auth/confirm
+Content-Type: application/json
+
+{"code":"&lt;code&gt;","start_secret":"&lt;secret&gt;","event":{…signed kind 10011…}}</pre>`)
+    // The answer has no spaces, so it may break anywhere to fit a phone screen.
+    expect(docs).toContain('<p>The answer is <code style="overflow-wrap:anywhere;">{"linked":true,"platform":"bluesky","identity":"example.bsky.social"}</code>. The client then publishes the same event to relays. Errors carry a <code>code</code>:</p>')
+    expect(docs).toContain(`<ul>
+        <li><code>invalid_request</code> (400: a malformed <code>code</code> or <code>start_secret</code>);</li>
+        <li><code>signin_not_found</code> (expired or not visible yet; retry briefly);</li>
+        <li><code>signin_used</code>;</li>
+        <li><code>signin_wrong_account</code>;</li>
+        <li><code>signin_not_yours</code>;</li>
+        <li><code>signin_claim_mismatch</code>;</li>
+        <li><code>invalid_event</code>.</li>
+      </ul>`)
+  })
+
+  it('says how the sign-in returns its code, where the code goes, and when a sign-in counts', async () => {
+    const docs = oauthDocsSection(await homeHtml())
+    expect(docs).toContain("The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>.")
+    expect(docs).toContain('The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.')
+    expect(docs).toContain('A sign-in counts once you confirm it by publishing; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.')
+  })
+
+  it('documents YouTube and TikTok sign-in starts as POSTs with a start check when they are on', async () => {
+    const docs = oauthDocsSection(await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, YOUTUBE_API_KEY: 'key', TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }))
+    // The other platforms follow the full Bluesky example after a blank line.
+    expect(docs).toContain(`secret))&gt;"}\n\nPOST https://verifier.divine.video/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}\nPOST https://verifier.divine.video/auth/youtube/start`)
+    expect(docs).toContain('POST https://verifier.divine.video/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}')
+    expect(docs).toContain('POST https://verifier.divine.video/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}')
+    expect(docs).not.toContain('/start?pubkey=')
+  })
+
   it('gives the hashing rule for the start check and the binding, as the README does', async () => {
     const docs = oauthDocsSection(await homeHtml())
     expect(docs).toContain(`"start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"`)
@@ -438,28 +478,41 @@ describe('signing in with a Divine login first', () => {
     return html.slice(start, end)
   }
 
+  // The markup inside the div with this id, up to its matching </div>.
+  function divBody(html: string, id: string): string {
+    const open = html.indexOf(`<div id="${id}">`)
+    expect(open).toBeGreaterThan(-1)
+    const tags = /<div\b|<\/div>/g
+    tags.lastIndex = open + 1
+    let depth = 1
+    for (let tag = tags.exec(html); tag; tag = tags.exec(html)) {
+      depth += tag[0] === '</div>' ? -1 : 1
+      if (depth === 0) return html.slice(open, tag.index)
+    }
+    throw new Error(`no closing </div> for ${id}`)
+  }
+
   it('wraps Step 1\'s sign-in options so the Divine app can hide them once signed in', async () => {
     const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
-    const options = html.slice(html.indexOf('id="step1-signin-options"'), html.indexOf('id="signer-session-summary"'))
+    const options = divBody(html, 'step1-signin-options')
+    expect(options).toContain('<p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>')
     expect(options).toContain('id="connect-keycast-btn"')
     expect(options).toContain('id="connect-nostr-btn"')
     expect(options).toContain('id="verify-pubkey-input"')
-    expect(options).toContain('<p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>')
-    // The wrapper closes before the signed-in summary, so the summary still
-    // shows: one more </div> than <div, the wrapper's own.
-    expect((options.match(/<\/div>/g) ?? []).length).toBe((options.match(/<div\b/g) ?? []).length + 1)
+    expect(options).not.toContain('id="signer-session-summary"')
   })
 
   it('wraps the remote signer options too, after the signed-in summary', async () => {
     const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
-    const summary = html.indexOf('id="signer-session-summary"')
-    const remote = html.slice(html.indexOf('id="step1-remote-signer-options"'), html.indexOf('<div id="verify-login-status"'))
-    expect(summary).toBeGreaterThan(-1)
-    expect(summary).toBeLessThan(html.indexOf('id="step1-remote-signer-options"'))
-    expect(summary).toBeLessThan(html.indexOf('id="remote-signer-details"'))
+    const remote = divBody(html, 'step1-remote-signer-options')
     expect(remote).toContain('id="remote-signer-details"')
-    // The wrapper closes before the login status, which stays visible.
-    expect((remote.match(/<\/div>/g) ?? []).length).toBe((remote.match(/<div\b/g) ?? []).length + 1)
+    expect(remote).toContain('</details>')
+    expect(remote).not.toContain('id="signer-session-summary"')
+    expect(remote).not.toContain('id="verify-login-status"')
+    // In a browser the summary sits under the account box, above the remote signer options.
+    const summary = html.indexOf('id="signer-session-summary"')
+    expect(summary).toBeGreaterThan(html.indexOf('<div id="step1-signin-options">'))
+    expect(summary).toBeLessThan(html.indexOf('<div id="step1-remote-signer-options">'))
   })
 
   it('leads Step 1 with the Divine login', async () => {

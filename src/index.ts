@@ -149,9 +149,11 @@ app.get('/', (c) => {
     ? ' Existing TikTok OAuth verifications remain recognized.'
     : ''
   const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
-  const twitterOAuthInlineExample = twitterOAuthEnabled ? `POST ${origin}/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}\n` : ''
-  const ytOAuthInlineExample = hasYouTube ? `\nPOST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : ''
-  const ttOAuthInlineExample = hasTikTok && tiktokOAuthEnabled ? `\nPOST ${origin}/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}` : ''
+  const otherOAuthStartExamples = [
+    twitterOAuthEnabled ? `POST ${origin}/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    hasYouTube ? `POST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    hasTikTok && tiktokOAuthEnabled ? `POST ${origin}/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}` : '',
+  ].filter(Boolean).join('\n')
   const extraLookupPlatforms = (hasYouTube ? ",'youtube'" : '') + (hasTikTok ? ",'tiktok'" : '')
   const oauthPlatformOptions = oauthPlatforms.map(platform => `<option value="${platform.value}">${platform.optionLabel}</option>`).join('')
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
@@ -622,38 +624,38 @@ app.get('/', (c) => {
         <span class="step-pill">Step 1</span>
         <h3 style="margin-top:0;">Sign in with your Divine login</h3>
         <div id="step1-signin-options">
-        <p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
-          <button id="connect-keycast-btn" class="verify-btn verify-btn-primary" type="button">Sign in with Divine login</button>
-          <button id="connect-nostr-btn" class="verify-btn" type="button">Use a Nostr extension</button>
-        </div>
-        <label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you sign in)</label>
-        <input id="verify-pubkey-input" class="field-input" type="text" readonly placeholder="Filled in when you sign in">
+          <p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
+            <button id="connect-keycast-btn" class="verify-btn verify-btn-primary" type="button">Sign in with Divine login</button>
+            <button id="connect-nostr-btn" class="verify-btn" type="button">Use a Nostr extension</button>
+          </div>
+          <label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you sign in)</label>
+          <input id="verify-pubkey-input" class="field-input" type="text" readonly placeholder="Filled in when you sign in">
         </div>
         <p id="signer-session-summary" class="field-help" style="display:none;"></p>
         <div id="step1-remote-signer-options">
-        <details class="advanced-proof" id="remote-signer-details" style="margin-top:0.75rem;">
-          <summary>Remote signer options: bunker and Nostr Connect</summary>
-          <div class="advanced-proof-inner">
-            <p style="margin-bottom:0.75rem;">Paste a bunker URL or bunker NIP-05, or generate a Nostr Connect URI for your signer app.</p>
-            <label for="bunker-input" class="field-label">Bunker URL or bunker NIP-05</label>
-            <input id="bunker-input" class="field-input" type="text" placeholder="bunker://... or signer@example.com">
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
-              <button id="connect-bunker-btn" class="verify-btn" type="button">Connect bunker</button>
-              <button id="start-nostr-connect-btn" class="verify-btn" type="button">Start Nostr Connect</button>
-            </div>
-            <div id="nostr-connect-wrap" style="display:none;margin-top:0.85rem;">
-              <label for="nostr-connect-uri-input" class="field-label">Nostr Connect URI</label>
-              <textarea id="nostr-connect-uri-input" class="field-input" rows="3" readonly style="min-height:6.5rem;resize:vertical;"></textarea>
+          <details class="advanced-proof" id="remote-signer-details" style="margin-top:0.75rem;">
+            <summary>Remote signer options: bunker and Nostr Connect</summary>
+            <div class="advanced-proof-inner">
+              <p style="margin-bottom:0.75rem;">Paste a bunker URL or bunker NIP-05, or generate a Nostr Connect URI for your signer app.</p>
+              <label for="bunker-input" class="field-label">Bunker URL or bunker NIP-05</label>
+              <input id="bunker-input" class="field-input" type="text" placeholder="bunker://... or signer@example.com">
               <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
-                <button id="copy-nostr-connect-btn" class="verify-btn" type="button">Copy URI</button>
-                <a id="open-nostr-connect-link" class="verify-btn" href="#" rel="noopener noreferrer">Open signer app</a>
-                <button id="cancel-nostr-connect-btn" class="verify-btn" type="button">Cancel</button>
+                <button id="connect-bunker-btn" class="verify-btn" type="button">Connect bunker</button>
+                <button id="start-nostr-connect-btn" class="verify-btn" type="button">Start Nostr Connect</button>
               </div>
-              <p class="field-help" style="margin-top:0.5rem;">Open this URI in your signer app, or copy it into a bunker / Nostr Connect client.</p>
+              <div id="nostr-connect-wrap" style="display:none;margin-top:0.85rem;">
+                <label for="nostr-connect-uri-input" class="field-label">Nostr Connect URI</label>
+                <textarea id="nostr-connect-uri-input" class="field-input" rows="3" readonly style="min-height:6.5rem;resize:vertical;"></textarea>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+                  <button id="copy-nostr-connect-btn" class="verify-btn" type="button">Copy URI</button>
+                  <a id="open-nostr-connect-link" class="verify-btn" href="#" rel="noopener noreferrer">Open signer app</a>
+                  <button id="cancel-nostr-connect-btn" class="verify-btn" type="button">Cancel</button>
+                </div>
+                <p class="field-help" style="margin-top:0.5rem;">Open this URI in your signer app, or copy it into a bunker / Nostr Connect client.</p>
+              </div>
             </div>
-          </div>
-        </details>
+          </details>
         </div>
         <div id="verify-login-status" class="status-row"></div>
         <div id="verify-global-status" class="status-row"></div>
@@ -896,8 +898,25 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       <p>The new claim's tag carries a fourth value, <code>base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))</code>. Both hashes in this flow (the start check and the binding) are SHA-256 over the UTF-8 text shown, meaning the 43-character strings and not the raw bytes, written as base64url without padding.</p>
 
       <h3>Start OAuth</h3>
-      <pre>${twitterOAuthInlineExample}POST ${origin}/auth/bluesky/start  {"pubkey":"hex64","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}${ytOAuthInlineExample}${ttOAuthInlineExample}
-POST ${origin}/auth/confirm  {"code":"…","start_secret":"…","event":{signed kind 10011}}</pre>
+      <pre>POST ${origin}/auth/bluesky/start
+Content-Type: application/json
+
+{"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}${otherOAuthStartExamples ? `\n\n${otherOAuthStartExamples}` : ''}</pre>
+      <p>The answer is <code>{"url":"https://…"}</code>, the provider page to open.</p>
+      <pre>POST ${origin}/auth/confirm
+Content-Type: application/json
+
+{"code":"&lt;code&gt;","start_secret":"&lt;secret&gt;","event":{…signed kind 10011…}}</pre>
+      <p>The answer is <code style="overflow-wrap:anywhere;">{"linked":true,"platform":"bluesky","identity":"example.bsky.social"}</code>. The client then publishes the same event to relays. Errors carry a <code>code</code>:</p>
+      <ul>
+        <li><code>invalid_request</code> (400: a malformed <code>code</code> or <code>start_secret</code>);</li>
+        <li><code>signin_not_found</code> (expired or not visible yet; retry briefly);</li>
+        <li><code>signin_used</code>;</li>
+        <li><code>signin_wrong_account</code>;</li>
+        <li><code>signin_not_yours</code>;</li>
+        <li><code>signin_claim_mismatch</code>;</li>
+        <li><code>invalid_event</code>.</li>
+      </ul>
 
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>

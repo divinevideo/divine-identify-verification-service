@@ -154,6 +154,15 @@ describe('Step 1 inside the Divine app', () => {
     expect(h.elements['step1-remote-signer-options'].hidden).toBe(false)
   })
 
+  // A remembered sign-in can bring back the 'embedded' source on a load
+  // outside the app (reattachSigner), so the source alone isn't enough.
+  it('outside the Divine app, Step 1 keeps every way to sign in even when the signer source reads embedded', async () => {
+    const h = await summaryHarness({ embedded: false, signer: true, source: 'embedded' })
+    h.page.updateSignerSummary()
+    expect(h.elements['step1-signin-options'].hidden).toBe(false)
+    expect(h.elements['step1-remote-signer-options'].hidden).toBe(false)
+  })
+
   it('inside the Divine app, Step 1 shows the ways to sign in again once the signer is gone', async () => {
     const h = await summaryHarness({ embedded: true, signer: true, source: 'embedded' })
     h.page.updateSignerSummary()
