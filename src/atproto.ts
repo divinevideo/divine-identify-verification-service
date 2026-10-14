@@ -9,6 +9,38 @@ export type DidDocument = {
 
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>
 
+// A did:plc is "did:plc:" and 24 lowercase base32 characters (a-z, 2-7), per
+// the did:plc spec (did-method-plc, website/spec/v0.1/did-plc.md).
+const DID_PLC = /^did:plc:[a-z2-7]{24}$/
+// atproto's DID syntax (atproto.com/specs/did) without ":", because atproto
+// supports hostname-level did:web only, so a ":" would start a path (a port is
+// written as %3A): letters, digits and ._%- only, and not ending in %.
+const DID_WEB = /^did:web:[a-zA-Z0-9._%-]*[a-zA-Z0-9._-]$/
+
+// The host a did:web names, or null when the DID is malformed: characters
+// outside the syntax, a % that isn't a valid escape, or a path (atproto
+// supports hostname-level did:web only).
+function didWebHost(did: string): string | null {
+  if (!DID_WEB.test(did)) return null
+  let host: string
+  try {
+    host = decodeURIComponent(did.slice('did:web:'.length))
+  } catch {
+    return null
+  }
+  return host.includes('/') || host.includes('\\') ? null : host
+}
+
+/**
+ * Whether a did:plc or did:web is malformed, so no lookup could find it. Other
+ * DIDs and handles are not this check's business: they are reported as false.
+ */
+export function isMalformedDid(did: string): boolean {
+  if (did.startsWith('did:plc:')) return !DID_PLC.test(did)
+  if (did.startsWith('did:web:')) return didWebHost(did) === null
+  return false
+}
+
 // What an account lookup's answer means, decided once for the three lookups
 // here. A lookup answers null when the account isn't there or the answer is one
 // this service can't use, and throws a PlatformUnavailableError when the
@@ -56,8 +88,8 @@ export async function resolveDidDocument(did: string): Promise<DidDocument | nul
   }
 
   if (did.startsWith('did:web:')) {
-    const domain = decodeURIComponent(did.slice('did:web:'.length))
-    if (domain.includes('/') || domain.includes('\\')) return null
+    const domain = didWebHost(did)
+    if (!domain) return null
     const didWebUrl = `https://${domain}/.well-known/did.json`
     if (!isSafeUrl(didWebUrl)) return null
     return await lookUp('did:web host', didWebUrl, fetchPublic) as DidDocument | null

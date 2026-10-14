@@ -383,6 +383,48 @@ describe('a platform that does not answer', () => {
     })
   })
 
+  describe('a Bluesky account ID that isn\'t a valid DID', () => {
+    // Nothing a lookup could answer would make these valid, so they are
+    // rejected without asking anyone, even while every service is down.
+    const MALFORMED = [
+      'did:web:%',
+      'did:web:%E0%A4%A',
+      'did:web:example.com%',
+      'did:web:example.com:user:alice',
+      'did:plc:abc',
+      `did:plc:${'A'.repeat(24)}`,
+      `did:plc:${'a'.repeat(25)}`,
+    ]
+
+    describe.each(MALFORMED)('%s', identity => {
+      it.each([
+        ['without a post', ''],
+        ['with a post', 'abc123rkey'],
+      ])('%s is a rejection, remembered for 15 minutes, with no lookup', async (_label, proof) => {
+        const { env, kv } = createEnv()
+        const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
+        platformAnswers(503)
+        const body = await verify(env, 'bluesky', { identity, proof })
+        expect(body.verified).toBe(false)
+        expect(body.code).toBeUndefined()
+        expect(body.error).toEqual(expect.any(String))
+        expect(body.error).not.toMatch(/couldn't be checked right now/)
+        expect(rememberedFor(kv)).toBe(FAILED_TTL)
+        expect(fetch).not.toHaveBeenCalled()
+        expect(logError).not.toHaveBeenCalled()
+      })
+    })
+
+    it('does not stop a well-formed did:plc from being reported as "couldn\'t check right now" when the directory is down', async () => {
+      const { env, kv } = createEnv()
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      platformAnswers(503)
+      const body = await verify(env, 'bluesky', { identity: `did:plc:${'a'.repeat(24)}`, proof: '' })
+      expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
+      expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
+    })
+  })
+
   // 401 and 403 are our credential being refused, not a verdict on the gist.
   it.each([401, 403, 408, 425])('GitHub: an API that answers %i falls back to the gist itself', async status => {
     const { env } = createEnv(null, { GITHUB_TOKEN: 'synthetic-token' })
