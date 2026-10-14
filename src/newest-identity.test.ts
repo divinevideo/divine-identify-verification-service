@@ -571,7 +571,7 @@ describe('loading nostr-tools', () => {
   // import() here, so the loader's two import() calls go to a stand-in that
   // counts them and fails until `available` is set.
   async function loadLoader() {
-    const source = scriptBetween(await pageHtml(), 'async function loadNostrTools()', 'function safeDecodeText(input)')
+    const source = scriptBetween(await pageHtml(), 'async function loadNostrTools()', 'function extractHexFromText(text)')
     expect(source.match(/\bimport\(/g)).toHaveLength(2)
     let imports = 0
     const state = { available: false }

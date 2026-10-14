@@ -8,8 +8,6 @@ import { generateDPoPKeyPair } from './crypto'
 // the handle the person typed.
 
 const PUBKEY = 'ab'.repeat(32)
-// These tests don't exercise sign-in binding; any hash-shaped string will do.
-const BINDING_HASH = 'b'.repeat(64)
 const ISSUER = 'https://bsky.social'
 const HANDLE = 'alice.bsky.social'
 const DID = 'did:plc:alice111111111111111111'
@@ -70,7 +68,7 @@ async function signInReturning(sub: string, accounts: Account[], fetchMock: type
   }))
   vi.stubGlobal('fetch', fetchMock)
   const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-  const result = await handleBlueskyCallback(env, 'code', 'state1', ISSUER, undefined)
+  const result = await handleBlueskyCallback(env, 'code', 'state1', ISSUER)
   const recorded = [...cache.store.keys()].filter(k => k.startsWith('oauth_verified:bluesky:'))
   return { result, recorded }
 }
@@ -238,7 +236,7 @@ describe('Bluesky sign-in discovery', () => {
     vi.stubGlobal('fetch', discovery())
     const cache = kv()
     const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, 'Alice.Bsky.Social', 'https://verifier.divine.video/', BINDING_HASH)
+    const response = await startBlueskyOAuth(env, PUBKEY, 'Alice.Bsky.Social', 'https://verifier.divine.video/', undefined)
     expect(response.status).toBe(302)
     const [saved] = [...cache.store.entries()].filter(([k]) => k.startsWith('oauth_state:'))
     expect(JSON.parse(saved[1])).toMatchObject({ did: DID, handle: HANDLE, issuer: ISSUER })
@@ -247,7 +245,7 @@ describe('Bluesky sign-in discovery', () => {
   it('refuses an authorization server whose metadata names a different issuer', async () => {
     vi.stubGlobal('fetch', discovery('https://auth.elsewhere.example'))
     const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', undefined)
     expect(response.status).toBe(400)
   })
 
@@ -273,7 +271,7 @@ describe('Bluesky sign-in discovery', () => {
       String(input).includes(lookupUrl) ? outage() : answers(input)))
     const cache = kv()
     const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', undefined)
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'Could not discover Bluesky authorization server for this handle' })
     expect([...cache.store.keys()]).toEqual([])
@@ -290,7 +288,7 @@ describe('Bluesky sign-in discovery', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
       String(input) === lookupUrl ? json({ error: 'not found' }, 404) : answers(input)))
     const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', undefined)
     expect(response.status).toBe(400)
     expect(warn).not.toHaveBeenCalled()
   })
@@ -308,7 +306,7 @@ describe('Bluesky sign-in discovery', () => {
       String(input) === nullUrl ? json(null) : answers(input)))
     const cache = kv()
     const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', undefined)
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'Could not discover Bluesky authorization server for this handle' })
     expect([...cache.store.keys()]).toEqual([])
@@ -320,7 +318,7 @@ describe('Bluesky sign-in discovery', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
       String(input) === `${ISSUER}/oauth/par` ? json(null, 201) : answers(input)))
     const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', undefined)
     expect(response.status).toBe(502)
     expect(await response.json()).toEqual({ error: 'Missing request_uri from Bluesky authorization server' })
   })
@@ -329,6 +327,6 @@ describe('Bluesky sign-in discovery', () => {
     vi.stubGlobal('fetch', discovery())
     const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
     // A lone surrogate can't be put in a URL, so building the lookup throws.
-    await expect(startBlueskyOAuth(env, PUBKEY, '\uD800', 'https://verifier.divine.video/', BINDING_HASH)).rejects.toThrow(URIError)
+    await expect(startBlueskyOAuth(env, PUBKEY, '\uD800', 'https://verifier.divine.video/', undefined)).rejects.toThrow(URIError)
   })
 })

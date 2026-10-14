@@ -149,14 +149,19 @@ app.get('/', (c) => {
     ? ' Existing TikTok OAuth verifications remain recognized.'
     : ''
   const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
-  const twitterOAuthInlineExample = twitterOAuthEnabled ? `GET ${origin}/auth/twitter/start?pubkey=hex64&amp;return_url=${origin}/#verify-here\n` : ''
-  const ytOAuthInlineExample = hasYouTube ? `\nGET ${origin}/auth/youtube/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
-  const ttOAuthInlineExample = hasTikTok && tiktokOAuthEnabled ? `\nGET ${origin}/auth/tiktok/start?pubkey=hex64&amp;return_url=${origin}/#verify-here` : ''
+  const otherOAuthStartExamples = [
+    twitterOAuthEnabled ? `POST ${origin}/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    hasYouTube ? `POST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    hasTikTok && tiktokOAuthEnabled ? `POST ${origin}/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}` : '',
+  ].filter(Boolean).join('\n')
   const extraLookupPlatforms = (hasYouTube ? ",'youtube'" : '') + (hasTikTok ? ",'tiktok'" : '')
   const oauthPlatformOptions = oauthPlatforms.map(platform => `<option value="${platform.value}">${platform.optionLabel}</option>`).join('')
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
   c.header('Cache-Control', 'private, no-store')
+  // The page holds a sign-in's one-time code in its address for a moment;
+  // never send its address to other sites.
+  c.header('Referrer-Policy', 'no-referrer')
   // TODO(#39): Remove cookie variance when the OAuth reviewer override is retired.
   c.header('Vary', 'Cookie')
   return c.html(`<!DOCTYPE html>
@@ -618,38 +623,40 @@ app.get('/', (c) => {
       <div class="verify-card">
         <span class="step-pill">Step 1</span>
         <h3 style="margin-top:0;">Sign in with your Divine login</h3>
-        <p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
-          <button id="connect-keycast-btn" class="verify-btn verify-btn-primary" type="button">Sign in with Divine login</button>
-          <button id="connect-nostr-btn" class="verify-btn" type="button">Use a Nostr extension</button>
-        </div>
-        <label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you sign in)</label>
-        <input id="verify-pubkey-input" class="field-input" type="text" placeholder="example@divine.video or npub1...">
-        <p id="signer-session-summary" class="field-help" style="display:none;"></p>
-        <!-- TODO(#113): Remove with the paste-an-account fallback. -->
-        <p class="field-help">Not signed in? Paste your Divine address or npub to check a link now. You'll still need to sign in to publish it.</p>
-        <details class="advanced-proof" id="remote-signer-details" style="margin-top:0.75rem;">
-          <summary>Remote signer options: bunker and Nostr Connect</summary>
-          <div class="advanced-proof-inner">
-            <p style="margin-bottom:0.75rem;">Paste a bunker URL or bunker NIP-05, or generate a Nostr Connect URI for your signer app.</p>
-            <label for="bunker-input" class="field-label">Bunker URL or bunker NIP-05</label>
-            <input id="bunker-input" class="field-input" type="text" placeholder="bunker://... or signer@example.com">
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
-              <button id="connect-bunker-btn" class="verify-btn" type="button">Connect bunker</button>
-              <button id="start-nostr-connect-btn" class="verify-btn" type="button">Start Nostr Connect</button>
-            </div>
-            <div id="nostr-connect-wrap" style="display:none;margin-top:0.85rem;">
-              <label for="nostr-connect-uri-input" class="field-label">Nostr Connect URI</label>
-              <textarea id="nostr-connect-uri-input" class="field-input" rows="3" readonly style="min-height:6.5rem;resize:vertical;"></textarea>
-              <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
-                <button id="copy-nostr-connect-btn" class="verify-btn" type="button">Copy URI</button>
-                <a id="open-nostr-connect-link" class="verify-btn" href="#" rel="noopener noreferrer">Open signer app</a>
-                <button id="cancel-nostr-connect-btn" class="verify-btn" type="button">Cancel</button>
-              </div>
-              <p class="field-help" style="margin-top:0.5rem;">Open this URI in your signer app, or copy it into a bunker / Nostr Connect client.</p>
-            </div>
+        <div id="step1-signin-options">
+          <p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
+            <button id="connect-keycast-btn" class="verify-btn verify-btn-primary" type="button">Sign in with Divine login</button>
+            <button id="connect-nostr-btn" class="verify-btn" type="button">Use a Nostr extension</button>
           </div>
-        </details>
+          <label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you sign in)</label>
+          <input id="verify-pubkey-input" class="field-input" type="text" readonly placeholder="Filled in when you sign in">
+        </div>
+        <p id="signer-session-summary" class="field-help" style="display:none;"></p>
+        <div id="step1-remote-signer-options">
+          <details class="advanced-proof" id="remote-signer-details" style="margin-top:0.75rem;">
+            <summary>Remote signer options: bunker and Nostr Connect</summary>
+            <div class="advanced-proof-inner">
+              <p style="margin-bottom:0.75rem;">Paste a bunker URL or bunker NIP-05, or generate a Nostr Connect URI for your signer app.</p>
+              <label for="bunker-input" class="field-label">Bunker URL or bunker NIP-05</label>
+              <input id="bunker-input" class="field-input" type="text" placeholder="bunker://... or signer@example.com">
+              <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+                <button id="connect-bunker-btn" class="verify-btn" type="button">Connect bunker</button>
+                <button id="start-nostr-connect-btn" class="verify-btn" type="button">Start Nostr Connect</button>
+              </div>
+              <div id="nostr-connect-wrap" style="display:none;margin-top:0.85rem;">
+                <label for="nostr-connect-uri-input" class="field-label">Nostr Connect URI</label>
+                <textarea id="nostr-connect-uri-input" class="field-input" rows="3" readonly style="min-height:6.5rem;resize:vertical;"></textarea>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+                  <button id="copy-nostr-connect-btn" class="verify-btn" type="button">Copy URI</button>
+                  <a id="open-nostr-connect-link" class="verify-btn" href="#" rel="noopener noreferrer">Open signer app</a>
+                  <button id="cancel-nostr-connect-btn" class="verify-btn" type="button">Cancel</button>
+                </div>
+                <p class="field-help" style="margin-top:0.5rem;">Open this URI in your signer app, or copy it into a bunker / Nostr Connect client.</p>
+              </div>
+            </div>
+          </details>
+        </div>
         <div id="verify-login-status" class="status-row"></div>
         <div id="verify-global-status" class="status-row"></div>
       </div>
@@ -887,15 +894,34 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     <section id="oauth">
       <h2>OAuth Verification (${oauthPlatformNames.join(', ')})</h2>
       <p>Users can verify by logging in instead of posting a proof.</p>
-      <p>The verifier page only reports sign-ins it started itself. The <code>return_url</code> in these examples is the verifier page; a Divine app that starts its own sign-in should return to its own page on a Divine site and confirm the result with the status check below.</p>
+      <p>The verifier page only reports sign-ins it started itself. A client starting its own sign-in keeps a random start secret (32 random bytes written as 43 base64url characters), sends its hash as <code>start_check</code>, and gets back the provider page to open. The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>. The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.</p>
+      <p>The new claim's tag carries a fourth value, <code>base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))</code>. Both hashes in this flow (the start check and the binding) are SHA-256 over the UTF-8 text shown, meaning the 43-character strings and not the raw bytes, written as base64url without padding.</p>
 
       <h3>Start OAuth</h3>
-      <pre>${twitterOAuthInlineExample}GET ${origin}/auth/bluesky/start?pubkey=hex64&amp;handle=example.bsky.social&amp;return_url=${origin}/#verify-here${ytOAuthInlineExample}${ttOAuthInlineExample}</pre>
+      <pre>POST ${origin}/auth/bluesky/start
+Content-Type: application/json
+
+{"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}${otherOAuthStartExamples ? `\n\n${otherOAuthStartExamples}` : ''}</pre>
+      <p>The answer is <code>{"url":"https://…"}</code>, the provider page to open.</p>
+      <pre>POST ${origin}/auth/confirm
+Content-Type: application/json
+
+{"code":"&lt;code&gt;","start_secret":"&lt;secret&gt;","event":{…signed kind 10011…}}</pre>
+      <p>The answer is <code style="overflow-wrap:anywhere;">{"linked":true,"platform":"bluesky","identity":"example.bsky.social"}</code>. The client then publishes the same event to relays. Errors carry a <code>code</code>:</p>
+      <ul>
+        <li><code>invalid_request</code> (400: a malformed <code>code</code> or <code>start_secret</code>);</li>
+        <li><code>signin_not_found</code> (expired or not visible yet; retry briefly);</li>
+        <li><code>signin_used</code>;</li>
+        <li><code>signin_wrong_account</code>;</li>
+        <li><code>signin_not_yours</code>;</li>
+        <li><code>signin_claim_mismatch</code>;</li>
+        <li><code>invalid_event</code>.</li>
+      </ul>
 
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
 
-      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.${tiktokOAuthHistoryNote}</div>
+      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. Once confirmation is required, a sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">
@@ -906,7 +932,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       </div>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/health</code></h3>
-        <p>Health check. Returns <code>{"status":"ok"}</code>.</p>
+        <p>Health check. Returns <code>{"status":"ok", ...}</code>, including <code>signin_confirmation</code>: <code>"optional"</code> or <code>"required"</code>, the sign-in confirmation mode in effect.</p>
       </div>
     </section>
 
@@ -1002,6 +1028,13 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     }
 
     function updateSignerSummary() {
+      // Inside the Divine app you're signed in through the app, so Step 1 shows
+      // just that, without the other ways to sign in.
+      const signedInThroughApp = !!(window.__divineEmbedded && activeSigner && activeSignerSource === 'embedded');
+      for (const id of ['step1-signin-options', 'step1-remote-signer-options']) {
+        const options = document.getElementById(id);
+        if (options) options.hidden = signedInThroughApp;
+      }
       const el = document.getElementById('signer-session-summary');
       if (!el) return;
       const parts = [];
@@ -1258,34 +1291,6 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       return await nostrToolsPromise;
     }
 
-    function safeDecodeText(input) {
-      try {
-        return decodeURIComponent(input);
-      } catch {
-        return input;
-      }
-    }
-
-    async function resolveNip05ToHex(identifier) {
-      const normalized = (identifier || '').trim().toLowerCase();
-      const parts = normalized.split('@');
-      if (parts.length !== 2) {
-        throw new Error('That address does not look valid. Use format name@domain.');
-      }
-      const local = parts[0] || '_';
-      const domain = parts[1];
-      const resp = await fetch('https://' + domain + '/.well-known/nostr.json?name=' + encodeURIComponent(local));
-      if (!resp.ok) {
-        throw new Error('Could not find "' + normalized + '". Check spelling and try again.');
-      }
-      const data = await resp.json();
-      const key = data && data.names ? data.names[local] : null;
-      if (!key || !/^[0-9a-f]{64}$/i.test(key)) {
-        throw new Error('That address did not resolve to a usable Nostr key.');
-      }
-      return key.toLowerCase();
-    }
-
     function extractHexFromText(text) {
       const match = (text || '').match(/([0-9a-fA-F]{64})/);
       return match ? match[1].toLowerCase() : null;
@@ -1296,30 +1301,10 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       return match ? match[1] : null;
     }
 
-    async function normalizePubkeyInput(raw) {
-      const input = (raw || '').trim();
-      if (!input) throw new Error('Enter your Divine address or npub first.');
-
-      const decoded = safeDecodeText(input);
-      const hex = extractHexFromText(decoded);
-      if (hex) return hex;
-
-      const npub = extractNpubFromText(decoded);
-      if (npub) return npubToHex(npub);
-
-      const nip05Match = decoded.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);
-      if (nip05Match) return await resolveNip05ToHex(nip05Match[1]);
-
-      throw new Error('Could not read your key. Paste a Divine address, npub, profile URL, or 64-character key.');
-    }
-
     function setAccountInputValue(value) {
       const inputEl = document.getElementById('verify-pubkey-input');
       if (!inputEl) return;
       inputEl.value = value;
-      // Remembering the account is a convenience; a browser that blocks
-      // storage must not stop the caller (such as starting a sign-in).
-      try { if (value) localStorage.setItem('verifyer_account_input', value); } catch {}
     }
 
     function inferLoginQueryPubkey(params) {
@@ -1615,16 +1600,17 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     }
 
     async function getActivePubkey() {
+      // Only signing in or the app's ?pubkey= address fills the box. Anything
+      // in it other than a 64-character lowercase hex key is not used.
       const accountInput = document.getElementById('verify-pubkey-input').value;
-      if (accountInput && accountInput.trim()) {
-        const parsed = await normalizePubkeyInput(accountInput);
-        if (signerPubkeyHex && signerPubkeyHex !== parsed) {
-          throw new Error('The account you typed does not match the account you signed in with.');
+      if (/^[0-9a-f]{64}$/.test(accountInput)) {
+        if (signerPubkeyHex && signerPubkeyHex !== accountInput) {
+          throw new Error('The account in Step 1 does not match the account you signed in with.');
         }
-        return parsed;
+        return accountInput;
       }
       if (signerPubkeyHex) return signerPubkeyHex;
-      throw new Error('Sign in first (Verify Here, Step 1), or paste your account there.');
+      throw new Error('Sign in first (Verify Here, Step 1).');
     }
 
     function setButtonLoading(buttonId, isLoading, loadingText) {
@@ -1810,33 +1796,63 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     }
 
     async function startOAuthVerification() {
+      let nonce = '';
       try {
         clearStatus('verify-global-status');
         clearStatus('oauth-status');
         setButtonLoading('oauth-start-btn', true, 'Opening sign-in...');
-        setStatus('oauth-status', 'Checking your Divine account...', 'loading');
-
-        const pubkey = await getActivePubkey();
+        // A link counts once you confirm it with your signer, so a sign-in
+        // starts only with one connected that can sign (#113).
+        if (!activeSigner || typeof activeSigner.signEvent !== 'function' || typeof activeSigner.getPublicKey !== 'function') {
+          throw new Error('Sign in first (Verify Here, Step 1). You confirm the link with your Divine login or Nostr signer when you come back.');
+        }
+        const pubkey = String(await activeSigner.getPublicKey()).toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(pubkey)) {
+          throw new Error('Signer returned an invalid pubkey.');
+        }
         const platform = document.getElementById('oauth-platform-select').value;
         setAccountInputValue(pubkey);
 
-        // A one-time code that ties the return to the sign-in this page started.
-        const nonce = newSignInNonce();
-        const params = new URLSearchParams({
-          pubkey,
-          return_url: window.location.origin + window.location.pathname + '?signin=' + nonce + '#verify-here',
-        });
+        // The nonce ties the return to this page; the secret, which never
+        // leaves this browser except to confirm, ties it to this sign-in.
+        nonce = newSignInNonce();
+        const startSecret = newStartSecret();
+        const startCheck = await startCheckFor(startSecret);
+        // Back to this same page and host, where this sign-in is remembered.
+        const body = { pubkey, return_url: window.location.origin + '/?signin=' + nonce + '#verify-here', start_check: startCheck };
+        let handle = '';
         if (platform === 'bluesky') {
-          const handle = document.getElementById('oauth-bluesky-handle-input').value.trim().replace(/^@/, '').toLowerCase();
+          handle = document.getElementById('oauth-bluesky-handle-input').value.trim().replace(/^@/, '').toLowerCase();
           if (!handle) throw new Error('Enter your Bluesky handle (example: example.bsky.social).');
-          params.set('handle', handle);
+          body.handle = handle;
         }
         setStatus('oauth-status', 'Opening secure ' + platform + ' sign-in...', 'loading');
-        if (!rememberPendingSignIn(platform, pubkey, nonce)) {
-          throw new Error('This browser would not let the page save your sign-in, so it could not confirm it when you come back. Allow this site to store data and try again.');
+        if (!rememberPendingSignIn(platform, pubkey, nonce, { startSecret, startCheck, signer: activeSignerSource, handle })) {
+          throw new Error('This browser blocked the page from saving your sign-in, so it can\\'t be confirmed. Allow this site to store data and try again.');
         }
-        window.location.href = API + '/auth/' + platform + '/start?' + params.toString();
+        // A network failure shows the plain message below, not the browser's own text.
+        let resp = null;
+        try {
+          resp = await fetch(API + '/auth/' + platform + '/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+        } catch {}
+        let data = null;
+        if (resp) {
+          try { data = await resp.json(); } catch {}
+        }
+        if (!resp || !resp.ok || !data || typeof data.url !== 'string') {
+          throw new Error((data && data.error) || 'Could not start sign-in.');
+        }
+        let target = null;
+        try { target = new URL(data.url); } catch {}
+        if (!target || target.protocol !== 'https:') throw new Error('Could not start sign-in.');
+        window.location.href = target.toString();
       } catch (e) {
+        // A sign-in that never left can't come back, so drop it and its secret.
+        if (nonce) forgetPendingSignIn(nonce);
         setStatus('oauth-status', e.message || 'Could not start sign-in.', 'error');
         setButtonLoading('oauth-start-btn', false, '');
       }
@@ -1999,7 +2015,19 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         const iTags = tags.filter(tag => tag[0] === 'i');
         const claimKey = link.platform + ':' + link.identity;
         const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey.toLowerCase()));
-        nextTags.push(['i', claimKey, link.proof]);
+        // A link from a sign-in counts once confirmed: its claim carries a
+        // value tied to this sign-in, and the verifier checks it first (#113).
+        // A post proof publishes as before, whatever sign-in is waiting.
+        const waiting = link.proof === 'oauth' ? findWaitingSignIn(link.platform, link.identity, signerPubkey) : null;
+        // A sign-in link that matches none of this platform's waiting sign-ins
+        // (another Divine account, or another platform account) is neither
+        // confirmed nor published.
+        if (!waiting && link.proof === 'oauth' && waitingSignIns().some(pending => pending.platform === link.platform)) {
+          throw new Error('The account in Step 1 does not match the account you signed in with.');
+        }
+        nextTags.push(waiting
+          ? ['i', claimKey, link.proof, await confirmBindingFor(waiting.code, waiting.startCheck)]
+          : ['i', claimKey, link.proof]);
 
         const unsignedEvent = {
           kind: 10011,
@@ -2009,13 +2037,21 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
           pubkey: signerPubkey,
         };
 
-        setStatus('publish-status', 'Requesting signature from your signer...', 'loading');
-        const signedEvent = await activeSigner.signEvent(unsignedEvent);
+        // A retry sends the event already signed for this sign-in, unchanged.
+        const kept = waiting && signedConfirmations[waiting.nonce];
+        if (!kept) setStatus('publish-status', 'Requesting signature from your signer...', 'loading');
+        const signedEvent = kept || await activeSigner.signEvent(unsignedEvent);
         if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
           throw new Error('Signer did not return a valid signed event.');
         }
         if (String(signedEvent.pubkey || '').toLowerCase() !== signerPubkey) {
           throw new Error('Signer returned an event for a different pubkey.');
+        }
+
+        if (waiting) {
+          signedConfirmations[waiting.nonce] = signedEvent;
+          setStatus('publish-status', 'Confirming the link...', 'loading');
+          await confirmSignInCode(waiting, signedEvent);
         }
 
         setStatus('publish-status', 'Publishing identity event to relays...', 'loading');
@@ -2025,6 +2061,9 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
           const firstError = relayResults[0] && relayResults[0].message ? relayResults[0].message : 'no relay accepted the event';
           throw new Error('Publish failed: ' + firstError);
         }
+        // Counted and on the relays: this sign-in, and any older one for the
+        // same account, is done. Until then a retry resends the kept event.
+        if (waiting) forgetWaitingSignIns(waiting);
 
         setStatus('publish-status', 'Published to ' + successCount + '/' + PROFILE_RELAYS.length + ' relays. Your Nostr profile link is now updated.', 'ok');
       } catch (e) {
@@ -2036,14 +2075,15 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
 
     // A sign-in this page started, remembered across the trip to the provider so
     // the page only reports results for sign-ins it actually began. Kept in
-    // localStorage under the sign-in's one-time code, so a return that opens
-    // in another tab of the same browser still finds it.
+    // localStorage under the sign-in's id (the signin nonce), so a return that
+    // opens in another tab of the same browser still finds it.
     const PENDING_SIGN_IN_KEY = 'verifier_pending_sign_in:';
     // The verifier keeps a sign-in open for 10 minutes and enforces that itself.
     // Its clock starts a little after this page's (at the click), so allow one
     // more minute here rather than turn away a sign-in the verifier recorded.
     const PENDING_SIGN_IN_MAX_AGE_MS = 11 * 60 * 1000;
     const SIGN_IN_PLATFORMS = ['twitter', 'bluesky', 'youtube', 'tiktok'];
+    const SIGN_IN_LABELS = { twitter: 'Twitter', bluesky: 'Bluesky', youtube: 'YouTube', tiktok: 'TikTok' };
     const UNCONFIRMED_SIGN_IN = 'This page could not confirm a sign-in. Start the sign-in again from this page.';
 
     function newSignInNonce() {
@@ -2052,7 +2092,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
     }
 
-    // Drops pending sign-ins that are too old to come back.
+    // Drops pending sign-ins that are too old to come back or to be confirmed.
     function forgetExpiredSignIns() {
       try {
         const keys = [];
@@ -2061,38 +2101,156 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
           if (key && key.indexOf(PENDING_SIGN_IN_KEY) === 0) keys.push(key);
         }
         for (const key of keys) {
-          let startedAt = 0;
-          try { startedAt = JSON.parse(localStorage.getItem(key) || '{}').startedAt; } catch {}
-          if (typeof startedAt !== 'number' || Date.now() - startedAt > PENDING_SIGN_IN_MAX_AGE_MS) localStorage.removeItem(key);
+          let entry = null;
+          try { entry = JSON.parse(localStorage.getItem(key) || '{}'); } catch {}
+          if (!entry || typeof entry.startedAt !== 'number' || signInHasExpired(entry)) localStorage.removeItem(key);
         }
       } catch {}
     }
 
+    function newStartSecret() {
+      return randomBase64Url(32);
+    }
+
+    // Same hashing as the verifier and the Divine app: SHA-256 over the text,
+    // base64url without padding.
+    async function startCheckFor(startSecret) {
+      return sha256Base64Url('divine-signin-start:' + startSecret);
+    }
+
+    async function confirmBindingFor(code, startCheck) {
+      return sha256Base64Url('divine-signin-confirm:' + code + ':' + startCheck);
+    }
+
     // Returns false when the browser won't store it, so the page can say so
     // instead of sending the person off on a sign-in it could never confirm.
-    function rememberPendingSignIn(platform, pubkey, nonce) {
+    function rememberPendingSignIn(platform, pubkey, nonce, extra) {
       try {
         forgetExpiredSignIns();
-        localStorage.setItem(PENDING_SIGN_IN_KEY + nonce, JSON.stringify({ platform, pubkey, nonce, startedAt: Date.now() }));
+        localStorage.setItem(PENDING_SIGN_IN_KEY + nonce, JSON.stringify(Object.assign({ platform, pubkey, nonce, startedAt: Date.now() }, extra || {})));
         return true;
       } catch {
         return false;
       }
     }
 
-    function takePendingSignIn(nonce) {
+    function readPendingSignIn(nonce) {
       // newSignInNonce always makes 32 lowercase hex characters.
       if (!/^[0-9a-f]{32}$/.test(nonce)) return null;
       try {
-        const raw = localStorage.getItem(PENDING_SIGN_IN_KEY + nonce);
-        localStorage.removeItem(PENDING_SIGN_IN_KEY + nonce);
-        const pending = raw ? JSON.parse(raw) : null;
+        const pending = JSON.parse(localStorage.getItem(PENDING_SIGN_IN_KEY + nonce) || 'null');
         if (!pending || SIGN_IN_PLATFORMS.indexOf(pending.platform) === -1) return null;
         if (typeof pending.pubkey !== 'string' || typeof pending.startedAt !== 'number') return null;
-        if (Date.now() - pending.startedAt > PENDING_SIGN_IN_MAX_AGE_MS) return null;
+        if (signInHasExpired(pending)) return null;
         return pending;
       } catch {
         return null;
+      }
+    }
+
+    function savePendingSignIn(pending) {
+      try { localStorage.setItem(PENDING_SIGN_IN_KEY + pending.nonce, JSON.stringify(pending)); } catch {}
+    }
+
+    function forgetPendingSignIn(nonce) {
+      try { localStorage.removeItem(PENDING_SIGN_IN_KEY + nonce); } catch {}
+    }
+
+    // A sign-in that came back waits for its code to be confirmed: ten minutes
+    // from its return on the verifier, a minute more here.
+    function signInHasExpired(pending) {
+      const since = typeof pending.finishedAt === 'number' ? pending.finishedAt : pending.startedAt;
+      return Date.now() - since > PENDING_SIGN_IN_MAX_AGE_MS;
+    }
+
+    // Every sign-in in this browser that came back and is waiting to be confirmed.
+    function waitingSignIns() {
+      const found = [];
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key || key.indexOf(PENDING_SIGN_IN_KEY) !== 0) continue;
+          const pending = readPendingSignIn(key.slice(PENDING_SIGN_IN_KEY.length));
+          if (pending && pending.code) found.push(pending);
+        }
+      } catch {}
+      return found;
+    }
+
+    // The sign-ins waiting to be confirmed for this platform and account,
+    // newest first.
+    function waitingSignInsFor(platform, identity, pubkey) {
+      return waitingSignIns().filter(pending => pending.platform === platform && pending.pubkey === pubkey
+        && String(pending.identity || '').toLowerCase() === String(identity || '').toLowerCase())
+        .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
+    }
+
+    // The newest sign-in waiting to be confirmed for this platform and account, if any.
+    function findWaitingSignIn(platform, identity, pubkey) {
+      return waitingSignInsFor(platform, identity, pubkey)[0] || null;
+    }
+
+    // Forgets every waiting sign-in for the account a link was published for,
+    // with any event kept for it.
+    function forgetWaitingSignIns(waiting) {
+      for (const pending of waitingSignInsFor(waiting.platform, waiting.identity, waiting.pubkey)) {
+        forgetPendingSignIn(pending.nonce);
+        delete signedConfirmations[pending.nonce];
+      }
+    }
+
+    // The most recent sign-in still waiting, to pick up again after a reload.
+    function newestWaitingSignIn() {
+      return waitingSignIns().sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0))[0] || null;
+    }
+
+    const CONFIRM_REFUSALS = {
+      signin_not_found: 'This sign-in couldn\\'t be confirmed. Sign in again.',
+      signin_used: 'This sign-in was already used. Sign in again.',
+      signin_wrong_account: 'Sign in with the Divine account that started this sign-in.',
+      signin_not_yours: 'This sign-in was started somewhere else.',
+      signin_claim_mismatch: 'This confirmation doesn\\'t match the sign-in. Sign in again.',
+    };
+    // The sign-in and its signed event are kept, so pressing Publish again
+    // resends the same event.
+    const CONFIRM_TRY_AGAIN = 'Couldn\\'t reach the verifier. Press Publish to try again.';
+    // A confirmation already signed, kept so a retry sends the very same event.
+    const signedConfirmations = {};
+
+    // Asks the verifier to count the link. A sign-in it hasn't seen yet (or a
+    // failed request) is tried again for about ten seconds. A refusal is final.
+    async function confirmSignInCode(waiting, signedEvent) {
+      const deadline = Date.now() + 10000;
+      for (;;) {
+        let resp = null;
+        let data = null;
+        try {
+          resp = await fetch(API + '/auth/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: waiting.code, start_secret: waiting.startSecret, event: signedEvent }),
+          });
+          try { data = await resp.json(); } catch {}
+        } catch {}
+        // Counted only when the verifier names the link this sign-in is for.
+        if (resp && resp.status === 200 && data && data.linked === true && data.platform === waiting.platform
+          && typeof data.identity === 'string' && data.identity.toLowerCase() === String(waiting.identity).toLowerCase()) return;
+        // Any other success isn't counted, and isn't asked again on its own.
+        if (resp && resp.ok) throw new Error(CONFIRM_TRY_AGAIN);
+        const code = data && data.code;
+        const again = !resp || resp.status >= 500 || code === 'signin_not_found';
+        if (again && Date.now() + 1000 <= deadline) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+        if (again || resp.status === 429) throw new Error(CONFIRM_TRY_AGAIN);
+        // Any other answer is a refusal (a 4xx, with or without a code), and
+        // resending the same event would be refused again. It ends this
+        // sign-in: forget it, so the next Publish of this account is an
+        // ordinary one instead of the same refusal.
+        forgetPendingSignIn(waiting.nonce);
+        delete signedConfirmations[waiting.nonce];
+        throw new Error(CONFIRM_REFUSALS[code] || CONFIRM_REFUSALS.signin_not_found);
       }
     }
 
@@ -2113,49 +2271,6 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       bringIntoViewOnceLoaded(document.getElementById('verify-global-status'));
     }
 
-    // Asks the verifier whether this account really is linked, and returns the
-    // account name it recorded, or '' if it can't say so. Asks up to three
-    // times, within one 10-second limit, when a request fails outright: a
-    // network error, a server error, or an answer that isn't JSON. A clear
-    // answer, linked or not, is final.
-    async function confirmSignIn(pending, identity) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10000);
-      const url = API + '/auth/' + pending.platform + '/status?' + new URLSearchParams({ pubkey: pending.pubkey, identity }).toString();
-      try {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          if (attempt > 0) {
-            // Wait a moment before trying again, but not past the 10 seconds.
-            await new Promise(resolve => {
-              const wait = setTimeout(resolve, 250 * attempt);
-              controller.signal.addEventListener('abort', () => { clearTimeout(wait); resolve(); }, { once: true });
-            });
-          }
-          if (controller.signal.aborted) return '';
-          let resp;
-          try {
-            resp = await fetch(url, { signal: controller.signal });
-          } catch {
-            // Past the 10 seconds: stop now rather than wait to try again.
-            if (controller.signal.aborted) return '';
-            continue;
-          }
-          if (resp.status >= 500) continue;
-          let data;
-          try {
-            data = await resp.json();
-          } catch {
-            if (controller.signal.aborted) return '';
-            continue;
-          }
-          return resp.ok && data && data.verified === true ? String(data.identity || identity) : '';
-        }
-        return '';
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-
     // Only messages the verifier's sign-in callbacks actually send are shown.
     function signInErrorMessage(reason) {
       if (reason === 'Verification failed') return 'Sign-in was not completed: the account could not be verified.';
@@ -2163,69 +2278,116 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       return 'Sign-in was not completed.';
     }
 
+    // The verifier's one-time code: 32 random bytes, base64url without padding.
+    const SIGN_IN_CODE_FORMAT = /^[A-Za-z0-9_-]{43}$/;
+    const NOT_STARTED_HERE = 'This sign-in wasn\\'t started on this page. If someone sent you a sign-in link, don\\'t continue.';
+    // Set when this page load carried a sign-in return, so start-up doesn't
+    // also pick up a waiting sign-in from before.
+    let signInReturnHandled = false;
+
+    // The verifier puts the one-time code after the # (or, if set to, in the
+    // query). The query is read first: the verifier always replaces that name
+    // in the query it returns to.
+    function signInCodeFromAddress() {
+      const fromQuery = new URLSearchParams(window.location.search).get('oauth_confirm');
+      if (fromQuery) return fromQuery;
+      return new URLSearchParams(window.location.hash.replace(/^#/, '')).get('oauth_confirm') || '';
+    }
+
+    // An extension (or the Divine app's frame) used to start is connected again
+    // with its public key only; the confirmation it signs proves the key.
+    async function reattachSigner(source) {
+      if (activeSigner) return;
+      if ((source === 'browser' || source === 'embedded') && isBrowserSignerAvailable()) {
+        try { await activateSigner(createBrowserSigner(), source, ''); } catch {}
+      }
+    }
+
+    // Fills in the post form, which Publish reads, so Publish confirms this
+    // sign-in, and says which account signed in.
+    function showWaitingSignIn(pending) {
+      const proofPlatformEl = document.getElementById('proof-platform-select');
+      const proofIdentityEl = document.getElementById('proof-identity-input');
+      const proofProofEl = document.getElementById('proof-proof-input');
+      if (proofPlatformEl && proofIdentityEl) {
+        proofPlatformEl.value = pending.platform;
+        // Setting the value does not fire 'change', so update the labels here.
+        updateProofInputs();
+        proofIdentityEl.value = pending.identity;
+        if (proofProofEl) proofProofEl.value = 'oauth';
+        clearSignInFillOnPlatformChange(proofPlatformEl, proofIdentityEl, proofProofEl, pending.platform, pending.identity);
+      }
+      const label = SIGN_IN_LABELS[pending.platform] || pending.platform;
+      const signedIn = 'Signed in to ' + label + ' as ' + pending.identity + '. Publish to link it to your Divine account.';
+      setStatus('verify-global-status', signedIn, 'ok');
+      // Publish is the next step, and on a phone it is too far below the
+      // message for both to fit on screen. So put the same note beside Publish
+      // and land there.
+      setStatus('publish-status', signedIn, 'ok');
+      watchPublishNote(signedIn, [proofPlatformEl, proofIdentityEl, proofProofEl]);
+      bringIntoViewOnceLoaded(document.getElementById('publish-kind0-btn'));
+    }
+
     async function handleOAuthCallbackMessage() {
       const params = new URLSearchParams(window.location.search);
+      const code = signInCodeFromAddress();
       const verified = params.get('oauth_verified') === 'true';
       const reason = params.get('oauth_error');
-      if (!verified && !reason) return;
+      if (!code && !verified && !reason) return;
+      signInReturnHandled = true;
 
       const platform = params.get('platform') || '';
       const identity = params.get('identity') || '';
       const nonce = params.get('signin') || '';
-      params.delete('signin');
-      params.delete('oauth_verified');
-      params.delete('platform');
-      params.delete('identity');
-      params.delete('oauth_error');
-      const cleanUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
-      window.history.replaceState({}, '', cleanUrl);
+      ['signin', 'oauth_verified', 'platform', 'identity', 'oauth_error', 'oauth_confirm'].forEach(name => params.delete(name));
+      // The code leaves the address before anything else can read it, and
+      // before this function first waits on anything.
+      // A return with a code, wherever it was, goes back to the section anchor.
+      const hash = code ? '#verify-here' : window.location.hash;
+      window.history.replaceState({}, '', window.location.pathname + (params.toString() ? '?' + params.toString() : '') + hash);
 
-      const pending = takePendingSignIn(nonce);
-      if (!verified) {
+      const pending = readPendingSignIn(nonce);
+      if (reason) {
+        if (pending) forgetPendingSignIn(nonce);
         showSignInStatus(signInErrorMessage(reason), 'error');
         return;
       }
-      if (!pending || pending.nonce !== nonce || pending.platform !== platform || !identity) {
-        showSignInStatus(UNCONFIRMED_SIGN_IN, 'error');
+      const handleMatches = !pending || pending.platform !== 'bluesky' || !pending.handle
+        || identity.toLowerCase() === pending.handle;
+      // A sign-in comes back once. The same return again (a reload before the
+      // address was cleaned) is that sign-in; any other return for a sign-in
+      // that already came back is refused, and the sign-in dropped.
+      const cameBack = !!pending && !!pending.code;
+      const sameReturn = cameBack && pending.code === code && pending.identity === identity;
+      if (!SIGN_IN_CODE_FORMAT.test(code) || !pending || pending.nonce !== nonce || pending.platform !== platform || !identity || !handleMatches
+        || (cameBack && !sameReturn)) {
+        if (pending) forgetPendingSignIn(nonce);
+        showSignInStatus(code ? NOT_STARTED_HERE : UNCONFIRMED_SIGN_IN, 'error');
         return;
       }
 
-      // Ask the verifier whether this account really is linked before saying so.
-      showSignInStatus('Confirming your sign-in...', 'loading');
-      const proofPlatformEl = document.getElementById('proof-platform-select');
+      if (!sameReturn) {
+        pending.code = code;
+        pending.identity = identity;
+        pending.finishedAt = Date.now();
+        savePendingSignIn(pending);
+      }
+      // Shown before reconnecting the signer, which may wait on a prompt.
+      showWaitingSignIn(pending);
+      await reattachSigner(pending.signer);
+    }
+
+    // After a reload (a login.divine.video round trip, or the person coming
+    // back to the tab), picks up the newest sign-in still waiting to be
+    // confirmed, unless the post form already holds something else.
+    async function resumeWaitingSignIn() {
+      if (signInReturnHandled) return;
+      const pending = newestWaitingSignIn();
+      if (!pending) return;
       const proofIdentityEl = document.getElementById('proof-identity-input');
-      const proofProofEl = document.getElementById('proof-proof-input');
-      const formBefore = JSON.stringify([proofPlatformEl, proofIdentityEl, proofProofEl].map(el => el ? el.value : ''));
-      const linkedIdentity = await confirmSignIn(pending, identity);
-      if (!linkedIdentity) {
-        showSignInStatus(UNCONFIRMED_SIGN_IN, 'error');
-        return;
-      }
-
-      // Pre-fill the post form, which Publish reads, so Publish works for this
-      // sign-in, unless the person changed that form while it was confirming.
-      const formChanged = JSON.stringify([proofPlatformEl, proofIdentityEl, proofProofEl].map(el => el ? el.value : '')) !== formBefore;
-      if (proofPlatformEl && proofIdentityEl && !formChanged) {
-        proofPlatformEl.value = pending.platform;
-        // Setting the value does not fire 'change', so update the labels here.
-        updateProofInputs();
-        proofIdentityEl.value = linkedIdentity;
-        if (proofProofEl) proofProofEl.value = 'oauth';
-        clearSignInFillOnPlatformChange(proofPlatformEl, proofIdentityEl, proofProofEl, pending.platform, linkedIdentity);
-      }
-      const linked = 'Success. Your ' + pending.platform + ' account is now linked: ' + linkedIdentity + '. ';
-      if (formChanged) {
-        showSignInStatus(linked + 'The Publish form below was left as you changed it.', 'ok');
-        return;
-      }
-      // Publish is the next step, and on a phone it is too far below the
-      // message for both to fit on screen. So put a note beside Publish saying
-      // what it will do, and land there.
-      setStatus('verify-global-status', linked + 'You can now publish this to your Nostr profile below.', 'ok');
-      const note = 'Your ' + pending.platform + ' account ' + linkedIdentity + ' is linked. Publish to add it to your Nostr profile.';
-      setStatus('publish-status', note, 'ok');
-      watchPublishNote(note, [proofPlatformEl, proofIdentityEl, proofProofEl]);
-      bringIntoViewOnceLoaded(document.getElementById('publish-kind0-btn'));
+      if (proofIdentityEl && proofIdentityEl.value && proofIdentityEl.value !== pending.identity) return;
+      showWaitingSignIn(pending);
+      await reattachSigner(pending.signer);
     }
 
     // The note beside Publish says what Publish will do, so it goes as soon as
@@ -2808,9 +2970,6 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     document.getElementById('oauth-start-btn').addEventListener('click', startOAuthVerification);
     document.getElementById('proof-verify-btn').addEventListener('click', verifySingleHere);
     document.getElementById('publish-kind0-btn').addEventListener('click', publishIdentityTagToNostr);
-    document.getElementById('verify-pubkey-input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') startOAuthVerification();
-    });
     document.getElementById('proof-identity-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') verifySingleHere();
     });
@@ -2820,20 +2979,12 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     document.getElementById('bunker-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') connectBunkerSigner();
     });
-    document.getElementById('verify-pubkey-input').addEventListener('blur', () => {
-      const value = document.getElementById('verify-pubkey-input').value.trim();
-      try { if (value) localStorage.setItem('verifyer_account_input', value); } catch {}
-    });
-    // A browser that blocks storage throws here; the rest of start-up,
-    // including handling a returning sign-in, must still run.
-    let savedAccountInput = null;
-    try { savedAccountInput = localStorage.getItem('verifyer_account_input'); } catch {}
-    if (savedAccountInput) {
-      document.getElementById('verify-pubkey-input').value = savedAccountInput;
-    }
+    // Start-up: a returning sign-in is handled first, before any signer is
+    // restored, so its one-time code leaves the address straight away.
     updateOAuthInputs();
     updateProofInputs();
     handleOAuthCallbackMessage();
+    resumeWaitingSignIn();
     // Sign-ins that failed to start or were abandoned never come back to be
     // used up, so drop the expired ones here too.
     forgetExpiredSignIns();

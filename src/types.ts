@@ -18,8 +18,14 @@ export type Bindings = {
   TIKTOK_CLIENT_KEY?: string
   TIKTOK_CLIENT_SECRET?: string
   TIKTOK_OAUTH_ENABLED?: string
-  // Base URL for OAuth callbacks (e.g., https://verify.divine.video)
+  // Base URL for OAuth callbacks (e.g., https://verifier.divine.video)
   OAUTH_REDIRECT_BASE?: string
+  // "required" once enough people have an app that confirms sign-ins (#113).
+  // Unset or "optional" counts unconfirmed sign-ins for a day; any other
+  // value, empty included, is treated as "required".
+  SIGNIN_CONFIRMATION?: string
+  // "query" puts the sign-in's one-time code in the query instead of after the #.
+  SIGNIN_CODE_PLACEMENT?: string
 }
 
 export type OAuthPlatform = 'twitter' | 'bluesky' | 'youtube' | 'tiktok'
@@ -38,8 +44,9 @@ export interface OAuthState {
   // Bluesky: the account and handle the sign-in started with
   did?: string
   handle?: string
-  // SHA-256 (hex) of the binding cookie set at start.
-  bindingHash?: string
+  // Hash of the start secret the client keeps (#113). Absent for a sign-in
+  // started without one, which can never be confirmed.
+  startCheck?: string
 }
 
 export interface OAuthVerification {
@@ -54,8 +61,12 @@ export interface OAuthVerification {
   account_id?: string
   // The linked handle, so unlinking by handle or by DID removes both records.
   handle?: string
-  // Finished in the browser that started it (see src/oauth/binding.ts).
-  bound?: boolean
+  // Set once the account owner confirmed the sign-in (#113). Records without
+  // it stop counting when confirmation is required.
+  confirmed?: true
+  // The confirming event, so a later unlink can tell a newer list from an older one (#76).
+  confirm_event_id?: string
+  confirm_created_at?: number
 }
 
 export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord' | 'youtube' | 'tiktok'
@@ -144,5 +155,6 @@ export interface SignInCallbackResult {
   returnUrl: string
   error?: string
   identity?: string
-  bound?: boolean
+  // The one-time code the owner confirms with, for a sign-in started with a start check.
+  confirmCode?: string
 }

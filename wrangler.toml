@@ -10,6 +10,8 @@ invocation_logs = false
 
 [vars]
 TIKTOK_OAUTH_ENABLED = "false"
+SIGNIN_CONFIRMATION = "optional"
+SIGNIN_CODE_PLACEMENT = "fragment"
 # Discord verification channel in the divine.video Discord server
 DISCORD_VERIFY_CHANNEL_ID = "1484771306179133582"
 # Optional: GitHub API token for higher rate limits

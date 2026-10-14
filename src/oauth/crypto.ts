@@ -1,4 +1,4 @@
-function base64url(bytes: Uint8Array): string {
+export function base64url(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')

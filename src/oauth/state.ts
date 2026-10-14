@@ -31,13 +31,14 @@ export async function deleteOAuthState(kv: KVNamespace, stateId: string): Promis
   await kv.delete(oauthStateKey(stateId))
 }
 
-// A Bluesky sign-in lasts 30 days: it is tied to the account's DID, which is
-// checked against the handle when the claim is verified. Other platforms keep
-// the 24-hour record until their sign-ins get the same check.
+// A confirmed Bluesky sign-in lasts 30 days: it is tied to the account's DID,
+// which is checked against the handle when the claim is verified. Unconfirmed
+// sign-ins, and other platforms until their sign-ins get the same check, keep
+// the 24-hour record.
 export async function storeOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
   const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
-  const ttl = verification.platform === 'bluesky' && verification.account_id ? BLUESKY_SIGNIN_TTL : OAUTH_VERIFICATION_TTL
-  await kv.put(key, JSON.stringify(verification), { expirationTtl: ttl })
+  const longLived = verification.confirmed === true && verification.platform === 'bluesky' && !!verification.account_id
+  await kv.put(key, JSON.stringify(verification), { expirationTtl: longLived ? BLUESKY_SIGNIN_TTL : OAUTH_VERIFICATION_TTL })
 }
 
 export async function getOAuthVerification(

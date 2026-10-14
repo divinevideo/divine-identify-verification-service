@@ -2,7 +2,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 
 import { startYouTubeOAuth, handleYouTubeCallback } from './youtube'
 import { oauthStateKey } from './state'
-import { createBinding } from './binding'
 import type { OAuthState } from '../types'
 
 function makeEnv(overrides: Record<string, unknown> = {}) {
@@ -20,8 +19,6 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
 }
 
 const PUBKEY = 'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234'
-// These tests don't exercise sign-in binding; any hash-shaped string will do.
-const BINDING_HASH = 'b'.repeat(64)
 
 function envWithState(state: Partial<OAuthState> = {}) {
   const stored: OAuthState = {
@@ -53,7 +50,7 @@ describe('startYouTubeOAuth', () => {
 
   it('requests the youtube.readonly scope needed to read the signed-in channel', async () => {
     const env = makeEnv()
-    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
+    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', undefined)
 
     expect(resp.status).toBe(302)
     const scope = new URL(resp.headers.get('Location')!).searchParams.get('scope')
@@ -62,7 +59,7 @@ describe('startYouTubeOAuth', () => {
 
   it('builds the authorize URL with PKCE and the registered redirect URI', async () => {
     const env = makeEnv()
-    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
+    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', undefined)
 
     const params = new URL(resp.headers.get('Location')!).searchParams
     expect(params.get('client_id')).toBe('test-client-id')
@@ -74,7 +71,7 @@ describe('startYouTubeOAuth', () => {
 
   it('returns 503 when the client id is not configured', async () => {
     const env = makeEnv({ GOOGLE_CLIENT_ID: undefined })
-    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
+    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', undefined)
     expect(resp.status).toBe(503)
   })
 
@@ -84,13 +81,13 @@ describe('startYouTubeOAuth', () => {
   // drifting back out.
   it('returns 503 when the client secret is not configured', async () => {
     const env = makeEnv({ GOOGLE_CLIENT_SECRET: undefined })
-    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
+    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', undefined)
     expect(resp.status).toBe(503)
   })
 
   it('returns 503 when OAUTH_REDIRECT_BASE is not configured', async () => {
     const env = makeEnv({ OAUTH_REDIRECT_BASE: undefined })
-    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', BINDING_HASH)
+    const resp = await startYouTubeOAuth(env, PUBKEY, 'https://verifier.divine.video/', undefined)
     expect(resp.status).toBe(503)
   })
 })
@@ -108,7 +105,7 @@ describe('handleYouTubeCallback', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
 
     expect(result.success).toBe(true)
     expect(result.identity).toBe('@Creator')
@@ -124,36 +121,6 @@ describe('handleYouTubeCallback', () => {
     expect(fetchMock.mock.calls[1][0]).toContain('part=snippet&mine=true')
   })
 
-  it('records the sign-in as bound when the callback cookie matches the binding hash stored at start', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
-      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'UC123', snippet: { customUrl: '@Creator', title: 'Creator' } }] }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const { value, hash } = await createBinding()
-    const env = envWithState({ bindingHash: hash })
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', value)
-
-    expect(result.bound).toBe(true)
-    const [, storedValue] = env.CACHE_KV.put.mock.calls[0]
-    expect(JSON.parse(storedValue).bound).toBe(true)
-  })
-
-  it('records the sign-in as unbound when the callback cookie does not match the binding hash stored at start', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
-      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'UC123', snippet: { customUrl: '@Creator', title: 'Creator' } }] }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const { hash } = await createBinding()
-    const env = envWithState({ bindingHash: hash })
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', 'wrong-cookie-value')
-
-    expect(result.bound).toBe(false)
-    const [, storedValue] = env.CACHE_KV.put.mock.calls[0]
-    expect(JSON.parse(storedValue).bound).toBe(false)
-  })
-
   it('falls back to the channel id when customUrl is absent', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
@@ -161,7 +128,7 @@ describe('handleYouTubeCallback', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
 
     expect(result.success).toBe(true)
     expect(result.identity).toBe('UC123')
@@ -180,7 +147,7 @@ describe('handleYouTubeCallback', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/no youtube channel/i)
@@ -189,7 +156,7 @@ describe('handleYouTubeCallback', () => {
 
   it('rejects an unknown or expired state', async () => {
     const env = makeEnv() // CACHE_KV.get resolves null
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/state/i)
   })
@@ -200,7 +167,7 @@ describe('handleYouTubeCallback', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const env = envWithState()
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/token exchange/i)
@@ -209,7 +176,7 @@ describe('handleYouTubeCallback', () => {
   it('rejects state that was stored for a different platform', async () => {
     // Guards against cross-platform OAuth state confusion (the state.platform check).
     const env = envWithState({ platform: 'twitter' })
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/state/i)
     // Wrong-platform state must NOT be consumed (handler returns before deleteOAuthState).
@@ -221,7 +188,7 @@ describe('handleYouTubeCallback', () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ token_type: 'Bearer' }))
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/access token/i)
     // The channel request is never reached.
@@ -234,7 +201,7 @@ describe('handleYouTubeCallback', () => {
       .mockResolvedValueOnce(jsonResponse({}, false, 500))
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/channel info/i)
     expect(env.CACHE_KV.put).not.toHaveBeenCalled()
@@ -246,7 +213,7 @@ describe('handleYouTubeCallback', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/invalid response.*token/i)
     expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
@@ -259,7 +226,7 @@ describe('handleYouTubeCallback', () => {
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new Error('bad json') } } as unknown as Response)
     vi.stubGlobal('fetch', fetchMock)
     const env = envWithState()
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/invalid response.*channel/i)
     expect(env.CACHE_KV.delete).toHaveBeenCalledWith(oauthStateKey('state123'))
@@ -269,7 +236,7 @@ describe('handleYouTubeCallback', () => {
   it('fails the callback when OAuth is not configured (missing client secret)', async () => {
     const env = envWithState()
     env.GOOGLE_CLIENT_SECRET = undefined
-    const result = await handleYouTubeCallback(env, 'auth-code', 'state123', undefined)
+    const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/not configured/i)
     // State is consumed before the config check; no verification stored.

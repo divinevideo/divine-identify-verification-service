@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import worker from './index'
 
 describe('verifier cors', () => {
@@ -28,6 +28,32 @@ describe('verifier cors', () => {
 
     expect(response.status).toBe(200)
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*')
+  })
+})
+
+describe('verifier health', () => {
+  const healthWith = async (env: Record<string, unknown>) => {
+    const response = await worker.fetch(new Request('https://verifier.divine.video/health'), env as never)
+    expect(response.status).toBe(200)
+    return (await response.json() as { signin_confirmation?: string }).signin_confirmation
+  }
+
+  it('reports whether unconfirmed sign-ins count, as the service reads its setting', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(await healthWith({})).toBe('optional')
+      expect(await healthWith({ SIGNIN_CONFIRMATION: 'optional' })).toBe('optional')
+      expect(await healthWith({ SIGNIN_CONFIRMATION: ' Required ' })).toBe('required')
+      expect(await healthWith({ SIGNIN_CONFIRMATION: 'requird' })).toBe('required')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('documents the mode it reports on the page', async () => {
+    const response = await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)
+    const html = await response.text()
+    expect(html).toContain('<code>signin_confirmation</code>')
   })
 })
 
@@ -168,6 +194,11 @@ describe('verifier tiktok oauth gating', () => {
     expect(response.headers.get('vary')).toBe('Cookie')
   })
 
+  it('tells the browser not to send the page address to other sites', async () => {
+    const response = await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+  })
+
   it('does not advertise TikTok in the no-posting sign-in instructions', async () => {
     const html = await homeHtml('https://verifier.divine.video/', twitterOAuthConfig)
     const marker = 'sign in to it from this page'
@@ -286,7 +317,62 @@ describe('verifier twitter oauth gating', () => {
   it('documents Twitter sign-in when it is configured', async () => {
     const docs = oauthDocsSection(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig))
     expect(docs).toContain('<h2>OAuth Verification (Twitter, Bluesky)</h2>')
-    expect(docs).toContain('/auth/twitter/start?pubkey=hex64')
+    expect(docs).toContain('POST https://verifier.divine.video/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}')
+  })
+
+  it('documents the sign-in start as a POST with a start check, and the confirm step', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), { OAUTH_REDIRECT_BASE: 'https://verifier.divine.video', TWITTER_CLIENT_ID: 'x', TWITTER_CLIENT_SECRET: 'y' } as never)).text()
+    expect(html).toContain('POST https://verifier.divine.video/auth/bluesky/start')
+    expect(html).toContain('POST https://verifier.divine.video/auth/confirm')
+    expect(html).not.toContain('GET https://verifier.divine.video/auth/bluesky/start?')
+  })
+
+  it('shows the full sign-in start and confirm requests, with their answers and error codes, as the README does', async () => {
+    const docs = oauthDocsSection(await homeHtml())
+    expect(docs).toContain(`POST https://verifier.divine.video/auth/bluesky/start
+Content-Type: application/json
+
+{"pubkey":"&lt;64 hex&gt;","return_url":"https://verifier.divine.video/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}</pre>`)
+    expect(docs).toContain('<p>The answer is <code>{"url":"https://…"}</code>, the provider page to open.</p>')
+    expect(docs).toContain(`<pre>POST https://verifier.divine.video/auth/confirm
+Content-Type: application/json
+
+{"code":"&lt;code&gt;","start_secret":"&lt;secret&gt;","event":{…signed kind 10011…}}</pre>`)
+    // The answer has no spaces, so it may break anywhere to fit a phone screen.
+    expect(docs).toContain('<p>The answer is <code style="overflow-wrap:anywhere;">{"linked":true,"platform":"bluesky","identity":"example.bsky.social"}</code>. The client then publishes the same event to relays. Errors carry a <code>code</code>:</p>')
+    expect(docs).toContain(`<ul>
+        <li><code>invalid_request</code> (400: a malformed <code>code</code> or <code>start_secret</code>);</li>
+        <li><code>signin_not_found</code> (expired or not visible yet; retry briefly);</li>
+        <li><code>signin_used</code>;</li>
+        <li><code>signin_wrong_account</code>;</li>
+        <li><code>signin_not_yours</code>;</li>
+        <li><code>signin_claim_mismatch</code>;</li>
+        <li><code>invalid_event</code>.</li>
+      </ul>`)
+  })
+
+  it('says how the sign-in returns its code, where the code goes, and when a sign-in counts', async () => {
+    const docs = oauthDocsSection(await homeHtml())
+    expect(docs).toContain("The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>.")
+    expect(docs).toContain('The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.')
+    expect(docs).toContain('Once confirmation is required, a sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.')
+  })
+
+  it('documents YouTube and TikTok sign-in starts as POSTs with a start check when they are on', async () => {
+    const docs = oauthDocsSection(await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, YOUTUBE_API_KEY: 'key', TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }))
+    // The other platforms follow the full Bluesky example after a blank line.
+    expect(docs).toContain(`secret))&gt;"}\n\nPOST https://verifier.divine.video/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}\nPOST https://verifier.divine.video/auth/youtube/start`)
+    expect(docs).toContain('POST https://verifier.divine.video/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}')
+    expect(docs).toContain('POST https://verifier.divine.video/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}')
+    expect(docs).not.toContain('/start?pubkey=')
+  })
+
+  it('gives the hashing rule for the start check and the binding, as the README does', async () => {
+    const docs = oauthDocsSection(await homeHtml())
+    expect(docs).toContain(`"start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"`)
+    expect(docs).toContain("The new claim's tag carries a fourth value, <code>base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))</code>.")
+    expect(docs).toContain('keeps a random start secret (32 random bytes written as 43 base64url characters), sends its hash as <code>start_check</code>')
+    expect(docs).toContain('Both hashes in this flow (the start check and the binding) are SHA-256 over the UTF-8 text shown, meaning the 43-character strings and not the raw bytes, written as base64url without padding.')
   })
 })
 
@@ -392,9 +478,7 @@ describe('the two ways to link an account', () => {
     expect(publishCard(html)).toContain('Nothing shows on your profile until you publish.')
   })
 
-  it('says in Step 1 that publishing needs you to be signed in', async () => {
-    const step1 = between(await homeHtml(), 'Sign in with your Divine login</h3>', 'id="link-with-post"')
-    expect(step1).toContain("You'll still need to sign in to publish it.")
+  it('says publishing needs you to be signed in', async () => {
     expect(publishCard(await homeHtml())).toContain('Needs you to be signed in (Step 1).')
   })
 
@@ -420,6 +504,43 @@ describe('signing in with a Divine login first', () => {
     return html.slice(start, end)
   }
 
+  // The markup inside the div with this id, up to its matching </div>.
+  function divBody(html: string, id: string): string {
+    const open = html.indexOf(`<div id="${id}">`)
+    expect(open).toBeGreaterThan(-1)
+    const tags = /<div\b|<\/div>/g
+    tags.lastIndex = open + 1
+    let depth = 1
+    for (let tag = tags.exec(html); tag; tag = tags.exec(html)) {
+      depth += tag[0] === '</div>' ? -1 : 1
+      if (depth === 0) return html.slice(open, tag.index)
+    }
+    throw new Error(`no closing </div> for ${id}`)
+  }
+
+  it('wraps Step 1\'s sign-in options so the Divine app can hide them once signed in', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    const options = divBody(html, 'step1-signin-options')
+    expect(options).toContain('<p>Use the login you use for Divine. Already use a Nostr signer? Connect it instead.</p>')
+    expect(options).toContain('id="connect-keycast-btn"')
+    expect(options).toContain('id="connect-nostr-btn"')
+    expect(options).toContain('id="verify-pubkey-input"')
+    expect(options).not.toContain('id="signer-session-summary"')
+  })
+
+  it('wraps the remote signer options too, after the signed-in summary', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    const remote = divBody(html, 'step1-remote-signer-options')
+    expect(remote).toContain('id="remote-signer-details"')
+    expect(remote).toContain('</details>')
+    expect(remote).not.toContain('id="signer-session-summary"')
+    expect(remote).not.toContain('id="verify-login-status"')
+    // In a browser the summary sits under the account box, above the remote signer options.
+    const summary = html.indexOf('id="signer-session-summary"')
+    expect(summary).toBeGreaterThan(html.indexOf('<div id="step1-signin-options">'))
+    expect(summary).toBeLessThan(html.indexOf('<div id="step1-remote-signer-options">'))
+  })
+
   it('leads Step 1 with the Divine login', async () => {
     const card = step1(await homeHtml())
     expect(card).toContain('<h3 style="margin-top:0;">Sign in with your Divine login</h3>')
@@ -440,12 +561,17 @@ describe('signing in with a Divine login first', () => {
     expect(card).not.toMatch(/target\s*=\s*["']?_blank/i)
   })
 
-  it('labels the account field and the paste fallback for signing in', async () => {
+  it('labels the account field for signing in', async () => {
     const card = step1(await homeHtml())
     expect(card).toContain('<label for="verify-pubkey-input" class="field-label">Your Divine account (filled in when you sign in)</label>')
-    expect(card).toContain(`<!-- TODO(#113): Remove with the paste-an-account fallback. -->
-        <p class="field-help">Not signed in? Paste your Divine address or npub to check a link now. You'll still need to sign in to publish it.</p>`)
     expect(card).toContain('<summary>Remote signer options: bunker and Nostr Connect</summary>')
+  })
+
+  it('Step 1 has no paste-your-account option: the account box is filled only by signing in', async () => {
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    expect(html).not.toContain('Paste your Divine address or npub')
+    expect(html).not.toContain('TODO(#113)')
+    expect(html).toMatch(/<input id="verify-pubkey-input"[^>]*readonly/)
   })
 
   it('tells people to sign in in the Verify Here intro and How to Get Verified', async () => {
@@ -467,10 +593,11 @@ describe('signing in with a Divine login first', () => {
       "'Could not connect login.divine.video.'", "'Could not open login.divine.video.'",
       "'Signed in with your browser signer.'", "'Requesting signature from your browser signer...'",
       'session expired. Connect again.', "'Sign in first (Step 1), or paste your account.'", 'browser signer key',
-    ]) expect(html).not.toContain(old)
-    for (const now of [
       "throw new Error('Sign in first (Verify Here, Step 1), or paste your account there.');",
       "throw new Error('The account you typed does not match the account you signed in with.');",
+    ]) expect(html).not.toContain(old)
+    for (const now of [
+      "throw new Error('The account in Step 1 does not match the account you signed in with.');",
       "throw new Error('You need to be signed in to publish. Sign in with your Divine login, or connect your Nostr signer, in Step 1.');",
       "container.textContent = 'Sign in first (Verify Here, Step 1) to see your linked accounts.';",
       "throw new Error('Sign in first (Verify Here, Step 1).');",
@@ -499,7 +626,7 @@ describe('example accounts on the page', () => {
 
   it('shows the reserved example names in the fields people fill in', async () => {
     const html = await homeHtml()
-    expect(html).toContain('<input id="verify-pubkey-input" class="field-input" type="text" placeholder="example@divine.video or npub1...">')
+    expect(html).toContain('<input id="verify-pubkey-input" class="field-input" type="text" readonly placeholder="Filled in when you sign in">')
     expect(html).toContain('<input id="lookup-input" type="text" class="lookup-input" placeholder="example@divine.video or npub1...">')
     expect(html).toContain('<input id="oauth-bluesky-handle-input" class="field-input" type="text" placeholder="example.bsky.social">')
     expect(html).toContain("identityInput.placeholder = 'mastodon.social/@example';")

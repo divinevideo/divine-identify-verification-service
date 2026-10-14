@@ -7,7 +7,7 @@ import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { getVerifier } from '../platforms/registry'
 import { PLATFORM_CHECK_TIME_BUDGET_MS, PlatformUnavailableError, withinTimeBudget } from '../platforms/base'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
-import { getOAuthVerification } from '../oauth/state'
+import { getCountedSignIn } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { tidyClaim } from '../utils/tidy-claim'
 
@@ -64,7 +64,7 @@ async function verifySingleClaim(
   // A sign-in record answers first, so a result cached before a fresh sign-in
   // (a failed check, or one made right after an unlink) can't hide it.
   if (normalizedClaim.platform === 'twitter' || normalizedClaim.platform === 'bluesky' || normalizedClaim.platform === 'youtube' || normalizedClaim.platform === 'tiktok') {
-    const oauthResult = await getOAuthVerification(env.CACHE_KV, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey)
+    const oauthResult = await getCountedSignIn(env, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey)
     if (oauthResult) {
       if (!(await signInAccountStillMatches(env, oauthResult, tidy.identity))) {
         return {

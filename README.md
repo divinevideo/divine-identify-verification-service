@@ -7,7 +7,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 ## Features
 
 - **Eight platforms** — GitHub, Twitter/X, Bluesky, Mastodon, Telegram, Discord, YouTube, and TikTok, verified through a single API.
-- **Two verification methods** — a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A Bluesky login stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
+- **Two verification methods**: a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A sign-in link counts once the Divine account owner confirms it (until confirmation is required, a finished sign-in also counts unconfirmed for 24 hours); a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
 - **Batch and single verification** — check up to 10 claims in one request, or verify a single claim over JSON or a shareable URL that returns HTML for browsers and JSON for API clients.
 - **NIP-05 verification** — confirm that a NIP-05 identifier resolves to a given pubkey.
 - **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and platform outages for 5 minutes (answered with the code `temporarily_unavailable`, meaning "try again", not a rejection).
@@ -27,7 +27,7 @@ The service is a single [Hono](https://hono.dev) app running on Cloudflare Worke
 - `GET /nip05/verify` — NIP-05 lookup.
 - `GET /platforms` — list platforms currently available to clients; deployment configuration controls YouTube and TikTok availability. Sign-in platforms also report an `oauth` field for whether sign-in is set up.
 - `GET /health` and `GET /api/health` — health checks.
-- `/auth/*` — OAuth authorization and callbacks, Nostr login, Bluesky client metadata, OAuth status, and revoke.
+- `/auth/*`: sign-in start (`POST /auth/:platform/start`; `GET` for app versions that can't confirm), provider callbacks, `POST /auth/confirm`, Nostr login, Bluesky client metadata, sign-in status, and revoke.
 - `GET /` — the interactive landing page (returns JSON when the client asks for it).
 
 Each platform is a verifier in `src/platforms/` behind a shared interface, wired up in `registry.ts`; adding a platform is a matter of adding a verifier rather than reshaping the service. OAuth handlers live in `src/oauth/`, and shared helpers (caching, rate limiting, validation, npub encoding) live in `src/utils/`.
@@ -35,6 +35,39 @@ Each platform is a verifier in `src/platforms/` behind a shared interface, wired
 Verification is layered: the Worker checks any OAuth login record for OAuth-capable platforms first, then the KV cache, and finally fetches the proof from the platform. Bluesky verification also understands AT Protocol identity-link records (`video.divine.identity.link`) alongside proof posts. Results carry provenance describing how the link was confirmed.
 
 The service backs Divine's identity and trust surface: divine-web and Divine mobile call it on demand to render verified badges, and the published verification is written into the user's own signed Nostr identity event (NIP-39), so the proof stays portable and owned by the user rather than by any single platform.
+
+### Linking an account by signing in
+
+1. The client keeps a random start secret: 32 random bytes written as 43 base64url characters. It sends a hash of it, the start check. Both hashes in this flow (the start check and the binding in step 3) are SHA-256 over the UTF-8 text shown, meaning the 43-character strings and not the raw bytes, written as base64url without padding.
+
+   ```http
+   POST /auth/bluesky/start
+   Content-Type: application/json
+
+   {"pubkey":"<64 hex>","return_url":"https://verifier.divine.video/?signin=<id>","handle":"alice.bsky.social","start_check":"<base64url(sha256('divine-signin-start:' + secret))>"}
+   ```
+
+   The answer is `{"url":"https://…"}`, the provider page to open.
+2. After the provider, the verifier returns to `return_url` with `platform` and `identity` in the query, and a one-time code after the `#`: `#oauth_confirm=<code>`. The code is valid for 10 minutes.
+3. The owner signs their linked-accounts list (kind 10011). The new claim's tag carries a fourth value, `base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))`. The client sends:
+
+   ```http
+   POST /auth/confirm
+   Content-Type: application/json
+
+   {"code":"<code>","start_secret":"<secret>","event":{…signed kind 10011…}}
+   ```
+
+   The answer is `{"linked":true,"platform":"bluesky","identity":"alice.bsky.social"}`. The client then publishes the same event to relays. Errors carry a `code`:
+   - `invalid_request` (400: a malformed `code` or `start_secret`);
+   - `signin_not_found` (expired or not visible yet; retry briefly);
+   - `signin_used`;
+   - `signin_wrong_account`;
+   - `signin_not_yours`;
+   - `signin_claim_mismatch`;
+   - `invalid_event`.
+
+Return addresses are limited to `https://verifier.divine.video/`, `https://verifyer.divine.video/` and `https://divine.video/app/callback` (any query or fragment).
 
 ## Getting started
 
@@ -60,6 +93,8 @@ Configuration lives in `wrangler.toml`.
 
 - `DISCORD_VERIFY_CHANNEL_ID` — the Discord channel used for message-based Discord verification.
 - `TIKTOK_OAUTH_ENABLED` — set to `"true"` only after production OAuth credentials pass an end-to-end check; defaults to `"false"`.
+- `SIGNIN_CONFIRMATION`: `"optional"` (default): every finished sign-in also counts unconfirmed for 24 hours, so app versions that can't confirm keep working. `"required"`: only confirmed sign-ins count, and `GET /auth/:platform/start` is refused. Capitals and surrounding spaces are ignored. Any other value, empty included, is treated as `"required"` and logged as a warning. `GET /health` reports the mode in effect as `signin_confirmation`.
+- `SIGNIN_CODE_PLACEMENT`: `"fragment"` (default) or `"query"`: where the one-time code goes in the return address. Either way, a return with a code keeps none of the fragment the return address carried.
 
 **Secrets** (set with `wrangler secret put …`, never committed):
 
@@ -69,7 +104,7 @@ Configuration lives in `wrangler.toml`.
 - `TWITTER_CLIENT_ID`, `TWITTER_CLIENT_SECRET` — Twitter/X OAuth 2.0 credentials. Twitter sign-in is offered only when both are set along with `OAUTH_REDIRECT_BASE`; Twitter proof posts work without them.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — Google OAuth 2.0 credentials, used for YouTube login.
 - `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` — TikTok Login Kit credentials.
-- `OAUTH_REDIRECT_BASE` — base URL for OAuth callbacks (for example `https://verifier.divine.video`), also used to validate return URLs against open redirects. `/auth/:platform/start` first redirects a request that reaches a different host than this one to this address, except when the request itself reached the worker on localhost.
+- `OAUTH_REDIRECT_BASE`: base URL for OAuth callbacks (for example `https://verifier.divine.video`), also used to validate return URLs against open redirects. Its origin's `/` is also accepted as a return address, for staging and local development.
 
 See `PRD.md` for the full API contract and request/response shapes.
 

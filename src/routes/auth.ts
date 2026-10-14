@@ -4,16 +4,21 @@ import type { Context } from 'hono'
 import type { Bindings, OAuthPlatform, SignInCallbackResult } from '../types'
 import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
+import { readJsonBody } from '../utils/json-body'
 import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
-import { getOAuthVerification, deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
-import { createBinding, bindingSetCookie, BINDING_COOKIE, BINDING_CLEAR_COOKIE } from '../oauth/binding'
+import { deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
+import { getCountedSignIn } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
+import { signInConfirmationMode, confirmCodePlacement, isSignInToken, type ConfirmCodePlacement } from '../oauth/confirm'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
 import { startTikTokOAuth, handleTikTokCallback, isTikTokOAuthUsable } from '../oauth/tiktok'
+import signInConfirm from './signin-confirm'
 
 const auth = new Hono<{ Bindings: Bindings }>()
+auth.route('/', signInConfirm)
+
 // NIP-98 suggests 60s; login.divine.video enforced 60s when it did this check.
 const NIP98_MAX_AGE_SECONDS = 60
 
@@ -113,15 +118,14 @@ async function verifyNip98Event(
   return { ok: true, event: parsed.event }
 }
 
-// Allowed origins for OAuth return_url (prevent open redirect)
-const ALLOWED_RETURN_ORIGINS = new Set([
-  'https://divine.video',
-  'https://www.divine.video',
-  // Live verify frontend. Its return_url points back to itself, so the
-  // service's own origin must be trusted or every OAuth start 400s.
-  'https://verify.divine.video',
-  'https://verifyer.divine.video',
-  'https://verifier.divine.video',
+// Sign-ins return only to the verifier page (on either of its hosts; the page
+// returns to the one it started on) and the Divine app's return address.
+// Compared by origin and path; the query and fragment are the client's own
+// (its sign-in id, the page's section).
+const SIGNIN_RETURN_PAGES = new Set([
+  'https://verifier.divine.video/',
+  'https://verifyer.divine.video/',
+  'https://divine.video/app/callback',
 ])
 
 function isLocalHostname(hostname: string): boolean {
@@ -136,10 +140,12 @@ export function isAllowedReturnUrl(url: string, oauthRedirectBase?: string, requ
     const parsed = new URL(url)
     // Only web addresses: some other schemes (blob:) report a trusted origin.
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+    // The origin leaves out a user name or password, so refuse them here.
+    if (parsed.username || parsed.password) return false
+    const page = parsed.origin + parsed.pathname
     const base = oauthRedirectBase ? new URL(oauthRedirectBase) : null
-    // Compare exact origin (scheme + host + port) to prevent subdomain tricks
-    if (base && parsed.origin === base.origin) return true
-    if (ALLOWED_RETURN_ORIGINS.has(parsed.origin)) return true
+    if (base && page === `${base.origin}/`) return true
+    if (SIGNIN_RETURN_PAGES.has(page)) return true
     // Local development only: when the verifier itself runs on localhost,
     // also accept other local dev servers. Production never sends people to
     // localhost.
@@ -151,11 +157,30 @@ export function isAllowedReturnUrl(url: string, oauthRedirectBase?: string, requ
   }
 }
 
-function buildReturnUrl(returnUrl: string, params: Record<string, string>): string {
+// Names only the verifier sets. A return address that arrived carrying any of
+// them gets the verifier's values instead.
+const RESERVED_RETURN_NAMES = ['oauth_verified', 'oauth_error', 'oauth_confirm', 'platform', 'identity']
+
+function buildReturnUrl(
+  returnUrl: string,
+  params: Record<string, string>,
+  confirm?: { code: string; placement: ConfirmCodePlacement },
+): string {
   try {
     const url = new URL(returnUrl)
-    for (const [key, value] of Object.entries(params)) {
-      url.searchParams.set(key, value)
+    for (const name of RESERVED_RETURN_NAMES) url.searchParams.delete(name)
+    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
+    // A supplied fragment that mentions the code's name in any form,
+    // percent-encoded included, is dropped.
+    if (url.hash.includes('oauth_confirm') || new URLSearchParams(url.hash.slice(1)).has('oauth_confirm')) url.hash = ''
+    // With a code, none of the supplied fragment is kept: it becomes exactly
+    // the code, or is emptied when the code goes in the query. Clients put
+    // back their own.
+    if (confirm?.placement === 'query') {
+      url.searchParams.set('oauth_confirm', confirm.code)
+      url.hash = ''
+    } else if (confirm) {
+      url.hash = `oauth_confirm=${confirm.code}`
     }
     return url.toString()
   } catch {
@@ -204,84 +229,128 @@ auth.post('/nostr/login', async (c) => {
   })
 })
 
-// The start functions return Response.redirect, whose headers can't be
-// changed, so the cookie goes on a copy. Errors get no cookie.
-function withBindingCookie(response: Response, value: string): Response {
-  if (response.status !== 302) return response
-  const headers = new Headers(response.headers)
-  headers.append('Set-Cookie', bindingSetCookie(value))
-  return new Response(null, { status: 302, headers })
+const OAUTH_PLATFORMS = new Set(['twitter', 'bluesky', 'youtube', 'tiktok'])
+const platformForLog = (platform: string) => (OAUTH_PLATFORMS.has(platform) ? platform : 'unknown')
+
+interface StartRequest {
+  platform: string
+  pubkey: unknown
+  returnUrl: unknown
+  handle: unknown
+  startCheck: string | undefined
 }
 
-// Start OAuth flow
-// GET /auth/:platform/start?pubkey=hex&return_url=https://...&handle=user.bsky.social (handle required for bluesky)
-auth.get('/:platform/start', async (c) => {
-  // The provider always returns to OAUTH_REDIRECT_BASE, and the binding
-  // cookie only comes back to the host that set it, so start there. Compare
-  // host only, not scheme: a request can reach this worker over a different
-  // scheme than the public base (a tunnel in local development, or a proxy
-  // in front of it). A request that already reached the worker on localhost
-  // is treated as local development and never redirected, since the live
-  // verifier is never reached that way.
-  const base = c.env.OAUTH_REDIRECT_BASE
-  if (base) {
-    const here = new URL(c.req.url)
-    const finishing = new URL(base)
-    if (here.host !== finishing.host && !isLocalHostname(here.hostname)) {
-      return c.redirect(`${finishing.origin}${here.pathname}${here.search}`, 302)
-    }
-  }
-
-  const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
-  const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
-  if (!ipLimit.allowed) {
-    return c.json({ error: 'Rate limit exceeded' }, 429)
-  }
-
-  const platform = c.req.param('platform')
-  const pubkey = c.req.query('pubkey')
-  const returnUrl = c.req.query('return_url') || '/'
-  const handle = c.req.query('handle')
-
-  if (!pubkey || !isValidHexPubkey(pubkey)) {
+// The part of starting a sign-in both routes share. Answers the start
+// function's 302 to the provider, or a JSON error.
+async function startSignIn(c: Context<{ Bindings: Bindings }>, req: StartRequest): Promise<Response> {
+  if (typeof req.pubkey !== 'string' || !isValidHexPubkey(req.pubkey)) {
     return c.json({ error: 'Invalid or missing pubkey (64-char hex)' }, 400)
   }
-
-  // Validate return_url to prevent open redirect
-  if (returnUrl !== '/' && !isAllowedReturnUrl(returnUrl, c.env.OAUTH_REDIRECT_BASE, c.req.url)) {
+  // With no return address, come back to the verifier page on the host the
+  // sign-in started on, or else the configured one. Always a full address:
+  // a bare "/" can't carry the one-time code back.
+  const base = c.env.OAUTH_REDIRECT_BASE
+  const here = `${new URL(c.req.url).origin}/`
+  const fallback = !isAllowedReturnUrl(here, base, c.req.url) && base ? `${new URL(base).origin}/` : here
+  const given = typeof req.returnUrl === 'string' && req.returnUrl ? req.returnUrl : undefined
+  const returnUrl = given ?? fallback
+  // Without OAUTH_REDIRECT_BASE no start below runs (each says it isn't set
+  // up), so only an address the client sent is worth refusing then.
+  if ((given !== undefined || base) && !isAllowedReturnUrl(returnUrl, base, c.req.url)) {
     return c.json({ error: 'Invalid return_url: must be a trusted origin' }, 400)
   }
+  const normalizedPubkey = normalizePubkey(req.pubkey)
 
-  const normalizedPubkey = normalizePubkey(pubkey)
-  const binding = await createBinding()
-
-  switch (platform) {
+  switch (req.platform) {
     case 'twitter':
-      return withBindingCookie(await startTwitterOAuth(c.env, normalizedPubkey, returnUrl, binding.hash), binding.value)
+      return startTwitterOAuth(c.env, normalizedPubkey, returnUrl, req.startCheck)
 
     case 'bluesky': {
       // People type handles the way Bluesky shows them, with a leading @.
-      const bareHandle = handle?.trim().replace(/^@/, '').trim()
+      const bareHandle = typeof req.handle === 'string' ? req.handle.trim().replace(/^@/, '').trim() : ''
       if (!bareHandle) {
         return c.json({ error: 'Missing handle parameter (e.g., user.bsky.social)' }, 400)
       }
-      return withBindingCookie(await startBlueskyOAuth(c.env, normalizedPubkey, bareHandle, returnUrl, binding.hash), binding.value)
+      return startBlueskyOAuth(c.env, normalizedPubkey, bareHandle, returnUrl, req.startCheck)
     }
 
     case 'youtube':
-      return withBindingCookie(await startYouTubeOAuth(c.env, normalizedPubkey, returnUrl, binding.hash), binding.value)
+      return startYouTubeOAuth(c.env, normalizedPubkey, returnUrl, req.startCheck)
 
     case 'tiktok': {
       const allowSandbox = getCookie(c, 'tiktok_oauth_review') === '1'
       if (!isTikTokOAuthUsable(c.env, allowSandbox)) {
         return c.json({ error: 'TikTok OAuth not configured' }, 503)
       }
-      return withBindingCookie(await startTikTokOAuth(c.env, normalizedPubkey, returnUrl, binding.hash), binding.value)
+      return startTikTokOAuth(c.env, normalizedPubkey, returnUrl, req.startCheck)
     }
 
     default:
       return c.json({ error: 'OAuth not supported for this platform. Supported: twitter, bluesky, youtube, tiktok' }, 400)
   }
+}
+
+const START_BODY_LIMIT = 4096
+
+// Start a sign-in the owner can confirm (#113).
+// POST /auth/:platform/start { pubkey, return_url?, handle?, start_check } -> { url }
+// The start check never goes in an address, and the answer is the provider
+// address rather than a redirect, which a browser would follow without the body.
+auth.post('/:platform/start', async (c) => {
+  const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
+  const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
+  if (!ipLimit.allowed) {
+    return c.json({ error: 'Rate limit exceeded' }, 429)
+  }
+  const read = await readJsonBody(c, START_BODY_LIMIT)
+  if (!read.ok) return read.response
+  const body = (read.body && typeof read.body === 'object' ? read.body : {}) as Record<string, unknown>
+  if (!isSignInToken(body.start_check)) {
+    return c.json({ error: 'Invalid or missing start_check' }, 400)
+  }
+  const res = await startSignIn(c, {
+    platform: c.req.param('platform'),
+    pubkey: body.pubkey,
+    returnUrl: body.return_url,
+    handle: body.handle,
+    startCheck: body.start_check,
+  })
+  if (res.status !== 302) return res
+  return c.json({ url: res.headers.get('Location') })
+})
+
+// Start a sign-in the way app versions without confirmation do.
+// GET /auth/:platform/start?pubkey=hex&return_url=https://...&handle=user.bsky.social
+// Its sign-ins can't be confirmed, so once confirmation is required it is refused.
+// TODO(#113): remove once SIGNIN_CONFIRMATION is "required".
+auth.get('/:platform/start', async (c) => {
+  const platform = c.req.param('platform')
+  if (c.req.query('start_check') !== undefined) {
+    return c.json({ error: 'start_check is only accepted in a POST body' }, 400)
+  }
+  // Rate limited first, so refusals (and their log lines) are limited too.
+  const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
+  const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
+  if (!ipLimit.allowed) {
+    return c.json({ error: 'Rate limit exceeded' }, 429)
+  }
+  if (signInConfirmationMode(c.env) === 'required') {
+    console.info(`${platformForLog(platform)} sign-in start refused: GET start`)
+    const returnUrl = c.req.query('return_url')
+    // A browser opening this address (an app's fallback when its own request
+    // failed) is sent back with a reason rather than left on a JSON page.
+    if (c.req.header('sec-fetch-mode') === 'navigate' && returnUrl && isAllowedReturnUrl(returnUrl, c.env.OAUTH_REDIRECT_BASE, c.req.url)) {
+      return c.redirect(buildReturnUrl(returnUrl, { oauth_error: 'update the Divine app to link by signing in' }))
+    }
+    return c.json({ error: 'Update the Divine app to link by signing in' }, 400)
+  }
+  return startSignIn(c, {
+    platform,
+    pubkey: c.req.query('pubkey'),
+    returnUrl: c.req.query('return_url'),
+    handle: c.req.query('handle'),
+    startCheck: undefined,
+  })
 })
 
 const SIGN_IN_LABELS: Record<OAuthPlatform, string> = {
@@ -291,17 +360,18 @@ const SIGN_IN_LABELS: Record<OAuthPlatform, string> = {
   bluesky: 'Bluesky',
 }
 
-// Every way a sign-in finishes clears the binding cookie. Successful sign-ins
-// are logged as bound or unbound, with nothing that identifies the person.
+// Logged with nothing that identifies the person. The two finish lines are
+// told apart so the share of installed-app sign-ins can be read from the logs.
 function finishSignIn(c: Context<{ Bindings: Bindings }>, platform: OAuthPlatform, result: SignInCallbackResult): Response {
-  c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
-  if (result.success) {
-    console.info(`${platform} sign-in finished: ${result.bound ? 'bound' : 'unbound'}`)
-  }
-  const params: Record<string, string> = result.success
-    ? { oauth_verified: 'true', platform, identity: result.identity || '' }
-    : { oauth_error: 'Verification failed' }
-  return c.redirect(buildReturnUrl(result.returnUrl, params))
+  if (!result.success) return c.redirect(buildReturnUrl(result.returnUrl, { oauth_error: 'Verification failed' }))
+  console.info(`${platform} sign-in finished: ${result.confirmCode ? 'awaiting confirmation' : 'installed app, unconfirmed'}`)
+  const params: Record<string, string> = { platform, identity: result.identity || '' }
+  // Apps that can't confirm read this as "linked"; once confirmation is
+  // required nothing is linked until the owner confirms.
+  // TODO(#113): remove once SIGNIN_CONFIRMATION is "required".
+  if (signInConfirmationMode(c.env) === 'optional') params.oauth_verified = 'true'
+  const confirm = result.confirmCode ? { code: result.confirmCode, placement: confirmCodePlacement(c.env) } : undefined
+  return c.redirect(buildReturnUrl(result.returnUrl, params, confirm))
 }
 
 // A sign-in the provider did not complete comes back with `error` and, per
@@ -320,7 +390,6 @@ async function redirectAfterUnfinishedSignIn(
   // a misconfigured app can be told apart from a person saying no. The
   // description and the state id are never logged.
   console.warn(`${platform} sign-in returned an error:`, /^[a-z_]{1,64}$/.test(providerError) ? providerError : 'other')
-  c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
 
   // The page shows this after "Sign-in was not completed: ". `access_denied`
   // means the request was refused, usually by the person; any other code means
@@ -367,12 +436,10 @@ auth.get('/twitter/callback', async (c) => {
   }
 
   try {
-    const bindingCookie = getCookie(c, BINDING_COOKIE)
-    const result = await handleTwitterCallback(c.env, code, state, bindingCookie)
+    const result = await handleTwitterCallback(c.env, code, state)
     return finishSignIn(c, 'twitter', result)
   } catch (err) {
     console.error('Twitter callback error:', err instanceof Error ? err.message : err)
-    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -390,12 +457,10 @@ auth.get('/youtube/callback', async (c) => {
   }
 
   try {
-    const bindingCookie = getCookie(c, BINDING_COOKIE)
-    const result = await handleYouTubeCallback(c.env, code, state, bindingCookie)
+    const result = await handleYouTubeCallback(c.env, code, state)
     return finishSignIn(c, 'youtube', result)
   } catch (err) {
     console.error('YouTube callback error:', err instanceof Error ? err.message : err)
-    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -413,12 +478,10 @@ auth.get('/tiktok/callback', async (c) => {
   }
 
   try {
-    const bindingCookie = getCookie(c, BINDING_COOKIE)
-    const result = await handleTikTokCallback(c.env, code, state, bindingCookie)
+    const result = await handleTikTokCallback(c.env, code, state)
     return finishSignIn(c, 'tiktok', result)
   } catch (err) {
     console.error('TikTok callback error:', err instanceof Error ? err.message : err)
-    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -437,12 +500,10 @@ auth.get('/bluesky/callback', async (c) => {
   }
 
   try {
-    const bindingCookie = getCookie(c, BINDING_COOKIE)
-    const result = await handleBlueskyCallback(c.env, code, state, iss, bindingCookie)
+    const result = await handleBlueskyCallback(c.env, code, state, iss)
     return finishSignIn(c, 'bluesky', result)
   } catch (err) {
     console.error('Bluesky callback error:', err instanceof Error ? err.message : err)
-    c.header('Set-Cookie', BINDING_CLEAR_COOKIE, { append: true })
     return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
   }
 })
@@ -465,7 +526,7 @@ auth.get('/:platform/status', async (c) => {
   }
 
   const normalizedPubkey = normalizePubkey(pubkey)
-  const verification = await getOAuthVerification(c.env.CACHE_KV, platform, identity, normalizedPubkey)
+  const verification = await getCountedSignIn(c.env, platform, identity, normalizedPubkey)
 
   if (verification && await signInAccountStillMatches(c.env, verification, identity)) {
     return c.json({
@@ -486,8 +547,6 @@ auth.get('/:platform/status', async (c) => {
     method: null,
   })
 })
-
-const OAUTH_PLATFORMS = new Set(['twitter', 'bluesky', 'youtube', 'tiktok'])
 
 // Revoke an OAuth sign-in record (a Bluesky one under both its handle and DID)
 // POST /auth/oauth/revoke { platform, identity, pubkey, event }

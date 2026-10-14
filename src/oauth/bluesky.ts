@@ -1,11 +1,10 @@
 import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString, generateDPoPKeyPair, importDPoPPrivateKey, createDPoPProof } from './crypto'
-import { storeOAuthState, getOAuthState, deleteOAuthState, storeOAuthVerification, getOAuthVerification, oauthVerificationKey } from './state'
-import { forgetHandleLookup } from './signin-account'
+import { storeOAuthState, getOAuthState, deleteOAuthState } from './state'
+import { holdSignIn } from './signin-records'
 import { getHandleFromDidDocument, getPdsEndpoint, resolveDidDocument, resolveHandle } from '../atproto'
 import { isSafeUrl } from '../utils/validation'
 import { fetchPublic } from '../utils/safe-fetch'
-import { isSignInBound } from './binding'
 import { PlatformUnavailableError, fetchFromPlatform, throwIfUnanswered } from '../platforms/base'
 
 // The AT Protocol OAuth spec requires both metadata documents to answer
@@ -116,7 +115,7 @@ export async function startBlueskyOAuth(
   pubkey: string,
   handle: string,
   returnUrl: string,
-  bindingHash: string,
+  startCheck: string | undefined,
 ): Promise<Response> {
   if (!isBlueskyOAuthUsable(env)) {
     return new Response(JSON.stringify({ error: 'OAuth not configured' }), {
@@ -155,7 +154,7 @@ export async function startBlueskyOAuth(
     tokenEndpoint: authServer.tokenEndpoint,
     did: authServer.did,
     handle: handle.toLowerCase(),
-    bindingHash,
+    ...(startCheck ? { startCheck } : {}),
   }
   await storeOAuthState(env.CACHE_KV, stateId, state)
 
@@ -260,7 +259,6 @@ export async function handleBlueskyCallback(
   code: string,
   stateId: string,
   iss: string,
-  bindingCookie: string | undefined,
 ): Promise<SignInCallbackResult> {
   const state = await getOAuthState(env.CACHE_KV, stateId)
   if (!state || state.platform !== 'bluesky') {
@@ -268,8 +266,6 @@ export async function handleBlueskyCallback(
   }
 
   await deleteOAuthState(env.CACHE_KV, stateId)
-
-  const bound = await isSignInBound(state, bindingCookie)
 
   // Verify issuer matches
   if (iss !== state.issuer) {
@@ -339,13 +335,13 @@ export async function handleBlueskyCallback(
         return { success: false, returnUrl: state.returnUrl, error: 'Bluesky token exchange failed' }
       }
 
-      return await processBlueskyToken(retryResp, state, env, bound)
+      return await processBlueskyToken(retryResp, state, env)
     }
 
     return { success: false, returnUrl: state.returnUrl, error: 'Bluesky token exchange failed' }
   }
 
-  return await processBlueskyToken(tokenResp, state, env, bound)
+  return await processBlueskyToken(tokenResp, state, env)
 }
 
 async function confirmedHandle(did: string, state: OAuthState): Promise<string | null> {
@@ -372,7 +368,6 @@ async function processBlueskyToken(
   tokenResp: Response,
   state: OAuthState,
   env: Bindings,
-  bound: boolean,
 ): Promise<SignInCallbackResult> {
   let tokenData: { sub?: string } | null
   try {
@@ -395,54 +390,9 @@ async function processBlueskyToken(
     return { success: false, returnUrl: state.returnUrl, error: 'Bluesky account not confirmed' }
   }
 
-  // Tidying up after earlier sign-ins is best effort; the new link is saved
-  // either way, and one step failing doesn't skip the other.
-  try {
-    await forgetHandleLookup(env, handle)
-  } catch (err) {
-    console.warn('Bluesky sign-in: earlier handle lookup not cleared:', err)
-  }
-  try {
-    // A handle change leaves a record under the old handle. Remove it while it
-    // still belongs to this account, so it can't verify again if that handle
-    // ever points back here.
-    const previous = await getOAuthVerification(env.CACHE_KV, 'bluesky', did, state.pubkey)
-    if (previous?.handle && previous.handle.toLowerCase() !== handle.toLowerCase()) {
-      const old = await getOAuthVerification(env.CACHE_KV, 'bluesky', previous.handle, state.pubkey)
-      if (old?.account_id === did) await env.CACHE_KV.delete(oauthVerificationKey('bluesky', previous.handle, state.pubkey))
-    }
-  } catch (err) {
-    console.warn('Bluesky sign-in: earlier handle record not removed:', err)
-  }
-
-  const checkedAt = Math.floor(Date.now() / 1000)
-
-  // Store OAuth verification
-  await storeOAuthVerification(env.CACHE_KV, {
-    platform: 'bluesky',
-    identity: handle,
-    pubkey: state.pubkey,
-    verified: true,
-    method: 'oauth',
-    checked_at: checkedAt,
-    account_id: did,
-    handle,
-    bound,
-  })
-  // Also index by DID so clients can verify either handle or DID identities.
-  await storeOAuthVerification(env.CACHE_KV, {
-    platform: 'bluesky',
-    identity: did,
-    pubkey: state.pubkey,
-    verified: true,
-    method: 'oauth',
-    checked_at: checkedAt,
-    account_id: did,
-    handle,
-    bound,
-  })
-
-  return { success: true, returnUrl: state.returnUrl, identity: handle, bound }
+  // Saving the link (and tidying up after earlier sign-ins) happens once the
+  // owner confirms it. Until the switch, it is also saved unconfirmed now.
+  return holdSignIn(env, state, { platform: 'bluesky', identity: handle, account_id: did, handle })
 }
 
 export function blueskyClientMetadata(baseUrl: string): object {
