@@ -157,9 +157,10 @@ describe('discardBody', () => {
 })
 
 describe('withinTimeBudget', () => {
-  it('allows a whole check fifteen seconds, three times the limit on one request', () => {
-    expect(PLATFORM_CHECK_TIME_BUDGET_MS).toBe(15_000)
-    expect(PLATFORM_CHECK_TIME_BUDGET_MS).toBe(3 * PLATFORM_REQUEST_TIMEOUT_MS)
+  it('allows a whole check eight seconds: more than one request gets, and inside the app\'s 10-second wait', () => {
+    expect(PLATFORM_CHECK_TIME_BUDGET_MS).toBe(8_000)
+    expect(PLATFORM_CHECK_TIME_BUDGET_MS).toBeGreaterThan(PLATFORM_REQUEST_TIMEOUT_MS)
+    expect(PLATFORM_CHECK_TIME_BUDGET_MS).toBeLessThan(10_000)
   })
 
   it('answers with the work when it finishes in time, and leaves no timer running', async () => {

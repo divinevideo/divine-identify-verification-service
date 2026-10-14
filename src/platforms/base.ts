@@ -34,8 +34,14 @@ export const PLATFORM_REQUEST_TIMEOUT_MS = 5000
  * platform that answers each just inside its limit could hold a claim, and the
  * batch it is in, for four times as long. Claims in a batch are checked side by
  * side, so this is also the longest a batch waits on its slowest claim.
+ *
+ * Divine's app and website stop waiting after 10 seconds and then keep no answer
+ * at all, for any claim in the call (divine-mobile `verifier_client.dart`,
+ * divine-web `src/config/api.ts`). So this stays under that, leaving about 2
+ * seconds for the storage reads and writes around a check and for the
+ * connection. App builds already installed keep that 10 seconds.
  */
-export const PLATFORM_CHECK_TIME_BUDGET_MS = 15_000
+export const PLATFORM_CHECK_TIME_BUDGET_MS = 8_000
 
 /** The most of one answer a check reads. A real answer is far smaller; this bounds what a platform can make us hold. */
 export const MAX_RESPONSE_BYTES = 1024 * 1024

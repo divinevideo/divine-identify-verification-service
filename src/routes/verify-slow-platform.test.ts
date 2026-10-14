@@ -203,7 +203,7 @@ describe('a check made of several slow requests', () => {
     vi.useRealTimers()
   })
 
-  it('gives up after fifteen seconds: "couldn\'t check right now", remembered for 5 minutes', async () => {
+  it('gives up after eight seconds: "couldn\'t check right now", remembered for 5 minutes', async () => {
     vi.useFakeTimers()
     const { env, kv } = createEnv()
     const logWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -211,30 +211,30 @@ describe('a check made of several slow requests', () => {
     stubFetch(slowBluesky(4900)) // four requests: 19.6 seconds in all
 
     const answer = verify(env, 'bluesky', CLAIMS.bluesky)
-    await vi.advanceTimersByTimeAsync(15_000)
+    await vi.advanceTimersByTimeAsync(8_000)
     const body = await answer
 
     expect(body).toMatchObject({ verified: false, code: 'temporarily_unavailable', cached: false })
     expect(body.error).toMatch(/Bluesky couldn't be checked right now/)
     expect(rememberedFor(kv)).toBe(UNAVAILABLE_TTL)
-    expect(logWarn).toHaveBeenCalledWith("bluesky couldn't be checked:", "Bluesky didn't finish within 15 seconds")
+    expect(logWarn).toHaveBeenCalledWith("bluesky couldn't be checked:", "Bluesky didn't finish within 8 seconds")
     expect(logError).not.toHaveBeenCalled()
   })
 
   it('lets a check that finishes inside the budget give its own answer', async () => {
     vi.useFakeTimers()
     const { env } = createEnv()
-    stubFetch(slowBluesky(3000)) // four requests: 12 seconds in all
+    stubFetch(slowBluesky(1900)) // four requests: 7.6 seconds in all
 
     const answer = verify(env, 'bluesky', CLAIMS.bluesky)
-    await vi.advanceTimersByTimeAsync(12_000)
+    await vi.advanceTimersByTimeAsync(7600)
     const body = await answer
 
     expect(body).toMatchObject({ verified: false, error: 'Bluesky post not found' })
     expect(body.code).not.toBe('temporarily_unavailable')
   })
 
-  it('answers a batch at fifteen seconds with every claim in it: the slow one unavailable, the others as they were', async () => {
+  it('answers a batch at eight seconds with every claim in it: the slow one unavailable, the others as they were', async () => {
     vi.useFakeTimers()
     const { env } = createEnv()
     vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -251,7 +251,7 @@ describe('a check made of several slow requests', () => {
         ],
       }),
     }), env)
-    await vi.advanceTimersByTimeAsync(15_000)
+    await vi.advanceTimersByTimeAsync(8_000)
 
     const { results } = await (await batch).json() as { results: Array<Record<string, unknown>> }
     expect(results[0]).toMatchObject({ platform: 'bluesky', verified: false, code: 'temporarily_unavailable' })
