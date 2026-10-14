@@ -1,6 +1,6 @@
 import { isSafeUrl } from './utils/validation'
 import { fetchPublic } from './utils/safe-fetch'
-import { fetchFromPlatform, PlatformUnavailableError, throwIfUnanswered } from './platforms/base'
+import { discardBody, fetchFromPlatform, PlatformUnavailableError, readJson, throwIfUnanswered } from './platforms/base'
 
 export type DidDocument = {
   alsoKnownAs?: string[]
@@ -66,15 +66,19 @@ async function lookUp(label: string, url: string, fetcher?: Fetcher): Promise<un
   throwIfUnanswered(resp, label)
   const namedByUs = !fetcher
   if (namedByUs && (resp.status === 401 || resp.status === 403)) {
+    await discardBody(resp)
     throw new PlatformUnavailableError(`${label} answered ${resp.status}`)
   }
-  if (!resp.ok) return null
-  try {
-    return await resp.json()
-  } catch {
+  if (!resp.ok) {
+    await discardBody(resp)
+    return null
+  }
+  const data = await readJson<unknown>(resp, label)
+  if (data === undefined) {
     if (namedByUs) throw new PlatformUnavailableError(`${label} answered something that isn't JSON`)
     return null
   }
+  return data
 }
 
 export async function resolveHandle(handle: string): Promise<string | null> {

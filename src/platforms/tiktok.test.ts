@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { TikTokVerifier } from './tiktok'
+import { fakeResponse } from '../test-support/fake-response'
 
 describe('TikTokVerifier', () => {
   const verifier = new TikTokVerifier()
@@ -10,7 +11,7 @@ describe('TikTokVerifier', () => {
   })
 
   it('returns verified when npub found in video caption', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -18,14 +19,14 @@ describe('TikTokVerifier', () => {
         author_unique_id: 'testuser',
         title: `My Nostr key: ${npub} #nostr`,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('testuser', '7123456789012345678', npub)
     expect(result.verified).toBe(true)
   })
 
   it('returns not verified when npub not in caption', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -33,7 +34,7 @@ describe('TikTokVerifier', () => {
         author_unique_id: 'testuser',
         title: 'Just a regular TikTok caption',
       }),
-    }))
+    })))
 
     const result = await verifier.verify('testuser', '7123456789012345678', npub)
     expect(result.verified).toBe(false)
@@ -41,7 +42,7 @@ describe('TikTokVerifier', () => {
   })
 
   it('returns error when author does not match identity', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -49,7 +50,7 @@ describe('TikTokVerifier', () => {
         author_unique_id: 'otheruser',
         title: npub,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('testuser', '7123456789012345678', npub)
     expect(result.verified).toBe(false)
@@ -57,7 +58,7 @@ describe('TikTokVerifier', () => {
   })
 
   it('matches author handle case-insensitively', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -65,7 +66,7 @@ describe('TikTokVerifier', () => {
         author_unique_id: 'TestUser',
         title: npub,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('testuser', '7123456789012345678', npub)
     expect(result.verified).toBe(true)
@@ -75,7 +76,7 @@ describe('TikTokVerifier', () => {
     // Regression: the claimed identity is the @handle, which oEmbed returns as
     // author_unique_id. Matching author_name (the display name) rejected every
     // account whose display name differs from its handle.
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -83,7 +84,7 @@ describe('TikTokVerifier', () => {
         author_unique_id: 'foo7323',
         title: npub,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('foo7323', '7676181219524021535', npub)
     expect(result.verified).toBe(true)
@@ -92,7 +93,7 @@ describe('TikTokVerifier', () => {
   it('falls back to the documented author_url when author_unique_id is absent', async () => {
     // author_unique_id is undocumented; author_url is documented. Verification
     // must still work off author_url alone if TikTok drops the former.
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -100,14 +101,14 @@ describe('TikTokVerifier', () => {
         author_url: 'https://www.tiktok.com/@foo7323',
         title: npub,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('foo7323', '7676181219524021535', npub)
     expect(result.verified).toBe(true)
   })
 
   it('ignores an author_url on a non-TikTok host', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -115,7 +116,7 @@ describe('TikTokVerifier', () => {
         author_url: 'https://evil.example/@foo7323',
         title: npub,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('foo7323', '7676181219524021535', npub)
     expect(result.verified).toBe(false)
@@ -123,7 +124,7 @@ describe('TikTokVerifier', () => {
   })
 
   it('ignores a non-HTTPS author_url', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -131,7 +132,7 @@ describe('TikTokVerifier', () => {
         author_url: 'http://www.tiktok.com/@foo7323',
         title: npub,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('foo7323', '7676181219524021535', npub)
     expect(result.verified).toBe(false)
@@ -139,7 +140,7 @@ describe('TikTokVerifier', () => {
   })
 
   it('ignores an author_url that is not a bare @handle profile path', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -147,7 +148,7 @@ describe('TikTokVerifier', () => {
         author_url: 'https://www.tiktok.com/@foo7323/video/7676181219524021535',
         title: npub,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('foo7323', '7676181219524021535', npub)
     expect(result.verified).toBe(false)
@@ -155,14 +156,14 @@ describe('TikTokVerifier', () => {
   })
 
   it('returns error when neither author_unique_id nor a valid author_url is present', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
         author_name: 'testuser',
         title: npub,
       }),
-    }))
+    })))
 
     const result = await verifier.verify('testuser', '7123456789012345678', npub)
     expect(result.verified).toBe(false)
@@ -222,11 +223,11 @@ describe('TikTokVerifier: the links people paste', () => {
   const VIDEO_ID = '7123456789012345678'
 
   function oembedOk() {
-    return {
+    return fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({ author_unique_id: 'testuser', author_url: 'https://www.tiktok.com/@testuser', title: `My key ${npub}` }),
-    }
+    })
   }
 
   // Answers the share-link lookup with a redirect, then the oEmbed call.
@@ -408,7 +409,7 @@ describe('TikTokVerifier: the links people paste', () => {
   })
 
   it('says plainly when TikTok cannot find the video or it is not public', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ message: 'Something went wrong' }) }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({ ok: false, status: 400, json: async () => ({ message: 'Something went wrong' }) })))
     const result = await verifier.verify('testuser', VIDEO_ID, npub)
     expect(result).toEqual({ verified: false, error: 'TikTok post not found or not public' })
   })
@@ -422,7 +423,7 @@ describe('TikTokVerifier: the links people paste', () => {
   })
 
   it('says plainly when TikTok does not say whose post it is', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ author_url: 'https://www.tiktok.com/', title: '' }) }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({ ok: true, status: 200, json: async () => ({ author_url: 'https://www.tiktok.com/', title: '' }) })))
     const result = await verifier.verify('testuser', VIDEO_ID, npub)
     expect(result).toEqual({ verified: false, error: 'TikTok did not say whose post this is, so it cannot be checked.' })
   })
@@ -441,7 +442,7 @@ describe('TikTokVerifier: the links people paste', () => {
   it('rejects a share link that leads to someone else\'s post, with no post number', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce({ ok: false, status: 301, headers: new Headers({ Location: `https://www.tiktok.com/@someoneelse/video/${VIDEO_ID}` }) })
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ author_unique_id: 'someoneelse', title: `key ${npub}` }) }))
+      .mockResolvedValueOnce(fakeResponse({ ok: true, status: 200, json: async () => ({ author_unique_id: 'someoneelse', title: `key ${npub}` }) })))
     const result = await verifier.verify('testuser', 'https://vm.tiktok.com/ZMabc123/', npub)
     expect(result).toEqual({ verified: false, error: 'Post author does not match claimed identity' })
   })
@@ -452,7 +453,7 @@ describe('TikTokVerifier: the links people paste', () => {
   })
 
   it('reports no post number when verification fails', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ author_unique_id: 'testuser', title: 'no key here' }) }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({ ok: true, status: 200, json: async () => ({ author_unique_id: 'testuser', title: 'no key here' }) })))
     const result = await verifier.verify('testuser', `https://www.tiktok.com/@testuser/video/${VIDEO_ID}`, npub)
     expect(result.verified).toBe(false)
     expect(result).not.toHaveProperty('canonicalProof')

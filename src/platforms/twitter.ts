@@ -1,4 +1,4 @@
-import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
+import { fetchFromPlatform, readJson, throwIfUnanswered, type PlatformVerifier } from './base'
 
 export class TwitterVerifier implements PlatformVerifier {
   readonly name = 'twitter'
@@ -21,10 +21,8 @@ export class TwitterVerifier implements PlatformVerifier {
       return { verified: false, error: `Twitter oEmbed error: ${response.status}` }
     }
 
-    let data: { html?: string; author_url?: string }
-    try {
-      data = await response.json() as typeof data
-    } catch {
+    const data = await readJson<{ html?: string; author_url?: string }>(response, this.label)
+    if (data === undefined) {
       return { verified: false, error: 'Invalid JSON response from Twitter oEmbed' }
     }
 

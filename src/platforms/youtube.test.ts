@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { YouTubeVerifier } from './youtube'
+import { fakeResponse } from '../test-support/fake-response'
 
 describe('YouTubeVerifier', () => {
   const npub = 'npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg'
@@ -11,7 +12,7 @@ describe('YouTubeVerifier', () => {
   })
 
   it('returns verified when npub found in video description', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -23,14 +24,14 @@ describe('YouTubeVerifier', () => {
           },
         }],
       }),
-    }))
+    })))
 
     const result = await verifier.verify('UCxxxxxxxxxxxxxxxxxxxxxxxx', 'dQw4w9WgXcQ', npub)
     expect(result.verified).toBe(true)
   })
 
   it('returns not verified when npub not in description', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -42,7 +43,7 @@ describe('YouTubeVerifier', () => {
           },
         }],
       }),
-    }))
+    })))
 
     const result = await verifier.verify('UCxxxxxxxxxxxxxxxxxxxxxxxx', 'dQw4w9WgXcQ', npub)
     expect(result.verified).toBe(false)
@@ -50,7 +51,7 @@ describe('YouTubeVerifier', () => {
   })
 
   it('returns error when channel does not match identity', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -62,7 +63,7 @@ describe('YouTubeVerifier', () => {
           },
         }],
       }),
-    }))
+    })))
 
     const result = await verifier.verify('UCxxxxxxxxxxxxxxxxxxxxxxxx', 'dQw4w9WgXcQ', npub)
     expect(result.verified).toBe(false)
@@ -70,11 +71,11 @@ describe('YouTubeVerifier', () => {
   })
 
   it('returns error for video not found', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({ items: [] }),
-    }))
+    })))
 
     const result = await verifier.verify('UCxxxxxxxxxxxxxxxxxxxxxxxx', 'dQw4w9WgXcQ', npub)
     expect(result.verified).toBe(false)
@@ -112,7 +113,7 @@ describe('YouTubeVerifier', () => {
   })
 
   it('works with handle-based identity', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -124,7 +125,7 @@ describe('YouTubeVerifier', () => {
           },
         }],
       }),
-    }))
+    })))
 
     const result = await verifier.verify('@testuser', 'dQw4w9WgXcQ', npub)
     expect(result.verified).toBe(true)

@@ -1,4 +1,4 @@
-import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
+import { fetchFromPlatform, readText, throwIfUnanswered, type PlatformVerifier } from './base'
 
 export class TelegramVerifier implements PlatformVerifier {
   readonly name = 'telegram'
@@ -22,7 +22,7 @@ export class TelegramVerifier implements PlatformVerifier {
       return { verified: false, error: `Telegram embed error: ${response.status}` }
     }
 
-    const html = await response.text()
+    const { text: html } = await readText(response, this.label)
 
     // Verify the message author matches the claimed identity (mandatory)
     const authorMatch = html.match(/tgme_widget_message_author.*?href="https?:\/\/t\.me\/([^"?]+)"/s)

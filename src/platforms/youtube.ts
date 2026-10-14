@@ -1,4 +1,4 @@
-import { fetchFromPlatform, throwIfUnanswered, type PlatformVerifier } from './base'
+import { fetchFromPlatform, readJson, throwIfUnanswered, type PlatformVerifier } from './base'
 
 interface YouTubeVideoSnippet {
   snippet?: {
@@ -42,10 +42,8 @@ export class YouTubeVerifier implements PlatformVerifier {
       return { verified: false, error: `YouTube API error: ${response.status}` }
     }
 
-    let data: YouTubeVideoResponse
-    try {
-      data = await response.json() as YouTubeVideoResponse
-    } catch {
+    const data = await readJson<YouTubeVideoResponse>(response, this.label)
+    if (data === undefined) {
       return { verified: false, error: 'Invalid JSON response from YouTube API' }
     }
 

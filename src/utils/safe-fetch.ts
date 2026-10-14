@@ -1,3 +1,4 @@
+import { discardBody } from '../platforms/base'
 import { isSafeUrl } from './validation'
 
 const MAX_REDIRECTS = 3
@@ -46,9 +47,7 @@ export async function fetchPublic(url: string, init: RequestInit = {}): Promise<
     if (!isSafeUrl(next)) return response
 
     // Only the Location matters; close the body so it isn't left open.
-    try {
-      await response.body?.cancel()
-    } catch {}
+    await discardBody(response)
     if (new URL(next).origin !== new URL(url).origin) request = withoutCredentials(request)
     url = next
   }

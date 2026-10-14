@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { GitHubVerifier } from './github'
+import { fakeResponse } from '../test-support/fake-response'
 
 describe('GitHubVerifier', () => {
   // Constructed with a token so these exercise the JSON API path. Without one
@@ -12,7 +13,7 @@ describe('GitHubVerifier', () => {
   })
 
   it('returns verified when npub found in gist', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -21,14 +22,14 @@ describe('GitHubVerifier', () => {
           'nostr.md': { content: `Verifying that I control the following Nostr public key: ${npub}` },
         },
       }),
-    }))
+    })))
 
     const result = await verifier.verify('octocat', 'abc123', npub)
     expect(result.verified).toBe(true)
   })
 
   it('returns not verified when npub missing', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -37,7 +38,7 @@ describe('GitHubVerifier', () => {
           'nostr.md': { content: 'Some other content without the key' },
         },
       }),
-    }))
+    })))
 
     const result = await verifier.verify('octocat', 'abc123', npub)
     expect(result.verified).toBe(false)
@@ -45,7 +46,7 @@ describe('GitHubVerifier', () => {
   })
 
   it('returns not verified when owner does not match', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({
@@ -54,7 +55,7 @@ describe('GitHubVerifier', () => {
           'nostr.md': { content: npub },
         },
       }),
-    }))
+    })))
 
     const result = await verifier.verify('octocat', 'abc123', npub)
     expect(result.verified).toBe(false)
@@ -94,7 +95,7 @@ describe('GitHubVerifier without a usable API credential', () => {
       const match = Object.keys(responses).find((key) => String(url).includes(key))
       if (!match) throw new Error(`unexpected fetch: ${url}`)
       const { status, body = '' } = responses[match]
-      return { ok: status >= 200 && status < 300, status, text: async () => body, json: async () => ({}) }
+      return fakeResponse({ ok: status >= 200 && status < 300, status, text: async () => body, json: async () => ({}) })
     })
   }
 
@@ -136,9 +137,9 @@ describe('GitHubVerifier without a usable API credential', () => {
   it('falls back to raw when the API is rate limited rather than failing the user', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).includes('api.github.com')) {
-        return { ok: false, status: 403, json: async () => ({}), text: async () => '' }
+        return fakeResponse({ ok: false, status: 403, json: async () => ({}), text: async () => '' })
       }
-      return { ok: true, status: 200, text: async () => `key ${npub}`, json: async () => ({}) }
+      return fakeResponse({ ok: true, status: 200, text: async () => `key ${npub}`, json: async () => ({}) })
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -151,7 +152,7 @@ describe('GitHubVerifier without a usable API credential', () => {
   it('still prefers the API when it answers, so every file in the gist is searched', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).includes('api.github.com')) {
-        return {
+        return fakeResponse({
           ok: true,
           status: 200,
           json: async () => ({
@@ -159,7 +160,7 @@ describe('GitHubVerifier without a usable API credential', () => {
             files: { 'a.md': { content: 'nope' }, 'b.md': { content: `second file: ${npub}` } },
           }),
           text: async () => '',
-        }
+        })
       }
       throw new Error('should not have needed the raw fallback')
     })

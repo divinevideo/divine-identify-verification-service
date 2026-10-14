@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { DiscordVerifier, isDiscordMessageLink } from './discord'
+import { fakeResponse } from '../test-support/fake-response'
 
 describe('DiscordVerifier', () => {
   const npub = 'npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg'
@@ -37,7 +38,7 @@ describe('DiscordVerifier', () => {
     const verifier = new DiscordVerifier(botToken, channelId)
 
     it('returns verified when message contains npub and author matches', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -50,7 +51,7 @@ describe('DiscordVerifier', () => {
           },
           channel_id: channelId,
         }),
-      }))
+      })))
 
       const result = await verifier.verify('alice', '99887766554433221', npub)
       expect(result.verified).toBe(true)
@@ -68,7 +69,7 @@ describe('DiscordVerifier', () => {
       const guildId = '9999999999999999'
       const msgId = '99887766554433221'
 
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -81,7 +82,7 @@ describe('DiscordVerifier', () => {
           },
           channel_id: channelId,
         }),
-      }))
+      })))
 
       const result = await verifier.verify(
         'alice',
@@ -92,7 +93,7 @@ describe('DiscordVerifier', () => {
     })
 
     it('returns error when author does not match identity', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -105,7 +106,7 @@ describe('DiscordVerifier', () => {
           },
           channel_id: channelId,
         }),
-      }))
+      })))
 
       const result = await verifier.verify('alice', '99887766554433221', npub)
       expect(result.verified).toBe(false)
@@ -116,7 +117,7 @@ describe('DiscordVerifier', () => {
     })
 
     it('returns error when message does not contain npub', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -129,7 +130,7 @@ describe('DiscordVerifier', () => {
           },
           channel_id: channelId,
         }),
-      }))
+      })))
 
       const result = await verifier.verify('alice', '99887766554433221', npub)
       expect(result.verified).toBe(false)
@@ -184,7 +185,7 @@ describe('DiscordVerifier', () => {
       ['a capitalised handle for a migrated account', 'alice', 'Alice'],
       ['a lowercase handle for a legacy or bot account', 'Alice', 'alice'],
     ])('accepts %s', async (_scenario, username, identity) => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -197,7 +198,7 @@ describe('DiscordVerifier', () => {
           },
           channel_id: channelId,
         }),
-      }))
+      })))
 
       const result = await verifier.verify(identity, '99887766554433221', npub)
       expect(result.verified).toBe(true)
@@ -216,7 +217,7 @@ describe('DiscordVerifier', () => {
     function stubMessage() {
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValue({
+        vi.fn().mockResolvedValue(fakeResponse({
           ok: true,
           status: 200,
           json: async () => ({
@@ -225,7 +226,7 @@ describe('DiscordVerifier', () => {
             author: { id: '111222333', username: 'alice', global_name: null },
             channel_id: channelId,
           }),
-        }),
+        })),
       )
     }
 
@@ -278,7 +279,7 @@ describe('DiscordVerifier', () => {
       // Resolving the author is a lookup over every channel the bot can read,
       // so the reason travels as a code and the message names only the handle
       // the user typed themselves.
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -287,7 +288,7 @@ describe('DiscordVerifier', () => {
           author: { id: '1', username: 'someone-else', global_name: null },
           channel_id: channelId,
         }),
-      }))
+      })))
 
       const result = await verifier.verify('alice', messageId, npub)
 
@@ -297,27 +298,27 @@ describe('DiscordVerifier', () => {
     })
 
     it('codes an access refusal and other API refusals apart', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
         ok: false,
         status: 403,
         json: async () => ({ code: 50001 }),
-      }))
+      })))
       expect((await verifier.verify('alice', messageId, npub)).code).toBe(
         'discord_bot_no_access',
       )
 
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
         ok: false,
         status: 401,
         json: async () => ({}),
-      }))
+      })))
       const refused = await verifier.verify('alice', messageId, npub)
       expect(refused.code).toBe('discord_api_error')
       expect(refused.error).toContain('401')
     })
 
     it('throws when Discord does not answer, so the service reports it as temporary', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }))
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({ ok: false, status: 500, json: async () => ({}) })))
       await expect(verifier.verify('alice', messageId, npub)).rejects.toThrow('Discord answered 500')
 
       vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
@@ -360,7 +361,7 @@ describe('DiscordVerifier', () => {
     })
 
     it('codes an author mismatch and a genuinely missing npub apart', async () => {
-      const message = (content: string, username: string) => ({
+      const message = (content: string, username: string) => (fakeResponse({
         ok: true,
         status: 200,
         json: async () => ({
@@ -369,7 +370,7 @@ describe('DiscordVerifier', () => {
           author: { id: '1', username, global_name: null },
           channel_id: channelId,
         }),
-      })
+      }))
 
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(message(`key ${npub}`, 'bob')))
       expect((await verifier.verify('alice', messageId, npub)).code).toBe(
@@ -386,11 +387,11 @@ describe('DiscordVerifier', () => {
     // the bot cannot see. Only the body separates them, and that difference is
     // exactly what a stuck user needs to hear.
     it('separates an unreadable channel from an absent message on a 404', async () => {
-      const notFound = (body: unknown) => ({
+      const notFound = (body: unknown) => (fakeResponse({
         ok: false,
         status: 404,
         json: async () => body,
-      })
+      }))
 
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(notFound({ code: 10003 })))
       expect((await verifier.verify('alice', messageId, npub)).code).toBe(
@@ -406,13 +407,7 @@ describe('DiscordVerifier', () => {
     it('falls back to message-not-found when the 404 body cannot be read', async () => {
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValue({
-          ok: false,
-          status: 404,
-          json: async () => {
-            throw new Error('no body')
-          },
-        }),
+        vi.fn().mockResolvedValue(new Response('<html>Not Found</html>', { status: 404 })),
       )
 
       expect((await verifier.verify('alice', messageId, npub)).code).toBe(
@@ -426,7 +421,7 @@ describe('DiscordVerifier', () => {
     it('does not blame the user when the message text comes back empty', async () => {
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValue({
+        vi.fn().mockResolvedValue(fakeResponse({
           ok: true,
           status: 200,
           json: async () => ({
@@ -435,7 +430,7 @@ describe('DiscordVerifier', () => {
             author: { id: '1', username: 'alice', global_name: null },
             channel_id: channelId,
           }),
-        }),
+        })),
       )
 
       const result = await verifier.verify('alice', messageId, npub)
@@ -474,11 +469,11 @@ describe('DiscordVerifier invite proofs cannot bind an account', () => {
   })
 
   function stubInvite(guild: { name: string; description: string | null }) {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
       ok: true,
       status: 200,
       json: async () => ({ code: 'AbCdEf', expires_at: null, guild: { id: '1', ...guild } }),
-    }))
+    })))
   }
 
   it('refuses a username claimed against a server the claimant merely named', async () => {
