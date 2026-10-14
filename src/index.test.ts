@@ -49,6 +49,12 @@ describe('verifier health', () => {
       warn.mockRestore()
     }
   })
+
+  it('documents the mode it reports on the page', async () => {
+    const response = await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)
+    const html = await response.text()
+    expect(html).toContain('<code>signin_confirmation</code>')
+  })
 })
 
 describe('verifier browser-signer login', () => {

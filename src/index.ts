@@ -932,7 +932,7 @@ Content-Type: application/json
       </div>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/health</code></h3>
-        <p>Health check. Returns <code>{"status":"ok"}</code>.</p>
+        <p>Health check. Returns <code>{"status":"ok", ...}</code>, including <code>signin_confirmation</code>: <code>"optional"</code> or <code>"required"</code>, the sign-in confirmation mode in effect.</p>
       </div>
     </section>
 
