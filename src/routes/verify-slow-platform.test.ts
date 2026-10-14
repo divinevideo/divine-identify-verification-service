@@ -1,5 +1,5 @@
-// ABOUTME: A platform that takes a request and then goes quiet, before its answer starts or partway
-// ABOUTME: through it, is "couldn't check right now" once the time limit passes, not a rejection.
+// ABOUTME: A platform that goes quiet on a request (before its answer starts or partway through it), or
+// ABOUTME: answers so slowly that a whole check runs out of time, is "couldn't check right now", not a rejection.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import worker from '../index'
 import type { Bindings } from '../types'

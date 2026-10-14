@@ -1,5 +1,5 @@
-// ABOUTME: The helpers every platform check shares: a time limit on each request, a cap on how
-// ABOUTME: much of an answer is read, and closing an answer nobody will read.
+// ABOUTME: The helpers every platform check shares: a time limit on each request and on the whole
+// ABOUTME: check, a cap on how much of an answer is read, and closing an answer nobody will read.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   discardBody,
