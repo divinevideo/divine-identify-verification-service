@@ -290,11 +290,13 @@ describe('Bluesky sign-in discovery', () => {
   })
 
   // A server that answers 200 with a body that isn't a JSON object (here
-  // `null`) has given no usable answer, the same as one that answers `{}`.
+  // `null`) has given no usable answer, the same as one that answers `{}`: a
+  // "no", not an outage.
   it.each([
     ['the PDS metadata', `${PDS}/.well-known/oauth-protected-resource`],
     ['the authorization server metadata', `${ISSUER}/.well-known/oauth-authorization-server`],
-  ])('answers the usual 400 when %s is a JSON null', async (_label, nullUrl) => {
+  ])('answers the usual 400 when %s is a JSON null, without logging an outage', async (_label, nullUrl) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const answers = discovery()
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
       String(input) === nullUrl ? json(null) : answers(input)))
@@ -304,6 +306,7 @@ describe('Bluesky sign-in discovery', () => {
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'Could not discover Bluesky authorization server for this handle' })
     expect([...cache.store.keys()]).toEqual([])
+    expect(warn).not.toHaveBeenCalled()
   })
 
   it('refuses the sign-in the way it does a response without a request_uri when the pushed authorization response is a JSON null', async () => {
