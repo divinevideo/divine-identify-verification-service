@@ -177,6 +177,28 @@ describe('an answer far bigger than any real one', () => {
     expect(body.error).not.toMatch(/first 1 MB/)
   })
 
+  it('bluesky: a handle lookup answer past the cap is not read to the end, and is "couldn\'t check right now"', async () => {
+    const chunk = new Uint8Array(64 * 1024).fill(97)
+    const source = { pulled: 0, closed: false }
+    stubFetch((url) => (url.includes('com.atproto.identity.resolveHandle')
+      ? new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (source.pulled >= 8 * MAX_RESPONSE_BYTES) return controller.close()
+          controller.enqueue(chunk)
+          source.pulled += chunk.length
+        },
+        cancel() { source.closed = true },
+      }), { status: 200 })
+      : new Response(null, { status: 404 })))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const body = await check(createEnv(), 'bluesky', 'synthetic.bsky.social', 'abc123rkey')
+
+    expect(body.code).toBe('temporarily_unavailable')
+    expect(source.closed).toBe(true)
+    expect(source.pulled).toBeLessThan(2 * MAX_RESPONSE_BYTES)
+  })
+
   it('github: an npub inside the cap is still found in a large file', async () => {
     stubFetch(() => new Response(`${hexToNpub(PUBKEY)}\n${'a'.repeat(MAX_RESPONSE_BYTES / 2)}`, { status: 200 }))
 
