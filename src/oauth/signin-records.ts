@@ -39,10 +39,14 @@ async function tidyEarlierBlueskySignIn(env: Bindings, pubkey: string, did: stri
   }
 }
 
+// After a handle change, an unconfirmed sign-in replaces the confirmed DID
+// record too, so the handle and DID records stay a pair that unlinks together.
+const sameHandle = (a: string | undefined, b: string | undefined) => (a ?? '').toLowerCase() === (b ?? '').toLowerCase()
+
 /**
  * Saves a sign-in record. With a confirmation it is a confirmed record; without
  * one (an app that can't confirm, before the switch) it never replaces a
- * confirmed record for the same account.
+ * confirmed record for the same account and handle.
  */
 export async function saveSignIn(env: Bindings, pubkey: string, account: SignedInAccount, confirmation: Confirmation | null): Promise<void> {
   if (account.platform === 'bluesky' && account.account_id && account.handle) {
@@ -54,7 +58,7 @@ export async function saveSignIn(env: Bindings, pubkey: string, account: SignedI
       // Best effort: KV reads are eventually consistent, so a confirmed record
       // saved moments ago in another location may not be seen yet.
       const existing = await getOAuthVerification(env.CACHE_KV, account.platform, identity, pubkey)
-      if (existing?.confirmed === true && existing.account_id === account.account_id) continue
+      if (existing?.confirmed === true && existing.account_id === account.account_id && sameHandle(existing.handle, account.handle)) continue
     }
     await storeOAuthVerification(env.CACHE_KV, {
       platform: account.platform,

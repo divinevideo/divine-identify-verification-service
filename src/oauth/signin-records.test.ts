@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { Bindings } from '../types'
-import { oauthVerificationKey } from './state'
+import { oauthVerificationKey, deleteOAuthVerification } from './state'
 import { saveSignIn, getCountedSignIn } from './signin-records'
 
 const PUBKEY = 'ab'.repeat(32)
@@ -87,6 +87,17 @@ describe('saving a sign-in', () => {
     await saveSignIn(env, PUBKEY, bluesky, null)
     await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
     expect(read(store, 'bluesky', HANDLE).confirmed).toBe(true)
+  })
+
+  it('replaces the confirmed DID record when an unconfirmed sign-in comes back with a new handle, so unlinking the new handle removes both', async () => {
+    const { env, store } = createEnv({ SIGNIN_CONFIRMATION: 'optional' })
+    await saveSignIn(env, PUBKEY, { ...bluesky, identity: 'old.bsky.social', handle: 'old.bsky.social' }, CONFIRMATION)
+    await saveSignIn(env, PUBKEY, bluesky, null)
+    expect(read(store, 'bluesky', DID)).toMatchObject({ handle: HANDLE })
+    expect(read(store, 'bluesky', DID).confirmed).toBeUndefined()
+    await deleteOAuthVerification(env.CACHE_KV, 'bluesky', HANDLE, PUBKEY)
+    expect(store.has(oauthVerificationKey('bluesky', DID, PUBKEY))).toBe(false)
+    expect(store.has(oauthVerificationKey('bluesky', HANDLE, PUBKEY))).toBe(false)
   })
 
   it('removes the record left under the account\'s previous handle', async () => {
