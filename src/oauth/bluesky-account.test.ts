@@ -288,7 +288,7 @@ describe('Bluesky sign-in discovery', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
       String(input) === lookupUrl ? json({ error: 'not found' }, 404) : answers(input)))
     const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', undefined)
     expect(response.status).toBe(400)
     expect(warn).not.toHaveBeenCalled()
   })
@@ -306,7 +306,7 @@ describe('Bluesky sign-in discovery', () => {
       String(input) === nullUrl ? json(null) : answers(input)))
     const cache = kv()
     const env = { CACHE_KV: cache, OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', undefined)
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'Could not discover Bluesky authorization server for this handle' })
     expect([...cache.store.keys()]).toEqual([])
@@ -318,7 +318,7 @@ describe('Bluesky sign-in discovery', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
       String(input) === `${ISSUER}/oauth/par` ? json(null, 201) : answers(input)))
     const env = { CACHE_KV: kv(), OAUTH_REDIRECT_BASE: 'https://verifier.divine.video' } as never
-    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', BINDING_HASH)
+    const response = await startBlueskyOAuth(env, PUBKEY, HANDLE, 'https://verifier.divine.video/', undefined)
     expect(response.status).toBe(502)
     expect(await response.json()).toEqual({ error: 'Missing request_uri from Bluesky authorization server' })
   })
