@@ -21,8 +21,8 @@ const REFUSALS = {
   not_found: { status: 404, code: 'signin_not_found', error: 'This sign-in couldn\'t be confirmed. Sign in again.' },
   used: { status: 409, code: 'signin_used', error: 'This sign-in was already used. Sign in again.' },
   wrong_account: { status: 401, code: 'signin_wrong_account', error: 'Sign in with the Divine account that started this sign-in.' },
-  no_start_check: { status: 401, code: 'signin_not_yours', error: 'This sign-in was started somewhere else, so it wasn\'t linked.' },
-  not_yours: { status: 401, code: 'signin_not_yours', error: 'This sign-in was started somewhere else, so it wasn\'t linked.' },
+  no_start_check: { status: 401, code: 'signin_not_yours', error: 'This sign-in was started somewhere else.' },
+  not_yours: { status: 401, code: 'signin_not_yours', error: 'This sign-in was started somewhere else.' },
   claim_mismatch: { status: 401, code: 'signin_claim_mismatch', error: 'This confirmation doesn\'t match the sign-in. Sign in again.' },
   invalid_event: { status: 400, code: 'invalid_event', error: 'The confirmation must be a signed linked-accounts list (kind 10011).' },
 } as const

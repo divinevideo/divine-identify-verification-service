@@ -630,7 +630,7 @@ describe('POST /auth/confirm', () => {
     const env = baseEnv()
     const s = await startedAndFinished('twitter', env)
     const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
-    expect(await confirm(env, { code: s.code, start_secret: 'T'.repeat(43), event })).toMatchObject({ status: 401, json: { code: 'signin_not_yours' } })
+    expect(await confirm(env, { code: s.code, start_secret: 'T'.repeat(43), event })).toMatchObject({ status: 401, json: { code: 'signin_not_yours', error: 'This sign-in was started somewhere else.' } })
     expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
   })
 
@@ -711,7 +711,7 @@ describe('POST /auth/confirm', () => {
     const binding = await confirmBindingFor('C'.repeat(43), '')
     const event = await signedList(secretKey, [['i', 'twitter:jack', 'oauth', binding]])
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-    expect(await confirm(env, { code: 'C'.repeat(43), start_secret: SECRET, event })).toMatchObject({ status: 401, json: { code: 'signin_not_yours' } })
+    expect(await confirm(env, { code: 'C'.repeat(43), start_secret: SECRET, event })).toMatchObject({ status: 401, json: { code: 'signin_not_yours', error: 'This sign-in was started somewhere else.' } })
     expect(info.mock.calls).toEqual([['twitter sign-in confirmation refused: no_start_check']])
   })
 

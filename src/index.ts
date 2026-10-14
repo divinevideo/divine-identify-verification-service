@@ -2208,7 +2208,7 @@ Content-Type: application/json
       signin_not_found: 'This sign-in couldn\\'t be confirmed. Sign in again.',
       signin_used: 'This sign-in was already used. Sign in again.',
       signin_wrong_account: 'Sign in with the Divine account that started this sign-in.',
-      signin_not_yours: 'This sign-in was started somewhere else, so it wasn\\'t linked.',
+      signin_not_yours: 'This sign-in was started somewhere else.',
       signin_claim_mismatch: 'This confirmation doesn\\'t match the sign-in. Sign in again.',
     };
     // The sign-in and its signed event are kept, so pressing Publish again
@@ -2280,7 +2280,7 @@ Content-Type: application/json
 
     // The verifier's one-time code: 32 random bytes, base64url without padding.
     const SIGN_IN_CODE_FORMAT = /^[A-Za-z0-9_-]{43}$/;
-    const NOT_STARTED_HERE = 'This sign-in wasn\\'t started on this page, so it wasn\\'t linked. If someone sent you a sign-in link, don\\'t continue.';
+    const NOT_STARTED_HERE = 'This sign-in wasn\\'t started on this page. If someone sent you a sign-in link, don\\'t continue.';
     // Set when this page load carried a sign-in return, so start-up doesn't
     // also pick up a waiting sign-in from before.
     let signInReturnHandled = false;

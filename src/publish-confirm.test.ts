@@ -195,7 +195,7 @@ describe('publishing a link that is waiting for confirmation', () => {
   it.each([
     [409, 'signin_used', 'This sign-in was already used. Sign in again.'],
     [401, 'signin_wrong_account', 'Sign in with the Divine account that started this sign-in.'],
-    [401, 'signin_not_yours', 'This sign-in was started somewhere else, so it wasn\'t linked.'],
+    [401, 'signin_not_yours', 'This sign-in was started somewhere else.'],
     [401, 'signin_claim_mismatch', 'This confirmation doesn\'t match the sign-in. Sign in again.'],
     [400, 'invalid_event', NOT_CONFIRMED],
   ])('says why when the verifier answers %s %s, publishes nothing, and forgets the sign-in', async (status, code, message) => {
