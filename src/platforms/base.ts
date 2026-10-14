@@ -28,6 +28,21 @@ export function isUnanswered(status: number): boolean {
  */
 export const PLATFORM_REQUEST_TIMEOUT_MS = 5000
 
+/**
+ * How long one claim's whole check may take. The limit on one request doesn't
+ * bound a check: Bluesky and Mastodon ask up to four things in a row, so a
+ * platform that answers each just inside its limit could hold a claim, and the
+ * batch it is in, for four times as long. Claims in a batch are checked side by
+ * side, so this is also the longest a batch waits on its slowest claim.
+ *
+ * Divine's app and website stop waiting after 10 seconds and then keep no answer
+ * at all, for any claim in the call (divine-mobile `verifier_client.dart`,
+ * divine-web `src/config/api.ts`). So this stays under that, leaving about 2
+ * seconds for the storage reads and writes around a check and for the
+ * connection. App builds already installed keep that 10 seconds.
+ */
+export const PLATFORM_CHECK_TIME_BUDGET_MS = 8_000
+
 /** The most of one answer a check reads. A real answer is far smaller; this bounds what a platform can make us hold. */
 export const MAX_RESPONSE_BYTES = 1024 * 1024
 
@@ -63,6 +78,24 @@ export function throwIfUnanswered(response: Response, label: string): void {
   if (isUnanswered(response.status)) {
     void discardBody(response)
     throw new PlatformUnavailableError(`${label} answered ${response.status}`)
+  }
+}
+
+/**
+ * Waits for `work` for at most `ms`. Past that it gives up with a
+ * PlatformUnavailableError, so the caller reports "couldn't check right now"
+ * instead of waiting on. The work isn't cancelled; each request in it still
+ * stops at its own limit.
+ */
+export async function withinTimeBudget<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new PlatformUnavailableError(`${label} didn't finish within ${ms / 1000} seconds`)), ms)
+  })
+  try {
+    return await Promise.race([work, expired])
+  } finally {
+    clearTimeout(timer)
   }
 }
 

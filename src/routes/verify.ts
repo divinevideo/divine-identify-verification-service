@@ -5,7 +5,7 @@ import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { getVerifier } from '../platforms/registry'
-import { PlatformUnavailableError } from '../platforms/base'
+import { PLATFORM_CHECK_TIME_BUDGET_MS, PlatformUnavailableError, withinTimeBudget } from '../platforms/base'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import { getOAuthVerification } from '../oauth/state'
 import { signInAccountStillMatches } from '../oauth/signin-account'
@@ -149,7 +149,11 @@ async function verifySingleClaim(
   // Perform verification
   const verifier = getVerifier(normalizedClaim.platform, env.GITHUB_TOKEN, env.YOUTUBE_API_KEY, env.DISCORD_BOT_TOKEN, env.DISCORD_VERIFY_CHANNEL_ID)
   try {
-    const result = await verifier.verify(tidy.identity, tidy.proof, npub)
+    const result = await withinTimeBudget(
+      verifier.verify(tidy.identity, tidy.proof, npub),
+      PLATFORM_CHECK_TIME_BUDGET_MS,
+      verifier.label,
+    )
 
     // Cache the result
     const cacheResult: CachedResult = {
