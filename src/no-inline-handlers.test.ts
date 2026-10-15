@@ -11,7 +11,13 @@ const API = 'https://verifier.divine.video'
 const PUBKEY = 'ab'.repeat(32)
 const RESULT: VerifyResult = { platform: 'github', identity: 'octocat', verified: true, checked_at: 1_700_000_000, cached: false }
 
-const INLINE_HANDLER = /<[a-z][^>]*\s+on[a-z]+\s*=/i
+// Every start tag, treating a '>' inside a quoted attribute value as part of it.
+const START_TAG = /<[a-z](?:"[^"]*"|'[^']*'|[^>"'])*>/gi
+
+// True when a start tag carries an on* attribute, whatever its quoting.
+function hasInlineHandler(markup: string): boolean {
+  return (markup.match(START_TAG) ?? []).some(tag => /\son[a-z]+\s*=/i.test(tag.replace(/"[^"]*"|'[^']*'/g, '""')))
+}
 const JAVASCRIPT_URL = /(?:href|src|action|formaction|xlink:href)\s*=\s*["']?\s*javascript:/i
 
 // The page with its <script> bodies removed, so only markup is checked.
@@ -30,13 +36,13 @@ function verificationPage(): string {
 describe('pages carry no inline handlers', () => {
   it('the main page has no on* attribute and no javascript: URL in its markup', async () => {
     const markup = markupOnly(await mainPage())
-    expect(markup).not.toMatch(INLINE_HANDLER)
+    expect(hasInlineHandler(markup)).toBe(false)
     expect(markup).not.toMatch(JAVASCRIPT_URL)
   })
 
   it('the verification-link page has no on* attribute and no javascript: URL in its markup', () => {
     const markup = markupOnly(verificationPage())
-    expect(markup).not.toMatch(INLINE_HANDLER)
+    expect(hasInlineHandler(markup)).toBe(false)
     expect(markup).not.toMatch(JAVASCRIPT_URL)
   })
 
@@ -45,6 +51,11 @@ describe('pages carry no inline handlers', () => {
       expect(html).not.toMatch(/\son[a-z]+\s*=\s*["'\\]/i)
       expect(html).not.toMatch(/javascript:/i)
     }
+  })
+
+  it('the checker sees an on* attribute after a quoted ">"', () => {
+    expect(hasInlineHandler('<div data-x=">" onclick="go()">')).toBe(true)
+    expect(hasInlineHandler('<div data-x=">" class="a">')).toBe(false)
   })
 
   it('the main page wires its four buttons from script', async () => {
@@ -56,7 +67,19 @@ describe('pages carry no inline handlers', () => {
       ['lookup-btn', 'doLookup'],
     ]) {
       expect(html).toContain(`id="${id}"`)
-      expect(html).toContain(`document.getElementById('${id}').addEventListener('click', ${fn});`)
+      const wiring = new RegExp(`getElementById\\(\\s*['"]${id}['"]\\s*\\)\\s*\\.addEventListener\\(\\s*['"]click['"]\\s*,\\s*${fn}\\s*\\)`)
+      expect(html).toMatch(wiring)
+    }
+  })
+
+  it('the buttons are wired before start-up code runs, so a start-up error cannot leave them dead', async () => {
+    const html = await mainPage()
+    const startUp = html.indexOf('// Start-up: a returning sign-in is handled first')
+    expect(startUp).toBeGreaterThan(-1)
+    for (const id of ['load-links-btn', 'remove-cancel-btn', 'remove-confirm-btn', 'lookup-btn']) {
+      const wired = html.indexOf(`getElementById('${id}').addEventListener(`)
+      expect(wired).toBeGreaterThan(-1)
+      expect(wired).toBeLessThan(startUp)
     }
   })
 })

@@ -2979,6 +2979,15 @@ Content-Type: application/json
     document.getElementById('bunker-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') connectBunkerSigner();
     });
+
+    // Buttons wired here rather than with inline onclick attributes, which a
+    // script-nonce Content-Security-Policy would block. They come before the
+    // start-up code below so an error there cannot leave them dead.
+    document.getElementById('load-links-btn').addEventListener('click', loadLinkedVerifications);
+    document.getElementById('remove-cancel-btn').addEventListener('click', cancelRemove);
+    document.getElementById('remove-confirm-btn').addEventListener('click', executeRemoveVerification);
+    document.getElementById('lookup-btn').addEventListener('click', doLookup);
+
     // Start-up: a returning sign-in is handled first, before any signer is
     // restored, so its one-time code leaves the address straight away.
     updateOAuthInputs();
@@ -3011,13 +3020,6 @@ Content-Type: application/json
     document.getElementById('lookup-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') doLookup();
     });
-
-    // Buttons wired here rather than with inline onclick attributes, which a
-    // script-nonce Content-Security-Policy would block.
-    document.getElementById('load-links-btn').addEventListener('click', loadLinkedVerifications);
-    document.getElementById('remove-cancel-btn').addEventListener('click', cancelRemove);
-    document.getElementById('remove-confirm-btn').addEventListener('click', executeRemoveVerification);
-    document.getElementById('lookup-btn').addEventListener('click', doLookup);
 
     // When loaded inside a Divine-hosted iframe, the postMessage shim above
     // installs window.nostr unconditionally, so trigger the standard signer
