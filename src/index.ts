@@ -718,7 +718,7 @@ app.get('/', (c) => {
     <section id="manage" style="box-shadow: 6px 6px 0 var(--violet);">
       <h2>Manage verified links</h2>
       <p>View and remove your linked identity verifications. You need to be signed in (Verify Here, Step 1).</p>
-      <button id="load-links-btn" class="verify-btn verify-btn-primary" type="button" onclick="loadLinkedVerifications()">Load my links</button>
+      <button id="load-links-btn" class="verify-btn verify-btn-primary" type="button">Load my links</button>
       <div id="manage-links-container" style="margin-top:1rem;"></div>
       <div id="manage-status" class="status-row"></div>
       <div id="remove-confirm-dialog" style="display:none;margin-top:1rem;padding:16px;background:rgba(255,127,175,0.18);border:2px solid var(--dark);border-radius:16px;">
@@ -726,8 +726,8 @@ app.get('/', (c) => {
         <p>This unlinks <strong id="remove-confirm-claim"></strong> from your Nostr profile.</p>
         <p class="field-help">Relay updates may take a short moment.</p>
         <div style="display:flex;gap:10px;margin-top:0.75rem;flex-wrap:wrap;">
-          <button class="verify-btn" type="button" onclick="cancelRemove()">Cancel</button>
-          <button class="verify-btn" type="button" style="background:var(--pink);color:var(--dark);" onclick="executeRemoveVerification()">Remove verification</button>
+          <button id="remove-cancel-btn" class="verify-btn" type="button">Cancel</button>
+          <button id="remove-confirm-btn" class="verify-btn" type="button" style="background:var(--pink);color:var(--dark);">Remove verification</button>
         </div>
       </div>
     </section>
@@ -739,7 +739,7 @@ app.get('/', (c) => {
 
       <div style="display:flex;gap:10px;margin-bottom:1rem;flex-wrap:wrap;">
         <input id="lookup-input" type="text" class="lookup-input" placeholder="example@divine.video or npub1...">
-        <button id="lookup-btn" class="lookup-btn" onclick="doLookup()">Check</button>
+        <button id="lookup-btn" class="lookup-btn">Check</button>
       </div>
       <div id="lookup-status" class="lookup-status"></div>
       <div id="lookup-results"></div>
@@ -3011,6 +3011,13 @@ Content-Type: application/json
     document.getElementById('lookup-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') doLookup();
     });
+
+    // Buttons wired here rather than with inline onclick attributes, which a
+    // script-nonce Content-Security-Policy would block.
+    document.getElementById('load-links-btn').addEventListener('click', loadLinkedVerifications);
+    document.getElementById('remove-cancel-btn').addEventListener('click', cancelRemove);
+    document.getElementById('remove-confirm-btn').addEventListener('click', executeRemoveVerification);
+    document.getElementById('lookup-btn').addEventListener('click', doLookup);
 
     // When loaded inside a Divine-hosted iframe, the postMessage shim above
     // installs window.nostr unconditionally, so trigger the standard signer
