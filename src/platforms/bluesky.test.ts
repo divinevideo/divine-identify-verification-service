@@ -186,7 +186,7 @@ describe('BlueskyVerifier', () => {
   // and nothing throws (a throw is reported as "couldn't check right now").
   describe('an answer that is not shaped as documented', () => {
     function answerWith(body: unknown) {
-      return { ok: true, status: 200, json: async () => body }
+      return Response.json(body)
     }
 
     function proofPostResponse() {

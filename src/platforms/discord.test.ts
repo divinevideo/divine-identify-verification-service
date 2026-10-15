@@ -456,7 +456,7 @@ describe('DiscordVerifier', () => {
       ]
 
       it.each(answers)('rejects the proof as not posted by them when the answer %s', async (_name, answer) => {
-        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => answer }))
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(answer)))
 
         const result = await verifier.verify('alice', messageId, npub)
 
@@ -466,11 +466,9 @@ describe('DiscordVerifier', () => {
       it('does not blame the user when the message text is not text', async () => {
         vi.stubGlobal(
           'fetch',
-          vi.fn().mockResolvedValue({
-            ok: true,
-            status: 200,
-            json: async () => ({ id: messageId, content: 12345, author: { id: '1', username: 'alice' } }),
-          }),
+          vi.fn().mockResolvedValue(Response.json({
+            id: messageId, content: 12345, author: { id: '1', username: 'alice' },
+          })),
         )
 
         const result = await verifier.verify('alice', messageId, npub)
