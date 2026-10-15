@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { schnorr } from '@noble/curves/secp256k1.js'
@@ -122,6 +122,19 @@ describe('checking the committed build', () => {
     } finally {
       await writeFile(file, original)
     }
+  })
+})
+
+describe('files the worker serves as they are', () => {
+  it('are only the ones listed here', async () => {
+    const dir = join(ROOT, 'public')
+    const entries = await readdir(dir, { recursive: true, withFileTypes: true })
+    const files = entries
+      .filter(entry => entry.isFile())
+      .map(entry => relative(dir, join(entry.parentPath, entry.name)).split(sep).join('/'))
+      .sort()
+    expect(files, 'A file in public/ is served ahead of the worker\'s routes: public/index.html would replace the landing page. Add one only on purpose, then add it here.')
+      .toEqual(['_headers', 'vendor/nostr-tools.mjs'])
   })
 })
 

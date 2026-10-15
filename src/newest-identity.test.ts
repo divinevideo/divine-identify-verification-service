@@ -579,7 +579,10 @@ describe('loading nostr-tools', () => {
   // import() here, so the loader's import() goes to a stand-in that records
   // each address and fails until `available` is set.
   async function loadLoader() {
-    const source = scriptBetween(await pageHtml(), 'async function loadNostrTools()', 'function extractHexFromText(text)')
+    const html = await pageHtml()
+    const source = scriptBetween(html, 'async function loadNostrTools()', 'function extractHexFromText(text)')
+    // The loader's state, as the page declares it.
+    const declarations = scriptBetween(html, 'let nostrToolsPromise = null;', 'let nostrConnectAbortController')
     expect(source.match(/\bimport\(/g)).toHaveLength(1)
     const addresses: string[] = []
     const state = { available: false }
@@ -589,7 +592,7 @@ describe('loading nostr-tools', () => {
       return { address }
     }
     const loadNostrTools = new Function('importModule', 'NOSTR_TOOLS_URL',
-      `let nostrToolsPromise = null;\nlet nostrToolsFailures = 0;\n${source.replace(/\bimport\(/g, 'importModule(')}\nreturn loadNostrTools;`)(importModule, '/vendor/nostr-tools.mjs?v=1')
+      `${declarations}\n${source.replace(/\bimport\(/g, 'importModule(')}\nreturn loadNostrTools;`)(importModule, '/vendor/nostr-tools.mjs?v=1')
     return { loadNostrTools: loadNostrTools as () => Promise<{ address: string }>, state, addresses }
   }
 
