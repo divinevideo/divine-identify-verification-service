@@ -180,4 +180,105 @@ describe('BlueskyVerifier', () => {
     expect(identityLinkUrl.startsWith('https://public.api.bsky.app/')).toBe(false)
     expect(proofPostUrl.startsWith('https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread')).toBe(true)
   })
+
+  // Another server's answers are not trusted to be shaped as documented. One that
+  // isn't means "no identity-link record found": the proof post is still tried,
+  // and nothing throws (a throw is reported as "couldn't check right now").
+  describe('an answer that is not shaped as documented', () => {
+    function answerWith(body: unknown) {
+      return Response.json(body)
+    }
+
+    function proofPostResponse() {
+      return answerWith({
+        thread: { post: { author: { handle: 'alice.bsky.social', did }, record: { text: `Verifying my nostr key: ${npub}` } } },
+      })
+    }
+
+    const recordLists: Array<[string, unknown]> = [
+      ['a record list that is an object', { records: {} }],
+      ['a record list with an empty entry', { records: [null] }],
+      ['an answer that is null', null],
+    ]
+
+    it.each(recordLists)('still tries the proof post after %s', async (_name, body) => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(didDocumentResponse())
+        .mockResolvedValueOnce(answerWith(body))
+        .mockResolvedValueOnce(proofPostResponse())
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await verifier.verify(did, 'abc123rkey', npub)
+
+      expect(result).toMatchObject({ verified: true, method: 'proof_post' })
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    })
+
+    it('still checks the records that are shaped right beside one that is not', async () => {
+      vi.stubGlobal('fetch', vi.fn()
+        .mockResolvedValueOnce(didDocumentResponse())
+        .mockResolvedValueOnce(answerWith({
+          records: [null, 5, 'x', {
+            uri: `at://${did}/video.divine.identity.link/nostr-npub`,
+            value: {
+              $type: 'video.divine.identity.link',
+              version: 1,
+              target: { protocol: 'nostr', id: npub },
+            },
+          }],
+        })))
+
+      const result = await verifier.verify(did, '', npub)
+
+      expect(result).toMatchObject({ verified: true, method: 'identity_link' })
+    })
+
+    const didDocuments: Array<[string, unknown]> = [
+      ['a service list that is an object', { service: {} }],
+      ['a service list that is text', { service: 'x' }],
+      ['a service list with an empty entry', { service: [null] }],
+    ]
+
+    it.each(didDocuments)('still tries the proof post after %s', async (_name, body) => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(answerWith(body))
+        .mockResolvedValueOnce(proofPostResponse())
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await verifier.verify(did, 'abc123rkey', npub)
+
+      expect(result).toMatchObject({ verified: true, method: 'proof_post' })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('still tries the proof post after a handle lookup that answers with something other than an account', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(answerWith({ did: 5 }))
+        .mockResolvedValueOnce(proofPostResponse())
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await verifier.verify('alice.bsky.social', 'abc123rkey', npub)
+
+      expect(result).toMatchObject({ verified: true, method: 'proof_post' })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    const posts: Array<[string, unknown, string]> = [
+      ['an answer that is null', null, 'author does not match'],
+      ['an author handle that is not text', { thread: { post: { author: { handle: 5 }, record: { text: npub } } } }, 'author does not match'],
+      ['post text that is not text', { thread: { post: { author: { handle: 'alice.bsky.social', did }, record: { text: 5 } } } }, 'npub not found'],
+    ]
+
+    it.each(posts)('rejects the proof post for %s', async (_name, body, reason) => {
+      vi.stubGlobal('fetch', vi.fn()
+        .mockResolvedValueOnce(didDocumentResponse())
+        .mockResolvedValueOnce(emptyIdentityLinksResponse())
+        .mockResolvedValueOnce(answerWith(body)))
+
+      const result = await verifier.verify(did, 'abc123rkey', npub)
+
+      expect(result.verified).toBe(false)
+      expect(result.error).toContain(reason)
+    })
+  })
 })

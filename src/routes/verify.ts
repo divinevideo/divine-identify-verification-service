@@ -29,6 +29,16 @@ function cleanValues(
   }
 }
 
+// Remembering an answer is a side effect of a check, not part of its answer: a
+// save that fails is logged and the person still gets the answer.
+async function rememberResult(env: Bindings, key: string, platform: string, entry: CachedResult): Promise<void> {
+  try {
+    await putCached(env.CACHE_KV, key, entry)
+  } catch (err) {
+    console.error(`Saving the ${platform} result failed:`, err)
+  }
+}
+
 async function verifySingleClaim(
   claim: VerifyClaim,
   env: Bindings,
@@ -148,39 +158,13 @@ async function verifySingleClaim(
 
   // Perform verification
   const verifier = getVerifier(normalizedClaim.platform, env.GITHUB_TOKEN, env.YOUTUBE_API_KEY, env.DISCORD_BOT_TOKEN, env.DISCORD_VERIFY_CHANNEL_ID)
+  let result: Awaited<ReturnType<typeof verifier.verify>>
   try {
-    const result = await withinTimeBudget(
+    result = await withinTimeBudget(
       verifier.verify(tidy.identity, tidy.proof, npub),
       PLATFORM_CHECK_TIME_BUDGET_MS,
       verifier.label,
     )
-
-    // Cache the result
-    const cacheResult: CachedResult = {
-      verified: result.verified,
-      error: result.error,
-      code: result.code,
-      method: result.method,
-      provenance: result.provenance,
-      // Only the platform's own values: tidied ones belong to this request, not the entry.
-      ...(result.verified ? cleanValues(result, {}) : {}),
-      checked_at: now,
-      type: result.verified ? 'verified' : 'failed',
-    }
-    await putCached(env.CACHE_KV, key, cacheResult)
-
-    return {
-      platform: normalizedClaim.platform,
-      identity: normalizedClaim.identity,
-      verified: result.verified,
-      error: result.error,
-      code: result.code,
-      method: result.method,
-      provenance: result.provenance,
-      ...(result.verified ? cleanValues(result, tidied) : {}),
-      checked_at: now,
-      cached: false,
-    }
   } catch (err) {
     // A throw means the check didn't complete. Usually the platform didn't
     // answer or couldn't be reached (PlatformUnavailableError); that isn't a
@@ -202,7 +186,7 @@ async function verifySingleClaim(
       checked_at: now,
       type: 'platform_error',
     }
-    await putCached(env.CACHE_KV, key, cacheResult)
+    await rememberResult(env, key, normalizedClaim.platform, cacheResult)
 
     return {
       platform: normalizedClaim.platform,
@@ -213,6 +197,34 @@ async function verifySingleClaim(
       checked_at: now,
       cached: false,
     }
+  }
+
+  // Remember the result. This is outside the try: a check that completed has
+  // its answer, and failing to save it must not turn that into "try again".
+  const cacheResult: CachedResult = {
+    verified: result.verified,
+    error: result.error,
+    code: result.code,
+    method: result.method,
+    provenance: result.provenance,
+    // Only the platform's own values: tidied ones belong to this request, not the entry.
+    ...(result.verified ? cleanValues(result, {}) : {}),
+    checked_at: now,
+    type: result.verified ? 'verified' : 'failed',
+  }
+  await rememberResult(env, key, normalizedClaim.platform, cacheResult)
+
+  return {
+    platform: normalizedClaim.platform,
+    identity: normalizedClaim.identity,
+    verified: result.verified,
+    error: result.error,
+    code: result.code,
+    method: result.method,
+    provenance: result.provenance,
+    ...(result.verified ? cleanValues(result, tidied) : {}),
+    checked_at: now,
+    cached: false,
   }
 }
 

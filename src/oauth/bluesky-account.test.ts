@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { handleBlueskyCallback, startBlueskyOAuth } from './bluesky'
 import { generateDPoPKeyPair } from './crypto'
+import * as atproto from '../atproto'
 
 // A Bluesky sign-in is recorded only for the account it started with, as the
 // AT Protocol OAuth spec requires: the token's `sub` must be that account, its
@@ -197,15 +198,24 @@ describe('Bluesky sign-in confirms the account it started with', () => {
     expect(warn).toHaveBeenCalledWith('Bluesky sign-in not confirmed: authorization_server')
   })
 
-  it('logs a failure while reading the account that isn\'t an outage as a lookup failure', async () => {
+  it('refuses a malformed handle list as a handle mismatch', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const answers = network(DID, [alice])
-    // A handle list that isn't a list makes reading the DID document throw.
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => String(input) === `https://plc.directory/${DID}`
       ? json({ alsoKnownAs: 5, service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] })
       : answers(input))
-    const { result } = await signInReturning(DID, [alice], fetchMock as typeof fetch)
+    const { result, recorded } = await signInReturning(DID, [alice], fetchMock as typeof fetch)
     expect(result).toMatchObject({ success: false, error: 'Bluesky account not confirmed' })
+    expect(recorded).toEqual([])
+    expect(warn).toHaveBeenCalledWith('Bluesky sign-in not confirmed: handle')
+  })
+
+  it('logs an unexpected account-reader bug as a lookup failure', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(atproto, 'getHandleFromDidDocument').mockImplementation(() => { throw new TypeError('synthetic account-reader bug') })
+    const { result, recorded } = await signInReturning(DID, [alice], network(DID, [alice]) as typeof fetch)
+    expect(result).toMatchObject({ success: false, error: 'Bluesky account not confirmed' })
+    expect(recorded).toEqual([])
     expect(warn).toHaveBeenCalledWith('Bluesky sign-in not confirmed: lookup')
   })
 })

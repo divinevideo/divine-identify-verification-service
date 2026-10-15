@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { isMalformedDid, resolveDidDocument, resolveHandle } from './atproto'
+import { getHandleFromDidDocument, getPdsEndpoint, isMalformedDid, resolveDidDocument, resolveHandle, type DidDocument } from './atproto'
 import { PlatformUnavailableError } from './platforms/base'
 
 describe('isMalformedDid', () => {
@@ -165,5 +165,82 @@ describe('resolveDidDocument for a did:web host that refuses or answers oddly', 
     fetchMock.mockResolvedValueOnce(new Response('<html>home</html>', { status: 200, headers: { 'Content-Type': 'text/html' } }))
 
     expect(await resolveDidDocument('did:web:example.com')).toBeNull()
+  })
+})
+
+// Another server's answers are not trusted to be shaped as documented: one that
+// isn't is "no usable answer" (null), the same as an account that isn't there. It
+// must never throw, which would be reported as "couldn't check right now".
+describe('answers that are not shaped as documented', () => {
+  describe('getPdsEndpoint', () => {
+    it('reads the endpoint of the PDS service and drops a trailing slash', () => {
+      const doc = { service: [{ id: '#atproto_pds', serviceEndpoint: 'https://pds.example.com/' }] }
+
+      expect(getPdsEndpoint(doc)).toBe('https://pds.example.com')
+    })
+
+    const documents: Array<[string, unknown]> = [
+      ['a service list that is an object', { service: {} }],
+      ['a service list that is text', { service: 'x' }],
+      ['a service list with an empty entry', { service: [null] }],
+      ['an endpoint that is not text', { service: [{ id: '#atproto_pds', serviceEndpoint: 5 }] }],
+      ['an endpoint that is an object', { service: [{ id: '#atproto_pds', serviceEndpoint: { url: 'https://pds.example.com' } }] }],
+      // DID Core allows a list of endpoints. A one-item list reads as a valid URL
+      // when turned into text, so only the type check keeps it from throwing.
+      ['an endpoint that is a list', { service: [{ id: '#atproto_pds', serviceEndpoint: ['https://pds.example.com'] }] }],
+    ]
+
+    it.each(documents)('finds no endpoint in a document with %s', (_name, doc) => {
+      expect(getPdsEndpoint(doc as DidDocument)).toBeNull()
+    })
+
+    it('skips an empty entry to reach the PDS service listed after it', () => {
+      const doc = { service: [null, { id: '#atproto_pds', serviceEndpoint: 'https://pds.example.com' }] }
+
+      expect(getPdsEndpoint(doc as unknown as DidDocument)).toBe('https://pds.example.com')
+    })
+  })
+
+  describe('resolveHandle', () => {
+    const fetchMock = vi.fn()
+
+    beforeEach(() => {
+      fetchMock.mockReset()
+      vi.stubGlobal('fetch', fetchMock)
+    })
+
+    it('reads the account a handle belongs to', async () => {
+      fetchMock.mockResolvedValueOnce(Response.json({ did: 'did:plc:abc123' }))
+
+      expect(await resolveHandle('alice.bsky.social')).toBe('did:plc:abc123')
+    })
+
+    it.each([
+      ['an account that is not text', { did: 5 }],
+      ['an empty account', { did: '' }],
+      ['no account', {}],
+      ['an answer that is null', null],
+    ])('finds no account in %s', async (_name, body) => {
+      fetchMock.mockResolvedValueOnce(Response.json(body))
+
+      expect(await resolveHandle('alice.bsky.social')).toBeNull()
+    })
+  })
+})
+
+describe('getHandleFromDidDocument', () => {
+  it.each([
+    {},
+    { alsoKnownAs: null },
+    { alsoKnownAs: {} },
+    { alsoKnownAs: 'at://alice.example.com' },
+    { alsoKnownAs: [null, 5, {}, 'https://alice.example.com'] },
+  ])('finds no handle in malformed aliases %j', doc => {
+    expect(getHandleFromDidDocument(doc as unknown as DidDocument)).toBeNull()
+  })
+
+  it('skips malformed aliases and returns the first AT handle', () => {
+    const doc = { alsoKnownAs: [null, 5, 'https://alice.example.com', 'at://alice.example.com', 'at://other.example.com'] }
+    expect(getHandleFromDidDocument(doc as unknown as DidDocument)).toBe('alice.example.com')
   })
 })

@@ -67,28 +67,30 @@ export class BlueskyVerifier implements PlatformVerifier {
       return { verified: false, error: `Bluesky API error: ${response.status}` }
     }
 
+    // The fields read below may be absent or have the wrong type.
     const data = await readJson<{
       thread?: {
         post?: {
-          author?: { handle?: string; did?: string }
-          record?: { text?: string }
+          author?: { handle?: unknown; did?: unknown }
+          record?: { text?: unknown }
         }
       }
-    }>(response, this.label)
+    } | null>(response, this.label)
     if (data === undefined) {
       return { verified: false, error: 'Invalid JSON response from Bluesky' }
     }
 
     // Verify the post author matches the claimed identity
-    const authorHandle = data.thread?.post?.author?.handle?.toLowerCase()
-    const authorDid = data.thread?.post?.author?.did?.toLowerCase()
+    const author = data?.thread?.post?.author
+    const authorHandle = typeof author?.handle === 'string' ? author.handle.toLowerCase() : undefined
+    const authorDid = typeof author?.did === 'string' ? author.did.toLowerCase() : undefined
     const claimedIdentity = identity.toLowerCase()
     if (authorHandle !== claimedIdentity && authorDid !== claimedIdentity) {
       return { verified: false, error: 'Post author does not match claimed identity' }
     }
 
-    const text = data.thread?.post?.record?.text
-    if (text && text.includes(npub)) {
+    const text = data?.thread?.post?.record?.text
+    if (typeof text === 'string' && text.includes(npub)) {
       return {
         verified: true,
         method: 'proof_post',
@@ -128,12 +130,14 @@ export class BlueskyVerifier implements PlatformVerifier {
       return null
     }
 
-    const data = await readJson<{
-      records?: Array<{ uri?: string; value?: unknown; record?: unknown }>
-    }>(response, 'PDS')
+    // The account's server may return something other than a list of records.
+    const data = await readJson<{ records?: unknown } | null>(response, 'PDS')
     if (data === undefined) return null
 
-    for (const recordEntry of data.records || []) {
+    const entries: unknown[] = Array.isArray(data?.records) ? data.records : []
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object') continue
+      const recordEntry = entry as { uri?: unknown; value?: unknown; record?: unknown }
       const record = recordEntry.value ?? recordEntry.record
       const match = matchNostrIdentityLinkRecord(record, npub)
       if (!match.matched) continue

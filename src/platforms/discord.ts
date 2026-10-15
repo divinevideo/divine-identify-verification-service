@@ -1,14 +1,10 @@
 import { fetchFromPlatform, readJson, throwIfUnanswered, type PlatformVerifier, type VerdictCode } from './base'
 
+// The fields this check reads. The answer comes from outside, so any of them can
+// be missing or the wrong type, or the whole answer can be something else.
 interface DiscordMessageResponse {
-  id: string
-  content: string
-  author: {
-    id: string
-    username: string
-    global_name: string | null
-  }
-  channel_id: string
+  content?: unknown
+  author?: { username?: unknown } | null
 }
 
 type ProofType =
@@ -234,7 +230,7 @@ export class DiscordVerifier implements PlatformVerifier {
       }
     }
 
-    const data = await readJson<DiscordMessageResponse>(response, this.label)
+    const data = await readJson<DiscordMessageResponse | null>(response, this.label)
     if (data === undefined) {
       return {
         verified: false,
@@ -243,8 +239,10 @@ export class DiscordVerifier implements PlatformVerifier {
       }
     }
 
-    // Check that message author matches claimed identity
-    const authorName = data.author.username.toLowerCase()
+    // Check that message author matches claimed identity. A message that doesn't
+    // say who wrote it can't be shown to be theirs.
+    const username = data?.author?.username
+    const authorName = typeof username === 'string' ? username.toLowerCase() : null
     const claimedIdentity = identity.toLowerCase()
     if (authorName !== claimedIdentity) {
       return {
@@ -259,7 +257,8 @@ export class DiscordVerifier implements PlatformVerifier {
     // the REST API too. Reporting that as a missing npub blames the user for
     // our own misconfiguration, and sends them to re-post a message that was
     // already correct.
-    if ((data.content ?? '').trim() === '') {
+    const content = typeof data?.content === 'string' ? data.content : ''
+    if (content.trim() === '') {
       return {
         verified: false,
         code: 'discord_message_content_unavailable',
@@ -268,7 +267,7 @@ export class DiscordVerifier implements PlatformVerifier {
     }
 
     // Check that message content contains the npub
-    if (!data.content.includes(npub)) {
+    if (!content.includes(npub)) {
       return {
         verified: false,
         code: 'discord_npub_not_in_message',
