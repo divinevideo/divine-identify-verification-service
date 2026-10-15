@@ -33,6 +33,34 @@ function verificationPage(): string {
   return renderVerifyHtml(RESULT, 'github', 'octocat', 'abc123', PUBKEY, 'npub1test', `${API}/verify/github/octocat/abc123?pubkey=${PUBKEY}`, API)
 }
 
+const BUTTONS: Array<[string, string]> = [
+  ['load-links-btn', 'loadLinkedVerifications'],
+  ['remove-cancel-btn', 'cancelRemove'],
+  ['remove-confirm-btn', 'executeRemoveVerification'],
+  ['lookup-btn', 'doLookup'],
+]
+
+// Runs the page's real button-wiring lines against stand-in buttons, so a
+// commented-out, misplaced or mis-paired listener fails here, not on the live page.
+async function wireButtons() {
+  const html = await mainPage()
+  const start = html.indexOf('// Buttons wired here rather')
+  const end = html.indexOf('// Start-up: a returning sign-in is handled first', start)
+  expect(start).toBeGreaterThan(-1)
+  expect(end).toBeGreaterThan(start)
+  const listeners: Record<string, Array<[string, () => void]>> = {}
+  const calls: string[] = []
+  const document = {
+    getElementById: (id: string) => BUTTONS.some(([b]) => b === id)
+      ? { addEventListener: (type: string, fn: () => void) => { (listeners[id] ??= []).push([type, fn]) } }
+      : null,
+  }
+  const handlers = BUTTONS.map(([, fn]) => () => { calls.push(fn) })
+  new Function('document', ...BUTTONS.map(([, fn]) => fn), html.slice(start, end))(document, ...handlers)
+  const click = (id: string) => (listeners[id] ?? []).forEach(([type, fn]) => { if (type === 'click') fn() })
+  return { click, calls }
+}
+
 describe('pages carry no inline handlers', () => {
   it('the main page has no on* attribute and no javascript: URL in its markup', async () => {
     const markup = markupOnly(await mainPage())
@@ -58,18 +86,20 @@ describe('pages carry no inline handlers', () => {
     expect(hasInlineHandler('<div data-x=">" class="a">')).toBe(false)
   })
 
-  it('the main page wires its four buttons from script', async () => {
+  it('the main page has each of the four buttons, once', async () => {
     const html = await mainPage()
-    for (const [id, fn] of [
-      ['load-links-btn', 'loadLinkedVerifications'],
-      ['remove-cancel-btn', 'cancelRemove'],
-      ['remove-confirm-btn', 'executeRemoveVerification'],
-      ['lookup-btn', 'doLookup'],
-    ]) {
-      expect(html).toContain(`id="${id}"`)
-      const wiring = new RegExp(`getElementById\\(\\s*['"]${id}['"]\\s*\\)\\s*\\.addEventListener\\(\\s*['"]click['"]\\s*,\\s*${fn}\\s*\\)`)
-      expect(html).toMatch(wiring)
-    }
+    for (const [id] of BUTTONS) expect(html.split(`id="${id}"`).length - 1).toBe(1)
+  })
+
+  it('every wired button is type="button", so it can never submit a form', async () => {
+    const html = await mainPage()
+    for (const [id] of BUTTONS) expect(html).toMatch(new RegExp(`<button id="${id}"[^>]*type="button"|<button[^>]*type="button"[^>]*id="${id}"`))
+  })
+
+  it.each(BUTTONS)('clicking %s runs %s, and nothing else', async (id, fn) => {
+    const page = await wireButtons()
+    page.click(id)
+    expect(page.calls).toEqual([fn])
   })
 
   it('the buttons are wired before start-up code runs, so a start-up error cannot leave them dead', async () => {

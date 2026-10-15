@@ -739,7 +739,7 @@ app.get('/', (c) => {
 
       <div style="display:flex;gap:10px;margin-bottom:1rem;flex-wrap:wrap;">
         <input id="lookup-input" type="text" class="lookup-input" placeholder="example@divine.video or npub1...">
-        <button id="lookup-btn" class="lookup-btn">Check</button>
+        <button id="lookup-btn" class="lookup-btn" type="button">Check</button>
       </div>
       <div id="lookup-status" class="lookup-status"></div>
       <div id="lookup-results"></div>
