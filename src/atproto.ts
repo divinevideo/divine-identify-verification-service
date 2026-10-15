@@ -111,7 +111,8 @@ export function getPdsEndpoint(didDoc: DidDocument): string | null {
 }
 
 export function getHandleFromDidDocument(didDoc: DidDocument): string | null {
-  const atHandle = didDoc.alsoKnownAs?.find(a => a.startsWith('at://'))
+  const aliases: unknown[] = Array.isArray(didDoc.alsoKnownAs) ? didDoc.alsoKnownAs : []
+  const atHandle = aliases.find((alias): alias is string => typeof alias === 'string' && alias.startsWith('at://'))
   return atHandle ? atHandle.slice('at://'.length) : null
 }
 

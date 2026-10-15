@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { getPdsEndpoint, isMalformedDid, resolveDidDocument, resolveHandle, type DidDocument } from './atproto'
+import { getHandleFromDidDocument, getPdsEndpoint, isMalformedDid, resolveDidDocument, resolveHandle, type DidDocument } from './atproto'
 import { PlatformUnavailableError } from './platforms/base'
 
 describe('isMalformedDid', () => {
@@ -222,5 +222,22 @@ describe('answers that are not shaped as documented', () => {
 
       expect(await resolveHandle('alice.bsky.social')).toBeNull()
     })
+  })
+})
+
+describe('getHandleFromDidDocument', () => {
+  it.each([
+    {},
+    { alsoKnownAs: null },
+    { alsoKnownAs: {} },
+    { alsoKnownAs: 'at://alice.example.com' },
+    { alsoKnownAs: [null, 5, {}, 'https://alice.example.com'] },
+  ])('finds no handle in malformed aliases %j', doc => {
+    expect(getHandleFromDidDocument(doc as unknown as DidDocument)).toBeNull()
+  })
+
+  it('skips malformed aliases and returns the first AT handle', () => {
+    const doc = { alsoKnownAs: [null, 5, 'https://alice.example.com', 'at://alice.example.com', 'at://other.example.com'] }
+    expect(getHandleFromDidDocument(doc as unknown as DidDocument)).toBe('alice.example.com')
   })
 })
