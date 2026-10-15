@@ -427,3 +427,12 @@ describe('verification-link page: values placed in links and images', () => {
     expect(profileLink).toEqual(['href', '"https://x&#39;y&quot;z.divine.video"'])
   })
 })
+
+describe('verification-link page: scripts', () => {
+  it('loads no script from another site', () => {
+    const { html } = pageScript()
+    expect(html).not.toContain('esm.sh')
+    expect(html).not.toMatch(/<script[^>]*\ssrc=/)
+    expect(html).not.toMatch(/\bimport\(/)
+  })
+})

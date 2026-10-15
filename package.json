@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "build:vendor": "node scripts/build-browser-vendor.mjs",
+    "check:vendor": "node scripts/build-browser-vendor.mjs --check",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:once": "vitest run"
@@ -19,6 +21,8 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.8.0",
     "@cloudflare/workers-types": "^4.20251115.0",
+    "esbuild": "0.27.3",
+    "nostr-tools": "2.23.3",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }

@@ -80,6 +80,8 @@ npm test          # run the Vitest suite (watch mode)
 npm run test:once # run the tests once, for CI
 ```
 
+The page's nostr-tools code is served from `public/vendor/nostr-tools.mjs`, which is built from the pinned `nostr-tools` version and committed. After changing that version, run `npm run build:vendor` and commit the result; CI runs `npm run check:vendor` and fails if the committed file differs from a fresh build.
+
 ## Configuration
 
 Configuration lives in `wrangler.toml`.

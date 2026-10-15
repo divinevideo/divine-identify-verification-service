@@ -1,0 +1,6 @@
+# Headers for the files in public/ (Cloudflare Workers static assets). Worker
+# responses never get these. Each vendor file's address carries a hash of its
+# contents, so a browser can keep it for good.
+/vendor/*
+  Cache-Control: public, max-age=31536000, immutable
+  X-Content-Type-Options: nosniff

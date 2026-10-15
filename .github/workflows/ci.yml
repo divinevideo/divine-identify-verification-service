@@ -34,6 +34,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # public/vendor/nostr-tools.mjs is committed minified. This rebuilds it from
+      # the pinned versions in package-lock.json and fails if the bytes differ.
+      - name: Check the committed nostr-tools build
+        run: npm run check:vendor
+
       - name: Typecheck
         run: npm run typecheck
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import worker from './index'
+import { NOSTR_TOOLS_MODULE_PATH } from './generated/vendor'
 
 // Runs the landing page's real code for publishing, listing and removing
 // linked accounts, including its relay requests, against stand-in relays, a
@@ -567,33 +568,46 @@ describe('removing a linked account', () => {
 })
 
 describe('loading nostr-tools', () => {
+  it('loads it from the verifier itself', async () => {
+    const html = await pageHtml()
+    expect(NOSTR_TOOLS_MODULE_PATH).toMatch(/^\/vendor\/nostr-tools\.mjs\?v=[0-9a-f]{12}$/)
+    expect(html).toContain(`const NOSTR_TOOLS_URL = '${NOSTR_TOOLS_MODULE_PATH}';`)
+    expect(html).not.toContain('esm.sh')
+  })
+
   // Runs the page's real loader. Functions made with new Function can't use
-  // import() here, so the loader's two import() calls go to a stand-in that
-  // counts them and fails until `available` is set.
+  // import() here, so the loader's import() goes to a stand-in that records
+  // each address and fails until `available` is set.
   async function loadLoader() {
     const source = scriptBetween(await pageHtml(), 'async function loadNostrTools()', 'function extractHexFromText(text)')
-    expect(source.match(/\bimport\(/g)).toHaveLength(2)
-    let imports = 0
+    expect(source.match(/\bimport\(/g)).toHaveLength(1)
+    const addresses: string[] = []
     const state = { available: false }
     const importModule = async (address: string) => {
-      imports++
+      addresses.push(address)
       if (!state.available) throw new TypeError(`Failed to fetch dynamically imported module: ${address}`)
       return { address }
     }
-    const loadNostrTools = new Function('importModule', 'NOSTR_TOOLS_NIP46_URL', 'NOSTR_TOOLS_PURE_URL',
-      `let nostrToolsPromise = null;\n${source.replace(/\bimport\(/g, 'importModule(')}\nreturn loadNostrTools;`)(importModule, 'nip46-address', 'pure-address')
-    return { loadNostrTools: loadNostrTools as () => Promise<{ nip46: { address: string }, pure: { address: string } }>, state, imports: () => imports }
+    const loadNostrTools = new Function('importModule', 'NOSTR_TOOLS_URL',
+      `let nostrToolsPromise = null;\nlet nostrToolsFailures = 0;\n${source.replace(/\bimport\(/g, 'importModule(')}\nreturn loadNostrTools;`)(importModule, '/vendor/nostr-tools.mjs?v=1')
+    return { loadNostrTools: loadNostrTools as () => Promise<{ address: string }>, state, addresses }
   }
 
-  it('tries again after an import fails', async () => {
+  // A browser can keep the result of a module load that failed and hand it
+  // back for the same address, so each try after a failure asks for a new one.
+  it('tries again at a new address after an import fails', async () => {
     const l = await loadLoader()
     await expect(l.loadNostrTools()).rejects.toThrow('Failed to fetch')
     await expect(l.loadNostrTools()).rejects.toThrow('Failed to fetch')
-    expect(l.imports()).toBe(4)
 
     l.state.available = true
     const tools = await l.loadNostrTools()
-    expect(tools).toEqual({ nip46: { address: 'nip46-address' }, pure: { address: 'pure-address' } })
+    expect(l.addresses).toEqual([
+      '/vendor/nostr-tools.mjs?v=1',
+      '/vendor/nostr-tools.mjs?v=1&retry=1',
+      '/vendor/nostr-tools.mjs?v=1&retry=2',
+    ])
+    expect(tools).toEqual({ address: '/vendor/nostr-tools.mjs?v=1&retry=2' })
   })
 
   it('keeps a successful import', async () => {
@@ -602,6 +616,6 @@ describe('loading nostr-tools', () => {
     const first = await l.loadNostrTools()
     const second = await l.loadNostrTools()
     expect(second).toBe(first)
-    expect(l.imports()).toBe(2)
+    expect(l.addresses).toEqual(['/vendor/nostr-tools.mjs?v=1'])
   })
 })

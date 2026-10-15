@@ -8,6 +8,7 @@ import verify, { MAX_BATCH_SIZE } from './routes/verify'
 import nip05 from './routes/nip05'
 import auth from './routes/auth'
 import { EMBED_BRIDGE_SCRIPT } from './embed-bridge'
+import { NOSTR_TOOLS_MODULE_PATH } from './generated/vendor'
 import { isTikTokOAuthUsable } from './oauth/tiktok'
 import { isTwitterOAuthUsable } from './oauth/twitter'
 
@@ -964,8 +965,8 @@ Content-Type: application/json
     const KEYCAST_PKCE_KEY = 'verifyer_keycast_pkce_v1';
     const KEYCAST_STATE_KEY = 'verifyer_keycast_state_v1';
     const KEYCAST_HASH_KEY = 'verifyer_keycast_hash_v1';
-    const NOSTR_TOOLS_NIP46_URL = 'https://esm.sh/nostr-tools@2.23.3/nip46?bundle';
-    const NOSTR_TOOLS_PURE_URL = 'https://esm.sh/nostr-tools@2.23.3/pure?bundle';
+    // The verifier serves this itself (public/vendor), built from the pinned nostr-tools.
+    const NOSTR_TOOLS_URL = '${NOSTR_TOOLS_MODULE_PATH}';
     // Divine's own relay, where a person's linked accounts are expected to be.
     const DIVINE_RELAY = 'wss://relay.divine.video';
     const PROFILE_RELAYS = [DIVINE_RELAY, 'wss://relay.damus.io', 'wss://relay.primal.net'];
@@ -976,6 +977,7 @@ Content-Type: application/json
     let activeSigner = null;
     let activeSignerSource = null;
     let nostrToolsPromise = null;
+    let nostrToolsFailures = 0;
     let nostrConnectAbortController = null;
 
     function npubToHex(npub) {
@@ -1279,14 +1281,11 @@ Content-Type: application/json
 
     async function loadNostrTools() {
       if (!nostrToolsPromise) {
-        nostrToolsPromise = Promise.all([
-          import(NOSTR_TOOLS_NIP46_URL),
-          import(NOSTR_TOOLS_PURE_URL),
-        ]).then(function(modules) {
-          return { nip46: modules[0], pure: modules[1] };
-        });
+        // A browser can keep a failed module load and return it again for the
+        // same address, so each try after a failure asks for a new one.
+        nostrToolsPromise = import(nostrToolsFailures ? NOSTR_TOOLS_URL + '&retry=' + nostrToolsFailures : NOSTR_TOOLS_URL);
         // Forget a failed import so the next call imports again.
-        nostrToolsPromise.catch(function() { nostrToolsPromise = null; });
+        nostrToolsPromise.catch(function() { nostrToolsPromise = null; nostrToolsFailures++; });
       }
       return await nostrToolsPromise;
     }

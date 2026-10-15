@@ -2,6 +2,12 @@ name = "divine-identity-verification-service"
 main = "src/index.ts"
 compatibility_date = "2024-11-15"
 
+# Files the worker serves as they are, such as the nostr-tools module the landing
+# page loads (built by scripts/build-browser-vendor.mjs). A request for a path
+# with no file there goes on to the worker. public/_headers sets their headers.
+[assets]
+directory = "./public"
+
 [observability]
 enabled = true
 
