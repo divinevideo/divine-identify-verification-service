@@ -164,6 +164,17 @@ describe('serving the module', () => {
     }
   })
 
+  it('has every nostr-tools function the landing page calls', async () => {
+    const html = await (await worker.fetch('http://localhost/', { headers: { accept: 'text/html' } })).text()
+    const tools = await import(pathToFileURL(MODULE_FILE).href)
+    const called = [...new Set([...html.matchAll(/\.(nip46|pure)\.(\w+)/g)].map(m => m[0].slice(1)))]
+    expect(called.length).toBeGreaterThan(0)
+    for (const name of called) {
+      const [group, fn] = name.split('.')
+      expect(tools[group]?.[fn], name).toBeDefined()
+    }
+  })
+
   it('still answers the landing page from the worker', async () => {
     const res = await worker.fetch('http://localhost/', { headers: { accept: 'text/html' } })
     expect(res.status).toBe(200)

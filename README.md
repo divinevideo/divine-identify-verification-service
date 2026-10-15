@@ -80,7 +80,7 @@ npm test          # run the Vitest suite (watch mode)
 npm run test:once # run the tests once, for CI
 ```
 
-The page's nostr-tools code is served from `public/vendor/nostr-tools.mjs`, which is built from the pinned `nostr-tools` version and committed. After changing that version, run `npm run build:vendor` and commit the result. CI runs `npm run check:vendor`, and Wrangler runs it before every deploy, versions upload and `wrangler dev` start. It fails if the file differs from a fresh build; if your `node_modules` doesn't match the lockfile, run `npm ci` first.
+The page's nostr-tools code is served from `public/vendor/nostr-tools.mjs`, which is built from the pinned `nostr-tools` version and committed. After changing that version, run `npm run build:vendor` and commit the result. CI runs `npm run check:vendor`, and Wrangler runs it before every deploy, versions upload and `wrangler dev` start. It fails if the file differs from a fresh build; if your `node_modules` doesn't match the lockfile, run `npm ci` first. After a nostr-tools upgrade that changes the module's exports, fix forward instead of rolling back past it: the server ignores the address's hash, so a browser that cached the newer file may keep using it with the older page.
 
 ## Configuration
 
