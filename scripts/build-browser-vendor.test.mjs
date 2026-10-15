@@ -130,7 +130,8 @@ describe('files the worker serves as they are', () => {
     const dir = join(ROOT, 'public')
     const entries = await readdir(dir, { recursive: true, withFileTypes: true })
     const files = entries
-      .filter(entry => entry.isFile())
+      // Symlinks count: the worker serves them too.
+      .filter(entry => !entry.isDirectory())
       .map(entry => relative(dir, join(entry.parentPath, entry.name)).split(sep).join('/'))
       .sort()
     expect(files, 'A file in public/ is served ahead of the worker\'s routes: public/index.html would replace the landing page. Add one only on purpose, then add it here.')

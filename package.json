@@ -5,7 +5,6 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",
-    "predeploy": "npm run check:vendor",
     "deploy": "wrangler deploy",
     "build:vendor": "node scripts/build-browser-vendor.mjs",
     "check:vendor": "node scripts/build-browser-vendor.mjs --check",
