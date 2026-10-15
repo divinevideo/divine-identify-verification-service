@@ -185,6 +185,9 @@ describe('answers that are not shaped as documented', () => {
       ['a service list with an empty entry', { service: [null] }],
       ['an endpoint that is not text', { service: [{ id: '#atproto_pds', serviceEndpoint: 5 }] }],
       ['an endpoint that is an object', { service: [{ id: '#atproto_pds', serviceEndpoint: { url: 'https://pds.example.com' } }] }],
+      // DID Core allows a list of endpoints. A one-item list reads as a valid URL
+      // when turned into text, so only the type check keeps it from throwing.
+      ['an endpoint that is a list', { service: [{ id: '#atproto_pds', serviceEndpoint: ['https://pds.example.com'] }] }],
     ]
 
     it.each(documents)('finds no endpoint in a document with %s', (_name, doc) => {
