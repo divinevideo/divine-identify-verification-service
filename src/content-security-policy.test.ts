@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import worker from './index'
+import { ALLOWED_PARENT_SUFFIXES } from './embed-bridge'
 import type { Bindings } from './types'
 import { cacheKey } from './utils/cache'
 
@@ -79,6 +80,13 @@ describe('Content-Security-Policy on the HTML pages', () => {
     const tags = scriptTags(await response.text())
     expect(tags.length).toBeGreaterThan(0)
     for (const tag of tags) expect(tag).toBe(`<script nonce="${nonce}">`)
+  })
+
+  // The policy turns each embed-bridge suffix into an https://*<suffix> source, which is
+  // a valid wildcard only when the suffix starts with a dot; browsers drop one that doesn't.
+  it('every embed-bridge suffix starts with a dot, so its frame-ancestors wildcard is valid', () => {
+    expect(ALLOWED_PARENT_SUFFIXES.length).toBeGreaterThan(0)
+    for (const suffix of ALLOWED_PARENT_SUFFIXES) expect(suffix).toMatch(/^(\.[a-z0-9-]+)+$/)
   })
 
   it.each([
