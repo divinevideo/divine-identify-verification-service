@@ -17,9 +17,14 @@ function inlineScripts(html: string): Array<{ attributes: string, body: string }
     .map(([, attributes, body]) => ({ attributes, body }))
 }
 
+// node:vm parses source the way a <script> does; new Function would parse it as a
+// function body and accept a top-level return. The worker's tsconfig has no Node
+// types, so the module name goes in as a plain string.
+const { Script } = await import('node:vm' as string)
+
 // Compiles a classic script without running it; throws a SyntaxError if it can't parse.
 function compile(source: string) {
-  new Function(source)
+  new Script(source)
 }
 
 function createEnv(extra: Partial<Bindings> = {}): Bindings {
@@ -73,5 +78,9 @@ describe('page scripts parse', () => {
 
   it('the check catches a syntax error anywhere in a script', () => {
     expect(() => compile('const a = 1;\nfunction ok() { return a }\nconst b = {;')).toThrow(SyntaxError)
+  })
+
+  it('the check catches a return outside any function, which a <script> rejects', () => {
+    expect(() => compile('function ok() { return 1 }\nreturn')).toThrow(SyntaxError)
   })
 })
