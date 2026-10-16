@@ -1,0 +1,8 @@
+# Headers for the files in public/ (Cloudflare Workers static assets). Worker
+# responses never get these. The page asks for each vendor file with a hash of
+# its contents in the query, so each build gets a new address and a browser can
+# keep the file for good. The server ignores the query, though, so after a
+# rollback a browser may keep the newer file under the older address.
+/vendor/*
+  Cache-Control: public, max-age=31536000, immutable
+  X-Content-Type-Options: nosniff

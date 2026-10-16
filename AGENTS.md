@@ -142,6 +142,7 @@ results influence work.
 - `npm run dev`: start the Cloudflare Worker locally with Wrangler.
 - `npm test`: run the interactive Vitest suite.
 - `npm run test:once`: run the test suite in CI mode.
+- `npm run build:vendor`: rebuild the committed browser module `public/vendor/nostr-tools.mjs` (and `src/generated/vendor.ts`) after changing the pinned `nostr-tools`; `npm run check:vendor` fails if they differ from a fresh build.
 - Deploy with `npm run deploy`.
 
 ## Coding Style & Naming Conventions

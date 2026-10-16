@@ -1,0 +1,4 @@
+# Built by scripts/build-browser-vendor.mjs and checked by `npm run check:vendor`
+# rather than read by eye. Marked generated so GitHub collapses their diffs.
+public/vendor/** linguist-generated=true
+src/generated/** linguist-generated=true
