@@ -30,7 +30,7 @@ async function mainPage(): Promise<string> {
 }
 
 function verificationPage(): string {
-  return renderVerifyHtml(RESULT, 'github', 'octocat', 'abc123', PUBKEY, 'npub1test', `${API}/verify/github/octocat/abc123?pubkey=${PUBKEY}`, API)
+  return renderVerifyHtml(RESULT, 'github', 'octocat', 'abc123', PUBKEY, 'npub1test', `${API}/verify/github/octocat/abc123?pubkey=${PUBKEY}`, API, 'test-nonce')
 }
 
 const BUTTONS: Array<[string, string]> = [

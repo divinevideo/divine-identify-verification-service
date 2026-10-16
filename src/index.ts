@@ -8,6 +8,7 @@ import verify, { MAX_BATCH_SIZE } from './routes/verify'
 import nip05 from './routes/nip05'
 import auth from './routes/auth'
 import { EMBED_BRIDGE_SCRIPT } from './embed-bridge'
+import { setPagePolicy } from './content-security-policy'
 import { NOSTR_TOOLS_MODULE_PATH } from './generated/vendor'
 import { isTikTokOAuthUsable } from './oauth/tiktok'
 import { isTwitterOAuthUsable } from './oauth/twitter'
@@ -159,7 +160,7 @@ app.get('/', (c) => {
   const oauthPlatformOptions = oauthPlatforms.map(platform => `<option value="${platform.value}">${platform.optionLabel}</option>`).join('')
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
-  c.header('Cache-Control', 'private, no-store')
+  const cspNonce = setPagePolicy(c)
   // The page holds a sign-in's one-time code in its address for a moment;
   // never send its address to other sites.
   c.header('Referrer-Policy', 'no-referrer')
@@ -949,7 +950,7 @@ Content-Type: application/json
       <p style="margin-top:0.75rem;">Verified claims are cached for 24 hours, failures for 15 minutes, and platform outages (<code>temporarily_unavailable</code>) for 5 minutes. Answers to the verifier's own rate limits aren't cached.</p>
     </section>
 
-    <script>
+    <script nonce="${cspNonce}">
     // Install a postMessage-based window.nostr (NIP-07) shim when this page
     // is loaded inside an iframe of a trusted Divine origin. The host
     // (divine.video) honors signEvent / getPublicKey / getRelays requests

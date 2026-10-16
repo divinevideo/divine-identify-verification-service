@@ -13,7 +13,7 @@ const API = 'https://verifier.divine.video'
 const RESULT: VerifyResult = { platform: 'github', identity: 'octocat', verified: true, checked_at: 1_700_000_000, cached: false }
 
 function pageScript() {
-  const html = renderVerifyHtml(RESULT, 'github', 'octocat', 'abc123', PUBKEY, 'npub1test', `${API}/verify/github/octocat/abc123?pubkey=${PUBKEY}`, API)
+  const html = renderVerifyHtml(RESULT, 'github', 'octocat', 'abc123', PUBKEY, 'npub1test', `${API}/verify/github/octocat/abc123?pubkey=${PUBKEY}`, API, 'test-nonce')
   const batchSize = Number(html.match(/var VERIFY_BATCH_SIZE = (\d+);/)?.[1])
   return { html, batchSize }
 }
