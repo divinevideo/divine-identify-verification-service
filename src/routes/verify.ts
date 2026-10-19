@@ -10,6 +10,7 @@ import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import { getCountedSignIn } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { tidyClaim } from '../utils/tidy-claim'
+import { setPagePolicy } from '../content-security-policy'
 
 const verify = new Hono<{ Bindings: Bindings }>()
 
@@ -370,7 +371,8 @@ verify.get('/:platform/*', async (c) => {
   if (accept.includes('text/html') && !accept.includes('application/json')) {
     const npub = hexToNpub(validatedClaim.pubkey)
     const origin = new URL(c.req.url).origin
-    return c.html(renderVerifyHtml(result, platform, identity, proof, validatedClaim.pubkey, npub, c.req.url, origin))
+    const cspNonce = setPagePolicy(c)
+    return c.html(renderVerifyHtml(result, platform, identity, proof, validatedClaim.pubkey, npub, c.req.url, origin, cspNonce))
   }
 
   return c.json(result)
@@ -442,7 +444,7 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
-export function renderVerifyHtml(result: VerifyResult, platform: string, identity: string, proof: string, pubkey: string, npub: string, requestUrl: string, apiOrigin: string): string {
+export function renderVerifyHtml(result: VerifyResult, platform: string, identity: string, proof: string, pubkey: string, npub: string, requestUrl: string, apiOrigin: string, cspNonce: string): string {
   const verified = result.verified
   const platformLabel = PLATFORM_LABELS[platform] || platform
   const statusText = verified ? 'Verified' : 'Not Verified'
@@ -715,7 +717,7 @@ export function renderVerifyHtml(result: VerifyResult, platform: string, identit
     </div>
   </div>
 
-  <script>
+  <script nonce="${esc(cspNonce)}">
   (function() {
     var PUBKEY = '${esc(pubkey)}';
     var NPUB = '${esc(npub)}';

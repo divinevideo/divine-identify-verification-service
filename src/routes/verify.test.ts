@@ -57,6 +57,7 @@ describe('renderVerifyHtml — "View proof post" link', () => {
       'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'https://verifier.divine.video/verify/discord/alice/x?pubkey=' + 'a'.repeat(64),
       'https://verifier.divine.video',
+      'test-nonce',
     )
   }
 
@@ -81,6 +82,7 @@ describe('renderVerifyHtml — "View proof post" link', () => {
       'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'https://verifier.divine.video/verify/bluesky/alice.bsky.social/?pubkey=' + 'a'.repeat(64),
       'https://verifier.divine.video',
+      'test-nonce',
     )
     expect(html).not.toContain('View proof post')
     expect(html).not.toContain('bsky.app/profile/alice.bsky.social/post/"')
@@ -98,6 +100,7 @@ describe('renderVerifyHtml — embedded client-side proof link (other verified i
       'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'https://verifier.divine.video/verify/discord/alice/x',
       'https://verifier.divine.video',
+      'test-nonce',
     )
     const start = html.indexOf('var DISCORD_MESSAGE_LINK_HOSTS = ')
     expect(start).toBeGreaterThan(-1)
@@ -162,6 +165,7 @@ describe('TikTok proof links', () => {
       FAKE_RESULT, 'tiktok', 'alice', ID, 'a'.repeat(64),
       'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'https://verifier.divine.video/verify/tiktok/alice/x', 'https://verifier.divine.video',
+      'test-nonce',
     )
     const start = html.indexOf('var DISCORD_MESSAGE_LINK_HOSTS = ')
     const end = html.indexOf('function platformIconHtml(', start)
@@ -196,6 +200,7 @@ describe('TikTok proof link on the verification-link page', () => {
       'tiktok', 'alice', 'https://vm.tiktok.com/ZMabc123/', 'a'.repeat(64),
       'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'https://verifier.divine.video/verify/tiktok/alice/x', 'https://verifier.divine.video',
+      'test-nonce',
     )
     expect(html).toContain('href="https://www.tiktok.com/@alice/video/7123456789012345678"')
   })
@@ -203,7 +208,7 @@ describe('TikTok proof link on the verification-link page', () => {
   it('uses the resolved post number for other linked accounts too', () => {
     const html = renderVerifyHtml(FAKE_RESULT, 'discord', 'alice', DISCORD_MESSAGE_LINK, 'a'.repeat(64),
       'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-      'https://verifier.divine.video/verify/discord/alice/x', 'https://verifier.divine.video')
+      'https://verifier.divine.video/verify/discord/alice/x', 'https://verifier.divine.video', 'test-nonce')
     expect(html).toContain('proofUrl(claim.platform, data.results[k].canonical_identity || claim.identity, data.results[k].canonical_proof || claim.proof)')
   })
 })
@@ -215,6 +220,7 @@ describe('Mastodon proof link on the verification-link page', () => {
       'mastodon', 'example.com/@alice', '109876543210', 'a'.repeat(64),
       'npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'https://verifier.divine.video/verify/mastodon/x/y', 'https://verifier.divine.video',
+      'test-nonce',
     )
     expect(html).toContain('href="https://social.example.com/statuses/109876543210"')
   })
