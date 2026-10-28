@@ -12,6 +12,7 @@ import { setPagePolicy } from './content-security-policy'
 import { NOSTR_TOOLS_MODULE_PATH } from './generated/vendor'
 import { isTikTokOAuthUsable } from './oauth/tiktok'
 import { isTwitterOAuthUsable } from './oauth/twitter'
+import { isYouTubeOAuthUsable } from './oauth/youtube'
 
 // Joins names the way the page's copy reads them: "A", "A and B", "A, B, and C".
 function listInProse(items: string[]): string {
@@ -89,6 +90,9 @@ app.get('/', (c) => {
   // Twitter proof posts use the public oEmbed endpoint and need no
   // credentials; only sign-in does, so the page hides just that path.
   const twitterOAuthEnabled = isTwitterOAuthUsable(c.env)
+  // YouTube shows with its API key; its sign-in also needs the Google client
+  // ID and secret and the redirect base (isYouTubeOAuthUsable).
+  const youtubeOAuthEnabled = hasYouTube && isYouTubeOAuthUsable(c.env)
   // TODO(#39): Enable the production UI after TikTok OAuth is approved.
   // The review cookie survives OAuth redirects without changing their exact
   // registered redirect URI, while ordinary users stay off the sandbox flow.
@@ -107,26 +111,26 @@ app.get('/', (c) => {
   const tiktokOAuthEnabled = isTikTokOAuthUsable(c.env, tiktokOAuthReviewEnabled)
 
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
-  const ytTableRow = hasYouTube ? '<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>Yes</td></tr>' : ''
+  const ytTableRow = hasYouTube ? `<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>${youtubeOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
   const ttTableRow = hasTikTok ? `<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video or photo link, share link, or post number</td><td>${tiktokOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
-  // Sign-in platforms, in picker order. Leaves out Twitter and TikTok while
-  // their sign-in is unavailable. The picker and every list of sign-in
+  // Sign-in platforms, in picker order. Leaves out Twitter, YouTube and TikTok
+  // while their sign-in is unavailable. The picker and every list of sign-in
   // platforms in the copy are built from this one list, so the copy never
   // advertises a path the picker omits.
   const oauthPlatforms = [
     ...(twitterOAuthEnabled ? [{ value: 'twitter', name: 'Twitter', shortLabel: 'Twitter/X', optionLabel: 'Twitter / X' }] : []),
     { value: 'bluesky', name: 'Bluesky', shortLabel: 'Bluesky', optionLabel: 'Bluesky' },
-    ...(hasYouTube ? [{ value: 'youtube', name: 'YouTube', shortLabel: 'YouTube', optionLabel: 'YouTube' }] : []),
+    ...(youtubeOAuthEnabled ? [{ value: 'youtube', name: 'YouTube', shortLabel: 'YouTube', optionLabel: 'YouTube' }] : []),
     ...(hasTikTok && tiktokOAuthEnabled ? [{ value: 'tiktok', name: 'TikTok', shortLabel: 'TikTok', optionLabel: 'TikTok' }] : []),
   ]
   const oauthPlatformNames = oauthPlatforms.map(platform => platform.name)
   const quickConnectPlatformList = listInProse(oauthPlatforms.map(platform => platform.shortLabel))
   // Platforms verified only by pasting a post link: the always post-only ones,
-  // plus Twitter and TikTok while their sign-in is unavailable. YouTube needs
-  // no entry: when it is shown at all, its sign-in is offered.
+  // plus Twitter, YouTube and TikTok while their sign-in is unavailable.
   const proofPostOnlyPlatformList = listInProse([
     ...(twitterOAuthEnabled ? [] : ['Twitter']),
     'GitHub', 'Mastodon', 'Telegram', 'Discord',
+    ...(hasYouTube && !youtubeOAuthEnabled ? ['YouTube'] : []),
     ...(hasTikTok && !tiktokOAuthEnabled ? ['TikTok'] : []),
   ])
   // The platform list near the top of the page. Each pill links to the card
@@ -153,7 +157,7 @@ app.get('/', (c) => {
   const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
   const otherOAuthStartExamples = [
     twitterOAuthEnabled ? `POST ${origin}/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}` : '',
-    hasYouTube ? `POST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    youtubeOAuthEnabled ? `POST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : '',
     hasTikTok && tiktokOAuthEnabled ? `POST ${origin}/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}` : '',
   ].filter(Boolean).join('\n')
   const extraLookupPlatforms = (hasYouTube ? ",'youtube'" : '') + (hasTikTok ? ",'tiktok'" : '')
