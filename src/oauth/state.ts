@@ -57,11 +57,13 @@ export async function getOAuthVerification(
   }
 }
 
-// A sign-in saved under both a handle and a DID is removed under both, so
-// unlinking either one leaves nothing behind. The other record goes only while
-// it still belongs to this sign-in: after a handle change, the DID record
+// A Bluesky sign-in saved under both a handle and a DID is removed under both,
+// so unlinking either one leaves nothing behind. The other record goes only
+// while it still belongs to this sign-in: after a handle change, the DID record
 // belongs to the newer one. The requested record goes last, so an unlink that
-// fails partway can be retried.
+// fails partway can be retried. Other platforms save each link under its one
+// identity, so only that record goes, even when another link shares its
+// account ID.
 export async function deleteOAuthVerification(
   kv: KVNamespace,
   platform: string,
@@ -69,7 +71,7 @@ export async function deleteOAuthVerification(
   pubkey: string
 ): Promise<void> {
   const record = await getOAuthVerification(kv, platform, identity, pubkey)
-  if (record?.account_id) {
+  if (platform === 'bluesky' && record?.account_id) {
     const others = new Set([record.handle, record.account_id]
       .filter((id): id is string => !!id && id.toLowerCase() !== identity.toLowerCase())
       .map(id => id.toLowerCase()))

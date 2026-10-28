@@ -112,7 +112,7 @@ export async function handleTikTokCallback(
   }
 
   // Fetch user info
-  const userResponse = await fetch(`${TIKTOK_USER_URL}?fields=display_name,username`, {
+  const userResponse = await fetch(`${TIKTOK_USER_URL}?fields=open_id,display_name,username`, {
     headers: { 'Authorization': `Bearer ${tokenData.access_token}` },
   })
 
@@ -120,7 +120,7 @@ export async function handleTikTokCallback(
     return { success: false, returnUrl: state.returnUrl, error: 'Failed to fetch TikTok user info' }
   }
 
-  let userData: { data?: { user?: { username?: string; display_name?: string } } }
+  let userData: { data?: { user?: { open_id?: string; username?: string; display_name?: string } } }
   try {
     userData = await userResponse.json() as typeof userData
   } catch {
@@ -136,5 +136,8 @@ export async function handleTikTokCallback(
   // ownership check, so there's nothing to re-fetch later. Not persisting
   // tokens keeps the blast radius small if KV is ever exposed.
 
-  return holdSignIn(env, state, { platform: 'tiktok', identity })
+  // open_id (user.info.basic) stays with the account when its username
+  // changes. It is specific to this TikTok app.
+  const accountId = userData.data?.user?.open_id
+  return holdSignIn(env, state, { platform: 'tiktok', identity, ...(typeof accountId === 'string' && accountId ? { account_id: accountId } : {}) })
 }
