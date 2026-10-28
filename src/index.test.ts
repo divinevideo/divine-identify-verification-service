@@ -233,6 +233,14 @@ describe('verifier tiktok oauth gating', () => {
   })
 })
 
+describe('API docs: what a sign-in return carries', () => {
+  it.each(['oauth_error_code', 'cancelled', 'provider_error', 'failed', 'update_required', 'oauth_confirm', 'oauth_verified'])('documents %s', async (name) => {
+    const html = await homeHtml()
+    const start = html.indexOf('<section id="oauth">')
+    expect(html.slice(start, html.indexOf('</section>', start))).toContain(`<code>${name}</code>`)
+  })
+})
+
 describe('verifier twitter oauth gating', () => {
   function platformTableRow(html: string, code: string): string {
     const marker = `<td><code>${code}</code></td>`

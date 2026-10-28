@@ -48,7 +48,15 @@ The service backs Divine's identity and trust surface: divine-web and Divine mob
    ```
 
    The answer is `{"url":"https://…"}`, the provider page to open.
-2. After the provider, the verifier returns to `return_url` with `platform` and `identity` in the query, and a one-time code after the `#`: `#oauth_confirm=<code>`. The code is valid for 10 minutes.
+2. After the provider, the verifier returns to `return_url` with `platform` and `identity` in the query, and a one-time code after the `#`: `#oauth_confirm=<code>`. The code is valid for 10 minutes. Any of these names already in `return_url` are replaced. While confirmation is optional, the query also carries `oauth_verified=true` for app versions that can't confirm; don't rely on it.
+
+   A sign-in that didn't finish returns with `oauth_error`, a readable reason kept for older app versions (don't parse it), and `oauth_error_code`, a fixed value to branch on:
+   - `cancelled`: the person cancelled or declined at the platform;
+   - `provider_error`: the platform reported another error;
+   - `failed`: the verifier couldn't check the account with the platform;
+   - `update_required`: the sign-in was started with `GET /auth/:platform/start`, as older app versions do, which is no longer accepted.
+
+   Treat a code you don't know as `failed`. When the verifier can't tell where a sign-in started, or the sign-in fails unexpectedly, it returns to its own page instead.
 3. The owner signs their linked-accounts list (kind 10011). The new claim's tag carries a fourth value, `base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))`. The client sends:
 
    ```http

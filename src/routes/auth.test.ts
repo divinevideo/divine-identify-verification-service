@@ -654,6 +654,7 @@ describe('GET /auth/:platform/callback after the person cancels or denies sign-i
     expect(location.origin + location.pathname).toBe('https://verifier.divine.video/')
     expect(location.hash).toBe('#verify-here')
     expect(location.searchParams.get('oauth_error')).toBe(`cancelled or declined at ${LABELS[platform]}`)
+    expect(location.searchParams.get('oauth_error_code')).toBe('cancelled')
     expect(location.searchParams.has('oauth_verified')).toBe(false)
   })
 
@@ -670,6 +671,7 @@ describe('GET /auth/:platform/callback after the person cancels or denies sign-i
     const location = res.headers.get('Location') as string
     expect(location.startsWith('/?')).toBe(true)
     expect(new URLSearchParams(location.slice(2)).get('oauth_error')).toBe(`cancelled or declined at ${LABELS[platform]}`)
+    expect(new URLSearchParams(location.slice(2)).get('oauth_error_code')).toBe('cancelled')
   })
 
   it.each(PLATFORMS)('%s: falls back to the verifier page when the provider sends no state', async (platform) => {
@@ -678,6 +680,7 @@ describe('GET /auth/:platform/callback after the person cancels or denies sign-i
     const location = res.headers.get('Location') as string
     expect(location.startsWith('/?')).toBe(true)
     expect(new URLSearchParams(location.slice(2)).get('oauth_error')).toBe(`cancelled or declined at ${LABELS[platform]}`)
+    expect(new URLSearchParams(location.slice(2)).get('oauth_error_code')).toBe('cancelled')
   })
 
   it.each(PLATFORMS)('%s: falls back to the verifier page when the state store fails', async (platform) => {
@@ -688,6 +691,7 @@ describe('GET /auth/:platform/callback after the person cancels or denies sign-i
     const location = res.headers.get('Location') as string
     expect(location.startsWith('/?')).toBe(true)
     expect(new URLSearchParams(location.slice(2)).get('oauth_error')).toBe(`cancelled or declined at ${LABELS[platform]}`)
+    expect(new URLSearchParams(location.slice(2)).get('oauth_error_code')).toBe('cancelled')
   })
 
   it('ignores, and keeps, a state that belongs to a different platform', async () => {
@@ -718,6 +722,7 @@ describe('GET /auth/:platform/callback after the person cancels or denies sign-i
     const location = new URL(res.headers.get('Location') as string)
     expect(location.origin + location.pathname).toBe('https://verifier.divine.video/')
     expect(location.searchParams.get('oauth_error')).toBe(`could not be completed at ${LABELS[platform]}`)
+    expect(location.searchParams.get('oauth_error_code')).toBe('provider_error')
   })
 
   it('still returns the person to where they started when clearing the state fails', async () => {
@@ -737,6 +742,21 @@ describe('GET /auth/:platform/callback after the person cancels or denies sign-i
     const res = await app.request('/auth/twitter/callback?error=%3Cb%3Eboom%3C%2Fb%3E&state=state-1', {}, env)
     const location = new URL(res.headers.get('Location') as string)
     expect(location.searchParams.get('oauth_error')).toBe('could not be completed at Twitter')
+    expect(location.searchParams.get('oauth_error_code')).toBe('provider_error')
+  })
+
+  it('replaces a reason code the return address arrived with', async () => {
+    const env = createTestEnv()
+    await env.CACHE_KV.put(oauthStateKey('state-1'), JSON.stringify({
+      platform: 'twitter',
+      pubkey: 'a'.repeat(64),
+      codeVerifier: 'verifier',
+      returnUrl: 'https://verifier.divine.video/?oauth_error_code=failed&oauth_error_code=other#verify-here',
+      createdAt: Date.now(),
+    }))
+    const res = await app.request('/auth/twitter/callback?error=access_denied&state=state-1', {}, env)
+    const location = new URL(res.headers.get('Location') as string)
+    expect(location.searchParams.getAll('oauth_error_code')).toEqual(['cancelled'])
   })
 })
 
