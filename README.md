@@ -7,7 +7,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 ## Features
 
 - **Eight platforms** — GitHub, Twitter/X, Bluesky, Mastodon, Telegram, Discord, YouTube, and TikTok, verified through a single API.
-- **Two verification methods**: a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A sign-in link counts once the Divine account owner confirms it (until confirmation is required, a finished sign-in also counts unconfirmed for 24 hours); a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
+- **Two verification methods**: a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A sign-in link counts only once the Divine account owner confirms it; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
 - **Batch and single verification** — check up to 10 claims in one request, or verify a single claim over JSON or a shareable URL that returns HTML for browsers and JSON for API clients.
 - **NIP-05 verification** — confirm that a NIP-05 identifier resolves to a given pubkey.
 - **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and platform outages for 5 minutes (answered with the code `temporarily_unavailable`, meaning "try again", not a rejection).
@@ -27,7 +27,7 @@ The service is a single [Hono](https://hono.dev) app running on Cloudflare Worke
 - `GET /nip05/verify` — NIP-05 lookup.
 - `GET /platforms` — list platforms currently available to clients; deployment configuration controls YouTube and Discord availability. Sign-in platforms also report an `oauth` field for whether sign-in is set up.
 - `GET /health` and `GET /api/health` — health checks.
-- `/auth/*`: sign-in start (`POST /auth/:platform/start`; `GET` for app versions that can't confirm), provider callbacks, `POST /auth/confirm`, Nostr login, Bluesky client metadata, sign-in status, and revoke.
+- `/auth/*`: sign-in start (`POST /auth/:platform/start`; `GET`, used by app versions that can't confirm, is refused while confirmation is required), provider callbacks, `POST /auth/confirm`, Nostr login, Bluesky client metadata, sign-in status, and revoke.
 - `GET /` — the interactive landing page (returns JSON when the client asks for it).
 
 Each platform is a verifier in `src/platforms/` behind a shared interface, wired up in `registry.ts`; adding a platform is a matter of adding a verifier rather than reshaping the service. OAuth handlers live in `src/oauth/`, and shared helpers (caching, rate limiting, validation, npub encoding) live in `src/utils/`.
@@ -95,7 +95,7 @@ Configuration lives in `wrangler.toml`.
 
 - `DISCORD_VERIFY_CHANNEL_ID` — the Discord channel used for message-based Discord verification.
 - `TIKTOK_OAUTH_ENABLED` — set to `"true"` only after production OAuth credentials pass an end-to-end check; defaults to `"false"`.
-- `SIGNIN_CONFIRMATION`: `"optional"` (default): every finished sign-in also counts unconfirmed for 24 hours, so app versions that can't confirm keep working. `"required"`: only confirmed sign-ins count, and `GET /auth/:platform/start` is refused. Capitals and surrounding spaces are ignored. Any other value, empty included, is treated as `"required"` and logged as a warning. `GET /health` reports the mode in effect as `signin_confirmation`.
+- `SIGNIN_CONFIRMATION`: `"required"` (set in `wrangler.toml`): only confirmed sign-ins count, and `GET /auth/:platform/start` is refused. `"optional"` (the default when unset): every finished sign-in also counts unconfirmed for 24 hours, so app versions that can't confirm keep working. Capitals and surrounding spaces are ignored. Any other value, empty included, is treated as `"required"` and logged as a warning. `GET /health` reports the mode in effect as `signin_confirmation`.
 - `SIGNIN_CODE_PLACEMENT`: `"fragment"` (default) or `"query"`: where the one-time code goes in the return address. Either way, a return with a code keeps none of the fragment the return address carried.
 
 **Secrets** (set with `wrangler secret put …`, never committed):
