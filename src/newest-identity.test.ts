@@ -582,7 +582,7 @@ describe('loading nostr-tools', () => {
     const html = await pageHtml()
     const source = scriptBetween(html, 'async function loadNostrTools()', 'function extractHexFromText(text)')
     // The loader's state, as the page declares it.
-    const declarations = scriptBetween(html, 'let nostrToolsPromise = null;', 'let nostrConnectAbortController')
+    const declarations = scriptBetween(html, 'let nostrToolsPromise = null;', 'let nostrConnectAttempt')
     expect(source.match(/\bimport\(/g)).toHaveLength(1)
     const addresses: string[] = []
     const state = { available: false }

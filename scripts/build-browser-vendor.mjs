@@ -23,8 +23,10 @@ const ADDRESS_FILE = 'src/generated/vendor.ts'
 // Exactly the functions the page calls, grouped the way it calls them.
 const ENTRY = `
 import { BunkerSigner, createNostrConnectURI, parseBunkerInput } from 'nostr-tools/nip46'
+import { SimplePool } from 'nostr-tools/pool'
 import { generateSecretKey, getPublicKey, verifyEvent } from 'nostr-tools/pure'
 export const nip46 = { BunkerSigner, createNostrConnectURI, parseBunkerInput }
+export const pool = { SimplePool }
 export const pure = { generateSecretKey, getPublicKey, verifyEvent }
 `
 
