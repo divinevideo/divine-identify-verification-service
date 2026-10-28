@@ -169,12 +169,14 @@ TikTok requires 1–5 videos (≤50 MB each) showing the complete end-to-end Log
   ```
   (Secrets are hot — no redeploy needed.)
 - [ ] **Step 2b (Matt):** Re-confirm the production TikTok app has **both** `user.info.basic` and `user.info.profile` enabled in its config. The scope-contract test guards the request we *send*, not what the portal *grants* — a production app missing `user.info.profile` would silently reintroduce the empty-username bug with no code signal.
-- [ ] **Step 3 (Claude):** Verify the live start endpoint now uses the production key (no `sbaw` prefix):
+- [ ] **Step 3 (Claude):** Verify the live start endpoint now uses the production key (no `sbaw` prefix). With confirmation required, the start is a `POST` carrying a start check; any 43 base64url characters will do for this check, for example from `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`:
   ```bash
-  curl -s -o /dev/null -D - "https://verifier.divine.video/auth/tiktok/start?pubkey=<64-hex>&return_url=https://verifier.divine.video/" | grep -i location
+  curl -s -X POST "https://verifier.divine.video/auth/tiktok/start" \
+    -H 'Content-Type: application/json' \
+    -d '{"pubkey":"<64-hex>","return_url":"https://verifier.divine.video/","start_check":"<43 base64url characters>"}'
   ```
-  Expected: `client_key=` is the production key, `scope=user.info.basic,user.info.profile`.
-- [ ] **Step 4 (Matt):** Full round-trip test with a **normal, non-target-user** TikTok account → expect `oauth_verified=true&identity=<handle>`.
+  Expected: in the `url` the answer gives, `client_key=` is the production key, `scope=user.info.basic,user.info.profile`.
+- [ ] **Step 4 (Matt):** Full round-trip test on the verifier page with a **normal, non-target-user** TikTok account → expect "Signed in to TikTok as <handle>. Publish to link it to your Divine account."; after Publish, `/auth/tiktok/status?pubkey=<64-hex>&identity=<handle>` reports `"verified": true`.
 - [ ] **Acceptance:** A non-target-user account completes verification.
 
 ---
