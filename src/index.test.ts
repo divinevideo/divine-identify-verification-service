@@ -228,8 +228,10 @@ describe('verifier tiktok oauth gating', () => {
     expect(await homeHtml()).toContain('Existing TikTok OAuth verifications remain recognized.')
   })
 
-  it('documents why TikTok is unavailable through the platforms endpoint', async () => {
-    expect(await homeHtml()).toContain('TikTok reports unsupported while production OAuth rollout is gated')
+  it('documents the platforms endpoint without a TikTok unsupported caveat', async () => {
+    const html = await homeHtml()
+    expect(html).not.toContain('TikTok reports unsupported')
+    expect(html).toContain('<p>List platforms currently available to clients. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field')
   })
 })
 

@@ -25,7 +25,7 @@ The service is a single [Hono](https://hono.dev) app running on Cloudflare Worke
 - `POST /verify/single` and `POST /api/verify` — single-claim verification (the `/api/verify` alias exists for divine-web compatibility).
 - `GET /verify/:platform/*` — URL-based verification; returns HTML for browsers, JSON with `?format=json`.
 - `GET /nip05/verify` — NIP-05 lookup.
-- `GET /platforms` — list platforms currently available to clients; deployment configuration controls YouTube and TikTok availability. Sign-in platforms also report an `oauth` field for whether sign-in is set up.
+- `GET /platforms` — list platforms currently available to clients; deployment configuration controls YouTube and Discord availability. Sign-in platforms also report an `oauth` field for whether sign-in is set up.
 - `GET /health` and `GET /api/health` — health checks.
 - `/auth/*`: sign-in start (`POST /auth/:platform/start`; `GET` for app versions that can't confirm), provider callbacks, `POST /auth/confirm`, Nostr login, Bluesky client metadata, sign-in status, and revoke.
 - `GET /` — the interactive landing page (returns JSON when the client asks for it).

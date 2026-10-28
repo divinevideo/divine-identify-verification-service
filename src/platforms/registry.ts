@@ -25,7 +25,6 @@ export function getVerifier(platform: Platform, githubToken?: string, youtubeApi
 
 export function getPlatformInfo(opts?: {
   youtubeEnabled?: boolean
-  tiktokOAuthAvailable?: boolean
   discordEnabled?: boolean
   // Whether sign-in (OAuth) is set up for each sign-in platform, matching
   // what /auth/:platform/start would do. Only read for twitter, bluesky,
@@ -45,6 +44,8 @@ export function getPlatformInfo(opts?: {
   if (opts?.youtubeEnabled) {
     platforms.youtube = { label: 'YouTube', supported: true, oauth: !!opts?.oauthAvailable?.youtube }
   }
-  platforms.tiktok = { label: 'TikTok', supported: !!opts?.tiktokOAuthAvailable, oauth: !!opts?.oauthAvailable?.tiktok }
+  // TikTok proof posts use TikTok's public oEmbed and need no credentials, so
+  // TikTok is always supported; only its sign-in waits for approval (#39).
+  platforms.tiktok = { label: 'TikTok', supported: true, oauth: !!opts?.oauthAvailable?.tiktok }
   return platforms
 }

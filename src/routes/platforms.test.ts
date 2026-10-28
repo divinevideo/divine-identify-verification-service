@@ -1,6 +1,5 @@
-// ABOUTME: Tests that GET /platforms reports Discord support honestly.
-// ABOUTME: Discord proof posts resolve a message through the bot API, so without
-// ABOUTME: DISCORD_BOT_TOKEN there is no verification path — invites are refused.
+// ABOUTME: Tests that GET /platforms reports each platform's supported and oauth
+// ABOUTME: flags honestly, such as Discord needing its bot token and TikTok sign-in staying off until enabled.
 import { describe, it, expect } from 'vitest'
 import { Hono } from 'hono'
 import type { Bindings } from '../types'
@@ -43,55 +42,58 @@ describe('GET /platforms', () => {
     expect(body.platforms.discord).toMatchObject({ label: 'Discord', supported: true })
   })
 
-  it('reports TikTok unsupported until production OAuth is enabled', async () => {
+  // TikTok proof posts use TikTok's public oEmbed and need no credentials, so
+  // TikTok is supported in every configuration (#63). Only its sign-in waits
+  // for production approval (#39), which `oauth` reports.
+  it('reports TikTok supported with no configuration, with sign-in off', async () => {
     const body = await fetchPlatforms({})
-    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
+    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth: false })
   })
 
-  it('reports TikTok supported once production OAuth is enabled and the flow is fully configured', async () => {
+  it('reports TikTok sign-in on once production OAuth is enabled and the flow is fully configured', async () => {
     const body = await fetchPlatforms({
       TIKTOK_OAUTH_ENABLED: 'true',
       TIKTOK_CLIENT_KEY: 'prod-key',
       TIKTOK_CLIENT_SECRET: 'prod-secret',
       OAUTH_REDIRECT_BASE: 'https://verify.example',
     })
-    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: true })
+    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth: true })
   })
 
-  it('keeps TikTok unsupported when enabled but the client credentials are missing', async () => {
+  it('keeps TikTok sign-in off when enabled but the client credentials are missing', async () => {
     // A sandbox key is indistinguishable from a production one by inspection, so the
     // enable flag is the operator's production signal. The full OAuth flow still needs
     // both credentials and a redirect base before it can be advertised.
     const body = await fetchPlatforms({ TIKTOK_OAUTH_ENABLED: 'true' })
-    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
+    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth: false })
   })
 
-  it('keeps TikTok unsupported when enabled with credentials but no redirect base', async () => {
-    // startTikTokOAuth 503s without OAUTH_REDIRECT_BASE, so supported must fold it in
-    // too, otherwise the flow would advertise as available yet 503 on start.
+  it('keeps TikTok sign-in off when enabled with credentials but no redirect base', async () => {
+    // startTikTokOAuth 503s without OAUTH_REDIRECT_BASE, so oauth must fold it in
+    // too, otherwise sign-in would advertise as available yet 503 on start.
     const body = await fetchPlatforms({
       TIKTOK_OAUTH_ENABLED: 'true',
       TIKTOK_CLIENT_KEY: 'prod-key',
       TIKTOK_CLIENT_SECRET: 'prod-secret',
     })
-    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
+    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth: false })
   })
 
-  it('keeps TikTok unsupported when credentials are present but production OAuth is not enabled', async () => {
+  it('keeps TikTok sign-in off when credentials are present but production OAuth is not enabled', async () => {
     // The flow is otherwise fully configured (key + secret + redirect base) so this
-    // isolates the TIKTOK_OAUTH_ENABLED clause: supported must be false purely because
+    // isolates the TIKTOK_OAUTH_ENABLED clause: oauth must be false purely because
     // the enable flag is absent, which guards the primary "hide it" gate.
     const body = await fetchPlatforms({
       TIKTOK_CLIENT_KEY: 'sandbox-key',
       TIKTOK_CLIENT_SECRET: 'sandbox-secret',
       OAUTH_REDIRECT_BASE: 'https://verify.example',
     })
-    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
+    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth: false })
   })
 
   it('keeps the unauthenticated proof-post platforms supported with no configuration', async () => {
     const body = await fetchPlatforms({})
-    for (const key of ['github', 'twitter', 'mastodon', 'telegram', 'bluesky']) {
+    for (const key of ['github', 'twitter', 'mastodon', 'telegram', 'bluesky', 'tiktok']) {
       expect(body.platforms[key]).toMatchObject({ supported: true })
     }
   })
