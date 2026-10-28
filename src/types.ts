@@ -84,6 +84,7 @@ export type VerificationCode =
   | 'discord_message_content_unavailable'
   | 'discord_npub_not_in_message'
   | 'temporarily_unavailable'
+  | 'signin_expired'
 
 export interface VerifyClaim {
   pubkey: string

@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { Bindings, VerifyClaim, VerifyResult, CachedResult } from '../types'
+import type { Bindings, VerifyClaim, VerifyResult, CachedResult, Platform } from '../types'
 import { validateClaim, normalizePubkey, fitsStorageKeys, VALID_PLATFORMS } from '../utils/validation'
 import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
@@ -15,6 +15,27 @@ import { setPagePolicy } from '../content-security-policy'
 const verify = new Hono<{ Bindings: Bindings }>()
 
 export const MAX_BATCH_SIZE = 10
+
+// Platforms whose accounts can be linked by signing in, and the proof value
+// Divine's page and app write for such a link: there is no post to check, only
+// the verifier's record of the sign-in.
+const SIGNIN_PLATFORMS: ReadonlySet<Platform> = new Set<Platform>(['twitter', 'bluesky', 'youtube', 'tiktok'])
+const SIGNIN_PROOF = 'oauth'
+
+// A sign-in link whose record no longer counts (it lapsed, was unlinked, or
+// was never confirmed) can only be verified again by signing in again, so it
+// says that instead of the platform's answer for a post named "oauth".
+function lapsedSignIn(platform: Platform, identity: string, checkedAt: number, cached: boolean): VerifyResult {
+  return {
+    platform,
+    identity,
+    verified: false,
+    error: 'The sign-in that linked this account no longer counts. Sign in again to verify it.',
+    code: 'signin_expired',
+    checked_at: checkedAt,
+    cached,
+  }
+}
 
 // The clean values for a verified answer: the platform's own (a TikTok post
 // number, a Mastodon web domain) win over what tidying produced.
@@ -74,7 +95,7 @@ async function verifySingleClaim(
 
   // A sign-in record answers first, so a result cached before a fresh sign-in
   // (a failed check, or one made right after an unlink) can't hide it.
-  if (normalizedClaim.platform === 'twitter' || normalizedClaim.platform === 'bluesky' || normalizedClaim.platform === 'youtube' || normalizedClaim.platform === 'tiktok') {
+  if (SIGNIN_PLATFORMS.has(normalizedClaim.platform)) {
     const oauthResult = await getCountedSignIn(env, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey)
     if (oauthResult) {
       if (!(await signInAccountStillMatches(env, oauthResult, tidy.identity))) {
@@ -104,9 +125,22 @@ async function verifySingleClaim(
     }
   }
 
+  const isSignInLink = SIGNIN_PLATFORMS.has(normalizedClaim.platform) && tidy.proof === SIGNIN_PROOF
+  // Only Bluesky has other evidence a sign-in link can still be verified by
+  // (an identity-link record on the account), so the others answer now,
+  // without asking the platform. This comes before the result cache, so an
+  // answer cached for this claim before can't stand in for it.
+  if (isSignInLink && normalizedClaim.platform !== 'bluesky') {
+    return lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, now, false)
+  }
+
   // Then the result cache
   const cached = await getCached(env.CACHE_KV, key)
   if (cached) {
+    // A failure Bluesky gave this sign-in link earlier; an outage stays "try again".
+    if (isSignInLink && !cached.verified && cached.code !== 'temporarily_unavailable') {
+      return lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, cached.checked_at, true)
+    }
     return {
       platform: normalizedClaim.platform,
       identity: normalizedClaim.identity,
@@ -214,6 +248,12 @@ async function verifySingleClaim(
     type: result.verified ? 'verified' : 'failed',
   }
   await rememberResult(env, key, normalizedClaim.platform, cacheResult)
+
+  // A Bluesky sign-in link with no identity-link record either: the cache keeps
+  // Bluesky's own answer, and the person is told to sign in again.
+  if (isSignInLink && !result.verified) {
+    return lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, now, false)
+  }
 
   return {
     platform: normalizedClaim.platform,
