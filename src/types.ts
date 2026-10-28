@@ -20,7 +20,7 @@ export type Bindings = {
   TIKTOK_OAUTH_ENABLED?: string
   // Base URL for OAuth callbacks (e.g., https://verifier.divine.video)
   OAUTH_REDIRECT_BASE?: string
-  // "required" once enough people have an app that confirms sign-ins (#113).
+  // "required" (what wrangler.toml sets, #113) counts only confirmed sign-ins.
   // Unset or "optional" counts unconfirmed sign-ins for a day; any other
   // value, empty included, is treated as "required".
   SIGNIN_CONFIRMATION?: string
