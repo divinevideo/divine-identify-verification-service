@@ -176,8 +176,8 @@ TikTok requires 1–5 videos (≤50 MB each) showing the complete end-to-end Log
     -H 'Cookie: tiktok_oauth_review=1' \
     -d '{"pubkey":"<64-hex>","return_url":"https://verifier.divine.video/","start_check":"<43 base64url characters>"}'
   ```
-  Expected: in the `url` the answer gives, `client_key=` is the production key, `scope=user.info.basic,user.info.profile`.
-- [ ] **Step 4 (Matt):** Full round-trip test on the verifier page, opened at `https://verifier.divine.video/?tiktok_oauth_review=1` (without it, the page hides TikTok sign-in until `TIKTOK_OAUTH_ENABLED` is `"true"`), with a **normal, non-target-user** TikTok account → expect "Signed in to TikTok as <handle>. Publish to link it to your Divine account."; after Publish, `/auth/tiktok/status?pubkey=<64-hex>&identity=<handle>` reports `"verified": true`.
+  Expected: in the `url` the answer gives, `client_key=` is the production key, and `scope=user.info.basic%2Cuser.info.profile` (the address encodes the comma).
+- [ ] **Step 4 (Matt):** Full round-trip test on the verifier page, opened at `https://verifier.divine.video/?tiktok_oauth_review=1` (without it, the page hides TikTok sign-in until `TIKTOK_OAUTH_ENABLED` is `"true"`), with a **normal, non-target-user** TikTok account → expect "Signed in to TikTok as <handle>. Publish to link it to your Divine account."; after Publish, `/auth/tiktok/status?pubkey=<64-hex>&identity=<handle>` reports `"verified":true`.
 - [ ] **Acceptance:** A non-target-user account completes verification.
 
 ---
