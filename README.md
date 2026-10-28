@@ -95,7 +95,7 @@ Configuration lives in `wrangler.toml`.
 
 - `DISCORD_VERIFY_CHANNEL_ID` — the Discord channel used for message-based Discord verification.
 - `TIKTOK_OAUTH_ENABLED` — set to `"true"` only after production OAuth credentials pass an end-to-end check; defaults to `"false"`.
-- `SIGNIN_CONFIRMATION`: `"required"` (set in `wrangler.toml`): only confirmed sign-ins count, and `GET /auth/:platform/start` is refused. `"optional"` (the default when unset, as in tests): every finished sign-in also counts unconfirmed for 24 hours, so app versions that can't confirm keep working. Capitals and surrounding spaces are ignored. Any other value, empty included, is treated as `"required"` and logged as a warning. `GET /health` reports the mode in effect as `signin_confirmation`.
+- `SIGNIN_CONFIRMATION`: `"required"` (set in `wrangler.toml`): only confirmed sign-ins count, and `GET /auth/:platform/start` is refused. `"optional"` (the default when unset): every finished sign-in also counts unconfirmed for 24 hours, so app versions that can't confirm keep working. Capitals and surrounding spaces are ignored. Any other value, empty included, is treated as `"required"` and logged as a warning. `GET /health` reports the mode in effect as `signin_confirmation`.
 - `SIGNIN_CODE_PLACEMENT`: `"fragment"` (default) or `"query"`: where the one-time code goes in the return address. Either way, a return with a code keeps none of the fragment the return address carried.
 
 **Secrets** (set with `wrangler secret put …`, never committed):
