@@ -154,15 +154,20 @@ async function nostrConnectHarness(opts: { activationFails?: boolean } = {}) {
   )(...DEPS.map(d => env[d]))
 
   // The signer's approval of the shown request, sent on every subscription
-  // still open on an open relay.
+  // still open on an open relay. Returns how many subscriptions it reached.
   function approve() {
     const clientPubkey = shownUri.slice('nostrconnect://'.length, shownUri.indexOf('?'))
     const signerKey = generateSecretKey()
     const content = encrypt(JSON.stringify({ id: 'approve', result: SECRET }), getConversationKey(signerKey, clientPubkey))
     const approval = finalizeEvent({ kind: 24133, created_at: Math.floor(Date.now() / 1000), tags: [['p', clientPubkey]], content }, signerKey)
+    let reached = 0
     for (const socket of sockets) {
-      for (const id of socket.subscriptions) socket.deliver(['EVENT', id, approval])
+      for (const id of socket.subscriptions) {
+        socket.deliver(['EVENT', id, approval])
+        reached++
+      }
     }
+    return reached
   }
 
   return {
@@ -177,6 +182,27 @@ async function nostrConnectHarness(opts: { activationFails?: boolean } = {}) {
 
 const settle = (ms = 50) => new Promise(resolve => setTimeout(resolve, ms))
 
+// Waits up to 2 seconds for a condition, then fails with a clear message
+// rather than a test timeout.
+async function until(condition: () => boolean, what: string) {
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline) {
+    if (condition()) return
+    await settle(5)
+  }
+  throw new Error(`Timed out waiting until ${what}`)
+}
+
+// Waits until the latest request has subscribed on all its relays, so an
+// approval sent next reaches it. A fixed wait raced the request's startup on
+// slower machines: the approval then reached no subscription and the test hung.
+function untilSubscribed() {
+  return until(() => {
+    const latest = sockets.slice(-RELAYS.length)
+    return latest.length === RELAYS.length && latest.every(s => s.subscriptions.size > 0)
+  }, 'the Nostr Connect request subscribed on its relays')
+}
+
 describe('Nostr Connect Cancel (#150)', () => {
   afterEach(() => {
     for (const socket of sockets) socket.close()
@@ -188,7 +214,7 @@ describe('Nostr Connect Cancel (#150)', () => {
   it('without Cancel, an approval signs in with Nostr Connect and puts the button back', async () => {
     const h = await nostrConnectHarness()
     const started = h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     h.approve()
     await started
     expect(h.signedIn).toEqual(['nostrconnect'])
@@ -198,7 +224,7 @@ describe('Nostr Connect Cancel (#150)', () => {
   it('Cancel puts the Start button back', async () => {
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     expect(h.buttonIsWaiting()).toBe(true)
     h.page.cancelNostrConnect()
     await settle()
@@ -208,7 +234,7 @@ describe('Nostr Connect Cancel (#150)', () => {
   it('Cancel closes every relay connection the request opened', async () => {
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     expect(sockets).toHaveLength(RELAYS.length)
     h.page.cancelNostrConnect()
     await settle()
@@ -218,7 +244,7 @@ describe('Nostr Connect Cancel (#150)', () => {
   it('Cancel sends nothing on a connection it closed', async () => {
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     h.page.cancelNostrConnect()
     await settle()
     expect(sentWhileClosed).toEqual([])
@@ -227,20 +253,20 @@ describe('Nostr Connect Cancel (#150)', () => {
   it('starting again closes the earlier request\'s relay connections', async () => {
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     const earlier = [...sockets]
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     expect(earlier.map(s => s.readyState)).toEqual(RELAYS.map(() => FakeWebSocket.CLOSED))
   })
 
   it('a cancelled request that ends late leaves a new request waiting', async () => {
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     h.page.cancelNostrConnect()
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     expect(h.buttonIsWaiting()).toBe(true)
     expect(h.lastStatus()).toEqual(['Waiting for your signer to approve the Nostr Connect request...', 'loading'])
   })
@@ -248,7 +274,7 @@ describe('Nostr Connect Cancel (#150)', () => {
   it('when the approved signer cannot be used, its relay connections close and the error shows', async () => {
     const h = await nostrConnectHarness({ activationFails: true })
     const started = h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     h.approve()
     await started
     expect(h.lastStatus()).toEqual(['Signer returned an invalid pubkey.', 'error'])
@@ -261,11 +287,11 @@ describe('Nostr Connect Cancel (#150)', () => {
   it('starting again after Cancel signs in when the new request is approved', async () => {
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     h.page.cancelNostrConnect()
     await settle()
     const second = h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     h.approve()
     await second
     expect(h.signedIn).toEqual(['nostrconnect'])
@@ -275,13 +301,13 @@ describe('Nostr Connect Cancel (#150)', () => {
   it('connecting a bunker ends the waiting request', async () => {
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     await h.page.connectBunkerSigner()
     await settle()
     expect(h.signedIn).toEqual(['bunker'])
     expect(sockets.map(s => s.readyState)).toEqual(RELAYS.map(() => FakeWebSocket.CLOSED))
     expect(h.buttonIsWaiting()).toBe(false)
-    h.approve()
+    expect(h.approve()).toBe(0)
     await settle(1200)
     expect(h.signedIn).toEqual(['bunker'])
   })
@@ -289,10 +315,10 @@ describe('Nostr Connect Cancel (#150)', () => {
   it('an approval sent after Cancel does not sign in', async () => {
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     h.page.cancelNostrConnect()
     await settle()
-    h.approve()
+    expect(h.approve()).toBe(0)
     await settle(1200)
     expect(h.signedIn).toEqual([])
   })
@@ -301,13 +327,12 @@ describe('Nostr Connect Cancel (#150)', () => {
     holdConnecting = true
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
-    await settle()
-    expect(h.waitingShown()).toBe(true)
+    await until(() => h.waitingShown() && sockets.length === RELAYS.length, 'the request opened its relay connections')
     h.page.cancelNostrConnect()
     await settle()
     for (const socket of sockets) socket.open()
     await settle()
-    h.approve()
+    expect(h.approve()).toBe(0)
     await settle(1200)
     expect(h.signedIn).toEqual([])
   })
@@ -315,7 +340,7 @@ describe('Nostr Connect Cancel (#150)', () => {
   it('an approval already arriving when Cancel is pressed does not sign in', async () => {
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
-    await settle()
+    await untilSubscribed()
     h.approve()
     await settle()
     h.page.cancelNostrConnect()
