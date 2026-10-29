@@ -7,7 +7,7 @@ import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { getVerifier } from '../platforms/registry'
 import { PLATFORM_CHECK_TIME_BUDGET_MS, PlatformUnavailableError, withinTimeBudget } from '../platforms/base'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
-import { getCountedSignIn } from '../oauth/signin-records'
+import { getCountedSignIn, keepSignInWithoutExpiry } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { tidyClaim } from '../utils/tidy-claim'
 import { setPagePolicy } from '../content-security-policy'
@@ -87,6 +87,7 @@ async function verifySingleClaim(
           cached: false,
         }
       }
+      await keepSignInWithoutExpiry(env, oauthResult)
       return {
         platform: normalizedClaim.platform,
         identity: normalizedClaim.identity,

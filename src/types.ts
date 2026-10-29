@@ -67,6 +67,9 @@ export interface OAuthVerification {
   // The confirming event, so a later unlink can tell a newer list from an older one (#76).
   confirm_event_id?: string
   confirm_created_at?: number
+  // Set on a confirmed record stored with no expiry. A confirmed record without
+  // it was stored with an expiry, before confirmed records were kept without one.
+  stored_without_expiry?: true
 }
 
 export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord' | 'youtube' | 'tiktok'
@@ -148,6 +151,10 @@ export interface PlatformInfo {
   // /auth/:platform/start would do. Present only for the platforms that
   // offer a sign-in path (twitter, bluesky, youtube, tiktok).
   oauth?: boolean
+  // Days a confirmed sign-in link on this platform lasts, then the person signs
+  // in again. Present only where oauth is true and the link has a fixed
+  // lifetime; absent where a link counts while the account still matches.
+  signin_expires_after_days?: number
 }
 
 export interface SignInCallbackResult {

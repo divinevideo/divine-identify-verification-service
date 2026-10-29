@@ -23,7 +23,7 @@ function envWith(vars: Partial<Bindings>, record: Record<string, unknown> | null
   } as unknown as KVNamespace
   if (record) {
     store.set(oauthVerificationKey('twitter', 'jack', PUBKEY), JSON.stringify({
-      platform: 'twitter', identity: 'jack', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1, ...record,
+      platform: 'twitter', identity: 'jack', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), ...record,
     }))
   }
   return { CACHE_KV: kv, RATE_LIMIT_KV: kv, ...vars } as Bindings

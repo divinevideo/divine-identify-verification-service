@@ -9,7 +9,7 @@ import platforms from './platforms'
 const app = new Hono<{ Bindings: Bindings }>()
 app.route('/platforms', platforms)
 
-type PlatformsBody = { platforms: Record<string, { label: string; supported: boolean; oauth?: boolean }> }
+type PlatformsBody = { platforms: Record<string, { label: string; supported: boolean; oauth?: boolean; signin_expires_after_days?: number }> }
 
 async function fetchPlatforms(env: Partial<Bindings>): Promise<PlatformsBody> {
   const response = await app.request('/platforms', {}, env as Bindings)
@@ -156,6 +156,27 @@ describe('GET /platforms', () => {
         TWITTER_CLIENT_SECRET: 'twitter-secret',
       })
       expect(body.platforms.bluesky).toMatchObject({ oauth: false })
+    })
+  })
+
+  describe('signin_expires_after_days', () => {
+    it('is 30 for TikTok with sign-in on, and absent for Bluesky', async () => {
+      const body = await fetchPlatforms(ALL_OAUTH_CONFIGURED)
+      expect(body.platforms.tiktok.oauth).toBe(true)
+      expect(body.platforms.tiktok.signin_expires_after_days).toBe(30)
+      expect(body.platforms.bluesky.oauth).toBe(true)
+      expect(body.platforms.bluesky).not.toHaveProperty('signin_expires_after_days')
+    })
+
+    it('is absent for TikTok with sign-in off', async () => {
+      const body = await fetchPlatforms({})
+      expect(body.platforms.tiktok.oauth).toBe(false)
+      expect(body.platforms.tiktok).not.toHaveProperty('signin_expires_after_days')
+    })
+
+    it('is absent on platforms without sign-in', async () => {
+      const body = await fetchPlatforms(ALL_OAUTH_CONFIGURED)
+      expect(body.platforms.github).not.toHaveProperty('signin_expires_after_days')
     })
   })
 })

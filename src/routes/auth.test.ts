@@ -849,7 +849,7 @@ describe('GET /auth/bluesky/status for a kept sign-in', () => {
   it('is verified while the handle still points to the linked account', async () => {
     const env = createTestEnv()
     const pubkey = 'a'.repeat(64)
-    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey, verified: true, method: 'oauth', checked_at: 1, account_id: 'did:plc:alice111111111111111111', handle: 'alice.bsky.social' }))
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), account_id: 'did:plc:alice111111111111111111', handle: 'alice.bsky.social' }))
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ did: 'did:plc:alice111111111111111111' }), { status: 200 })))
     const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
     expect(await res.json()).toMatchObject({ verified: true, method: 'oauth' })
@@ -858,7 +858,7 @@ describe('GET /auth/bluesky/status for a kept sign-in', () => {
   it('is not verified when the handle now points to a different account', async () => {
     const env = createTestEnv()
     const pubkey = 'a'.repeat(64)
-    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey, verified: true, method: 'oauth', checked_at: 1, account_id: 'did:plc:alice111111111111111111', handle: 'alice.bsky.social' }))
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), account_id: 'did:plc:alice111111111111111111', handle: 'alice.bsky.social' }))
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ did: 'did:plc:other222222222222222222' }), { status: 200 })))
     const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
     expect((await res.json() as { verified: boolean }).verified).toBe(false)
