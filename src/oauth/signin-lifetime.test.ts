@@ -79,3 +79,12 @@ describe('which platforms re-check the linked account', () => {
     expect(fixedLifetimeDays(env, 'tiktok')).toBe(30)
   })
 })
+
+describe('the README states the fixed lifetime', () => {
+  it('names FIXED_SIGNIN_LIFETIME_DAYS for non-Bluesky sign-in links', async () => {
+    const { readFileSync } = await import('node:fs' as string) as { readFileSync: (path: string, encoding: string) => string }
+    const readme = readFileSync('README.md', 'utf8')
+    expect(readme).toContain(`other sign-in links last ${FIXED_SIGNIN_LIFETIME_DAYS} days, then sign in again`)
+    expect(readme).not.toMatch(/until (it is )?unlinked/)
+  })
+})

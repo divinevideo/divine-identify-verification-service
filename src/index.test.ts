@@ -355,7 +355,7 @@ Content-Type: application/json
     const docs = oauthDocsSection(await homeHtml())
     expect(docs).toContain("The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>.")
     expect(docs).toContain('The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.')
-    expect(docs).toContain('A sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.')
+    expect(docs).toContain('A sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in stays verified as long as the handle still points to the same account.')
   })
 
   it('documents YouTube and TikTok sign-in starts as POSTs with a start check when they are on', async () => {
@@ -633,6 +633,53 @@ describe('example accounts on the page', () => {
     expect(html).toContain("throw new Error('Enter your Bluesky handle (example: example.bsky.social).');")
     expect(html).toContain("identityInput.placeholder = 'example';")
     expect(html).toContain("proofInput.placeholder = 'https://x.com/example/status/123... or 123...';")
+  })
+})
+
+describe('how long sign-in links last, on the page', () => {
+  const tiktokOn = {
+    TIKTOK_CLIENT_KEY: 'k',
+    TIKTOK_CLIENT_SECRET: 's',
+    OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
+    TIKTOK_OAUTH_ENABLED: 'true',
+  }
+  const sentence = (label: string) => `Links made by signing in to ${label} last 30 days. After that, sign in again to keep them verified.`
+
+  // The Quick Connect card, from its heading to its Continue button.
+  function signInCard(html: string): string {
+    const start = html.indexOf('<h4>Sign in, no posting</h4>')
+    expect(start).toBeGreaterThan(-1)
+    const end = html.indexOf('id="oauth-start-btn"', start)
+    expect(end).toBeGreaterThan(start)
+    return html.slice(start, end)
+  }
+
+  it('says TikTok sign-in links last 30 days, in the sign-in card, when TikTok sign-in is on', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', tiktokOn)
+    expect(signInCard(html)).toContain(sentence('TikTok'))
+  })
+
+  it('says Twitter/X sign-in links last 30 days when Twitter sign-in is on', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', twitterOAuthConfig)
+    expect(signInCard(html)).toContain(sentence('Twitter/X'))
+  })
+
+  it('says YouTube sign-in links last 30 days when YouTube sign-in is on', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', { YOUTUBE_API_KEY: 'key' })
+    expect(signInCard(html)).toContain(sentence('YouTube'))
+  })
+
+  it('has the TikTok sentence but none for Bluesky when both are on', async () => {
+    const card = signInCard(await homeHtml('https://verifier.divine.video/', tiktokOn))
+    expect(card).toContain(sentence('TikTok'))
+    expect(card).not.toContain('signing in to Bluesky')
+  })
+
+  it('has no such sentence with only Bluesky sign-in on', async () => {
+    const html = await homeHtml()
+    expect(html).not.toContain('Links made by signing in to')
+    expect(html).not.toContain('for 30 days or until it is unlinked')
+    expect(html).toContain('a confirmed Bluesky sign-in stays verified as long as the handle still points to the same account')
   })
 })
 

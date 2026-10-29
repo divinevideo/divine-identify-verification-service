@@ -151,6 +151,10 @@ export interface PlatformInfo {
   // /auth/:platform/start would do. Present only for the platforms that
   // offer a sign-in path (twitter, bluesky, youtube, tiktok).
   oauth?: boolean
+  // Days a confirmed sign-in link on this platform lasts, then the person signs
+  // in again. Present only where oauth is true and the link has a fixed
+  // lifetime; absent where a link counts while the account still matches.
+  signin_expires_after_days?: number
 }
 
 export interface SignInCallbackResult {

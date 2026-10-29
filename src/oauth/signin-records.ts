@@ -100,7 +100,7 @@ export async function getCountedSignIn(env: Bindings, platform: string, identity
  * (signin-account.ts), so a record can be carried forward then. That is safe
  * because every later verification checks the account again.
  *
- * Once the claimed record is marked, later verifications skip this step, so a
+ * Once the claimed record is marked, later verifications of this claim skip this step, so a
  * pair whose write failed isn't tried again and keeps its old expiry. That is
  * preferred to retrying on every verification: the claimed link keeps counting
  * instead of lapsing at its old expiry, and only the pair's record may lapse.

@@ -7,7 +7,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 ## Features
 
 - **Eight platforms** — GitHub, Twitter/X, Bluesky, Mastodon, Telegram, Discord, YouTube, and TikTok, verified through a single API.
-- **Two verification methods**: a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A sign-in link counts only once the Divine account owner confirms it; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account. TikTok uses proof posts while its production OAuth app is pending; existing TikTok OAuth results stay valid for up to a day.
+- **Two verification methods**: a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A sign-in link counts only once the Divine account owner confirms it; a confirmed Bluesky sign-in stays verified as long as the handle still points to the same account; other sign-in links last 30 days, then sign in again. TikTok uses proof posts while its production OAuth app is pending.
 - **Batch and single verification** — check up to 10 claims in one request, or verify a single claim over JSON or a shareable URL that returns HTML for browsers and JSON for API clients.
 - **NIP-05 verification** — confirm that a NIP-05 identifier resolves to a given pubkey.
 - **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and platform outages for 5 minutes (answered with the code `temporarily_unavailable`, meaning "try again", not a rejection).
@@ -25,7 +25,7 @@ The service is a single [Hono](https://hono.dev) app running on Cloudflare Worke
 - `POST /verify/single` and `POST /api/verify` — single-claim verification (the `/api/verify` alias exists for divine-web compatibility).
 - `GET /verify/:platform/*` — URL-based verification; returns HTML for browsers, JSON with `?format=json`.
 - `GET /nip05/verify` — NIP-05 lookup.
-- `GET /platforms` — list platforms currently available to clients; deployment configuration controls YouTube and TikTok availability. Sign-in platforms also report an `oauth` field for whether sign-in is set up.
+- `GET /platforms` — list platforms currently available to clients; deployment configuration controls YouTube and TikTok availability. Sign-in platforms also report an `oauth` field for whether sign-in is set up, and, where sign-in is set up and its links last a fixed time, `signin_expires_after_days` (absent for Bluesky).
 - `GET /health` and `GET /api/health` — health checks.
 - `/auth/*`: sign-in start (`POST /auth/:platform/start`; `GET`, used by app versions that can't confirm, is refused while confirmation is required), provider callbacks, `POST /auth/confirm`, Nostr login, Bluesky client metadata, sign-in status, and revoke.
 - `GET /` — the interactive landing page (returns JSON when the client asks for it).
