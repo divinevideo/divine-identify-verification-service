@@ -938,14 +938,14 @@ Content-Type: application/json
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
 
-      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in stays verified as long as the handle still points to the same account.${signInLifetimeDocsNote}${tiktokOAuthHistoryNote}</div>
+      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in has no fixed lifetime: it is re-checked at each verification and counts while the handle still points to the same account.${signInLifetimeDocsNote}${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">
       <h2>Other Endpoints</h2>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/platforms</code></h3>
-        <p>List platforms currently available to clients. TikTok reports unsupported while production OAuth rollout is gated; proof-post verification remains available directly. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field: <code>true</code> when sign-in is set up for that platform, <code>false</code> when only a proof post works. Where a confirmed sign-in link lasts a fixed number of days, the entry also includes <code>signin_expires_after_days</code> (only when <code>oauth</code> is <code>true</code>); it is absent for Bluesky, whose links stay verified while the handle still points to the same account.</p>
+        <p>List platforms currently available to clients. TikTok reports unsupported while production OAuth rollout is gated; proof-post verification remains available directly. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field: <code>true</code> when sign-in is set up for that platform, <code>false</code> when only a proof post works. Where a confirmed sign-in link lasts a fixed number of days, the entry also includes <code>signin_expires_after_days</code> (only when <code>oauth</code> is <code>true</code>); it is absent for Bluesky, whose links have no fixed lifetime: they are re-checked at each verification and count while the handle still points to the same account.</p>
       </div>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/health</code></h3>

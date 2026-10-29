@@ -62,7 +62,7 @@ describe('whether a sign-in record is current', () => {
     expect(signInIsCurrent(env, rec, NOW)).toBe(false)
   })
 
-  it('counts a confirmed Bluesky record with a DID whatever its checked_at, since it lasts until unlinked', () => {
+  it('counts a confirmed Bluesky record with a DID whatever its checked_at, since it is re-checked instead', () => {
     const rec = { ...record('bluesky', 0, withDid), checked_at: undefined } as unknown as OAuthVerification
     expect(signInIsCurrent(env, rec, NOW)).toBe(true)
   })

@@ -355,7 +355,7 @@ Content-Type: application/json
     const docs = oauthDocsSection(await homeHtml())
     expect(docs).toContain("The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>.")
     expect(docs).toContain('The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.')
-    expect(docs).toContain('A sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in stays verified as long as the handle still points to the same account.')
+    expect(docs).toContain('A sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in has no fixed lifetime: it is re-checked at each verification and counts while the handle still points to the same account.')
   })
 
   it('documents YouTube and TikTok sign-in starts as POSTs with a start check when they are on', async () => {
@@ -679,7 +679,7 @@ describe('how long sign-in links last, on the page', () => {
     const html = await homeHtml()
     expect(html).not.toContain('Links made by signing in to')
     expect(html).not.toContain('for 30 days or until it is unlinked')
-    expect(html).toContain('a confirmed Bluesky sign-in stays verified as long as the handle still points to the same account')
+    expect(html).toContain('a confirmed Bluesky sign-in has no fixed lifetime: it is re-checked at each verification and counts while the handle still points to the same account')
   })
 })
 
