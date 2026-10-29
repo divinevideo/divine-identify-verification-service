@@ -3,13 +3,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Bindings } from '../types'
 import { call, verifierAdapter as adapter } from './harness'
+import { RETURN_URL, SIGNIN_ID, startTwitter as startTwitterWith, stubTwitterCallback } from './signin-driver'
 
 const PUBKEY = 'ab'.repeat(32)
 const target = adapter.target
 const BASE = 'https://verifier.divine.video'
-const SIGNIN_ID = '0123456789abcdef0123456789abcdef'
-// mobile 1.0.25+ verifier_client.dart: return_url is the app link with the sign-in id.
-const RETURN_URL = `https://divine.video/app/callback?signin=${SIGNIN_ID}`
 // 43 characters of base64url, as mobile signin_confirmation.dart sends.
 const START_CHECK = 'G2CN_J8Es1JmsWz0QXd2Kc-4p-lCo8GCsR-tVw6vre4'
 
@@ -71,22 +69,7 @@ function stubBlueskyCallback() {
   }))
 }
 
-async function startTwitter(env: Bindings): Promise<string> {
-  const res = await call(target, 'POST', '/auth/twitter/start',
-    { pubkey: PUBKEY, return_url: RETURN_URL, start_check: START_CHECK }, env)
-  expect(res.status).toBe(200)
-  const { url } = await res.json() as { url: string }
-  return new URL(url).searchParams.get('state') as string
-}
-
-function twitterCallbackFetch() {
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-    const url = String(input)
-    if (url === 'https://api.twitter.com/2/oauth2/token') return json({ access_token: 'synthetic-token' })
-    if (url.startsWith('https://api.twitter.com/2/users/me')) return json({ data: { id: '1', username: 'synthetic-user' } })
-    throw new Error(`Unexpected platform fetch: ${url}`)
-  }))
-}
+const startTwitter = (env: Bindings) => startTwitterWith(env, PUBKEY, START_CHECK)
 
 async function returnedTo(response: Response): Promise<URL> {
   expect(response.status).toBe(302)
@@ -131,7 +114,7 @@ describe('the return to the app after sign-in', () => {
   it('T3.3 returns to the return_url with the code in the fragment', async () => {
     const env = signInEnv()
     const stateId = await startTwitter(env)
-    twitterCallbackFetch()
+    stubTwitterCallback()
     vi.spyOn(console, 'info').mockImplementation(() => {})
     const location = await returnedTo(await call(target, 'GET', `/auth/twitter/callback?code=synthetic&state=${stateId}`, undefined, env))
     expect(location.origin + location.pathname).toBe('https://divine.video/app/callback')
