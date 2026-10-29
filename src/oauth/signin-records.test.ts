@@ -28,15 +28,15 @@ const bluesky = { platform: 'bluesky' as const, identity: HANDLE, account_id: DI
 const CONFIRMATION = { event_id: 'e'.repeat(64), created_at: 1_760_000_000 }
 
 describe('saving a sign-in', () => {
-  it('saves a confirmed Bluesky sign-in under the handle and the DID for 30 days, with the confirming event', async () => {
+  it('saves a confirmed Bluesky sign-in under the handle and the DID with no expiry, with the confirming event', async () => {
     const { env, store, kv } = createEnv()
     await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
     for (const identity of [HANDLE, DID]) {
       expect(read(store, 'bluesky', identity)).toMatchObject({
         identity, account_id: DID, handle: HANDLE, confirmed: true,
-        confirm_event_id: 'e'.repeat(64), confirm_created_at: 1_760_000_000,
+        confirm_event_id: 'e'.repeat(64), confirm_created_at: 1_760_000_000, stored_without_expiry: true,
       })
-      expect(ttlOf(kv, 'bluesky', identity)).toEqual({ expirationTtl: 30 * 86400 })
+      expect(ttlOf(kv, 'bluesky', identity)).toBeUndefined()
     }
   })
 
@@ -49,11 +49,12 @@ describe('saving a sign-in', () => {
     }
   })
 
-  it.each(['twitter', 'youtube', 'tiktok'] as const)('keeps a %s sign-in for a day, confirmed or not', async platform => {
-    for (const confirmation of [CONFIRMATION, null]) {
+  // How long a confirmed one counts is decided when it is read (signin-lifetime.ts).
+  it.each(['twitter', 'youtube', 'tiktok'] as const)('stores a confirmed %s sign-in with no expiry, and an unconfirmed one for a day', async platform => {
+    for (const [confirmation, ttl] of [[CONFIRMATION, undefined], [null, { expirationTtl: 86400 }]] as const) {
       const { env, kv } = createEnv()
       await saveSignIn(env, PUBKEY, { platform, identity: 'creator', account_id: 'acct-1' }, confirmation)
-      expect(ttlOf(kv, platform, 'creator')).toEqual({ expirationTtl: 86400 })
+      expect(ttlOf(kv, platform, 'creator')).toEqual(ttl)
     }
   })
 
@@ -98,6 +99,27 @@ describe('saving a sign-in', () => {
     await deleteOAuthVerification(env.CACHE_KV, 'bluesky', HANDLE, PUBKEY)
     expect(store.has(oauthVerificationKey('bluesky', DID, PUBKEY))).toBe(false)
     expect(store.has(oauthVerificationKey('bluesky', HANDLE, PUBKEY))).toBe(false)
+  })
+
+  // Confirmed records are stored with no expiry, so one past its lifetime can
+  // still be stored. It no longer counts, so it doesn't block a fresh sign-in.
+  it('lets an unconfirmed sign-in replace a confirmed one that no longer counts', async () => {
+    const NOW = 1_800_000_000
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW * 1000)
+    try {
+      const { env, store } = createEnv({ SIGNIN_CONFIRMATION: 'optional' })
+      store.set(oauthVerificationKey('tiktok', 'creator', PUBKEY), JSON.stringify({
+        platform: 'tiktok', identity: 'creator', pubkey: PUBKEY, verified: true, method: 'oauth',
+        checked_at: NOW - 31 * 24 * 60 * 60, account_id: 'acct-1', confirmed: true, stored_without_expiry: true,
+      }))
+      await saveSignIn(env, PUBKEY, { platform: 'tiktok', identity: 'creator', account_id: 'acct-1' }, null)
+      expect(read(store, 'tiktok', 'creator').confirmed).toBeUndefined()
+      expect(read(store, 'tiktok', 'creator').checked_at).toBe(NOW)
+      expect(await getCountedSignIn(env, 'tiktok', 'creator', PUBKEY)).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('removes the record left under the account\'s previous handle', async () => {

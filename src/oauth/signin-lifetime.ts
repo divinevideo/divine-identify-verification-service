@@ -20,24 +20,31 @@ export function hasAccountRecheck(env: Bindings, platform: string): boolean {
 }
 
 /**
- * How many days a confirmed link on this platform lasts, or null when it lasts
- * until it is unlinked.
+ * How many days a confirmed link on this platform lasts, or null when it counts
+ * while the account still matches.
  */
 export function fixedLifetimeDays(env: Bindings, platform: string): number | null {
   return hasAccountRecheck(env, platform) ? null : FIXED_SIGNIN_LIFETIME_DAYS
 }
 
 /**
- * Whether a sign-in record still counts at `nowSeconds`. A confirmed record
- * with an account ID, on a platform the verifier re-checks, lasts until it is
- * unlinked. Any other confirmed record lasts FIXED_SIGNIN_LIFETIME_DAYS from
- * when it was saved, and an unconfirmed one a day. A record without a numeric
- * `checked_at` can't show its age, so only a record that lasts until unlinked
- * counts without one.
+ * Whether a record is a confirmed link the verifier re-checks at every
+ * verification, which counts while the account still matches.
+ */
+export function isRecheckedLink(env: Bindings, record: OAuthVerification): boolean {
+  return record.confirmed === true && !!record.account_id && hasAccountRecheck(env, record.platform)
+}
+
+/**
+ * Whether a sign-in record still counts at `nowSeconds`. A re-checked link
+ * counts here whatever its age; the account check happens when it is verified.
+ * Any other confirmed record lasts FIXED_SIGNIN_LIFETIME_DAYS from when it was
+ * saved, and an unconfirmed one a day. A record without a numeric `checked_at`
+ * can't show its age, so only a re-checked link counts without one.
  */
 export function signInIsCurrent(env: Bindings, record: OAuthVerification, nowSeconds: number): boolean {
+  if (isRecheckedLink(env, record)) return true
   const confirmed = record.confirmed === true
-  if (confirmed && !!record.account_id && hasAccountRecheck(env, record.platform)) return true
   if (typeof record.checked_at !== 'number' || !Number.isFinite(record.checked_at)) return false
   const lifetimeSeconds = confirmed ? FIXED_SIGNIN_LIFETIME_DAYS * DAY_SECONDS : UNCONFIRMED_SIGNIN_LIFETIME_SECONDS
   return nowSeconds - record.checked_at <= lifetimeSeconds

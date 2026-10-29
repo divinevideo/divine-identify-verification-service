@@ -67,6 +67,9 @@ export interface OAuthVerification {
   // The confirming event, so a later unlink can tell a newer list from an older one (#76).
   confirm_event_id?: string
   confirm_created_at?: number
+  // Set on a confirmed record stored with no expiry. A confirmed record without
+  // it was stored with an expiry, before confirmed records were kept without one.
+  stored_without_expiry?: true
 }
 
 export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord' | 'youtube' | 'tiktok'
