@@ -1,5 +1,5 @@
-// ABOUTME: Tests that a sign-in link with no counted sign-in record answers
-// ABOUTME: "sign in again" (code signin_expired) instead of a proof-post failure.
+// ABOUTME: Tests that a sign-in link that stops counting answers with a code instead
+// ABOUTME: of a proof-post failure: signin_expired (no counted record) or signin_account_changed.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import worker from '../index'
 import type { Bindings } from '../types'
@@ -71,14 +71,14 @@ function confirmedRecord(store: Map<string, string>, platform: string, identity:
   }))
 }
 
-describe('a sign-in link with no counted sign-in answers "sign in again"', () => {
+describe('a sign-in link with no counted sign-in answers signin_expired and the neutral message', () => {
   describe.each(ROUTES)('%s', (_route, check) => {
     it.each(ACCOUNTS)('%s: no record gives signin_expired without asking the platform', async (platform, identity) => {
       const { env } = makeEnv()
       const answer = await check(env, platform, identity, 'oauth')
       expect(answer.verified).toBe(false)
       expect(answer.code).toBe('signin_expired')
-      expect(answer.error).toBe('The sign-in that linked this account no longer counts. Sign in again to verify it.')
+      expect(answer.error).toBe('No current sign-in verifies this account.')
       expect(fetchMock).not.toHaveBeenCalled()
     })
 
@@ -225,7 +225,7 @@ describe('Bluesky sign-in links', () => {
     const answer = await single(env, 'bluesky', 'alice.bsky.social', 'oauth')
     expect(answer.verified).toBe(false)
     expect(answer.code).toBe('signin_account_changed')
-    expect(answer.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts. Sign in again to verify it.')
+    expect(answer.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts.')
   })
 
   it('a linked account whose handle no longer exists answers signin_account_changed', async () => {
@@ -241,6 +241,6 @@ describe('Bluesky sign-in links', () => {
     const answer = await single(env, 'bluesky', 'alice.bsky.social', 'oauth')
     expect(answer.verified).toBe(false)
     expect(answer.code).toBe('signin_account_changed')
-    expect(answer.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts. Sign in again to verify it.')
+    expect(answer.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts.')
   })
 })

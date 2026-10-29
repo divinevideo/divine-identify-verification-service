@@ -105,7 +105,7 @@ describe('checking a Bluesky sign-in link', () => {
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
     const result = await check(env)
     expect(result.verified).toBe(false)
-    expect(result.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts. Sign in again to verify it.')
+    expect(result.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts.')
   })
 
   it('stops verifying when the handle no longer exists', async () => {
@@ -114,7 +114,7 @@ describe('checking a Bluesky sign-in link', () => {
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
     const result = await check(env)
     expect(result.verified).toBe(false)
-    expect(result.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts. Sign in again to verify it.')
+    expect(result.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts.')
   })
 
   it('trusts the record when Bluesky cannot be reached', async () => {

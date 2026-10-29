@@ -22,15 +22,16 @@ export const MAX_BATCH_SIZE = 10
 const SIGNIN_PLATFORMS: ReadonlySet<Platform> = new Set<Platform>(['twitter', 'bluesky', 'youtube', 'tiktok'])
 const SIGNIN_PROOF = 'oauth'
 
-// A sign-in link whose record no longer counts (it lapsed, was unlinked, or
-// was never confirmed) can only be verified again by signing in again, so it
-// says that instead of the platform's answer for a post named "oauth".
+// A sign-in link with no counting record (it lapsed, was unlinked, was never
+// confirmed, or never happened) says so, instead of the platform's answer for a post
+// named "oauth". The text is a plain fact: third parties see it too, and not
+// every platform offers sign-in.
 function lapsedSignIn(platform: Platform, identity: string, checkedAt: number, cached: boolean): VerifyResult {
   return {
     platform,
     identity,
     verified: false,
-    error: 'The sign-in that linked this account no longer counts. Sign in again to verify it.',
+    error: 'No current sign-in verifies this account.',
     code: 'signin_expired',
     checked_at: checkedAt,
     cached,
@@ -105,8 +106,8 @@ async function verifySingleClaim(
           verified: false,
           // Not "expired": the record is intact, but the handle was deleted or
           // now points to another account. Apps offer the same "Sign in again"
-          // for both codes.
-          error: 'This handle no longer points to the account that signed in, so the link no longer counts. Sign in again to verify it.',
+          // for both codes, where the platform offers sign-in.
+          error: 'This handle no longer points to the account that signed in, so the link no longer counts.',
           code: 'signin_account_changed',
           checked_at: now,
           cached: false,
