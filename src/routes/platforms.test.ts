@@ -59,7 +59,9 @@ describe('GET /platforms', () => {
   it.each<[string, Partial<Bindings>, boolean]>([
     ['with sign-in off when nothing is configured', {}, false],
     ['with sign-in on once production OAuth is enabled and the flow is fully configured', tiktokSignIn, true],
-    ['with sign-in off when enabled but the client credentials are missing', { TIKTOK_OAUTH_ENABLED: 'true' }, false],
+    ['with sign-in off when enabled but the client credentials are missing', { ...tiktokSignIn, TIKTOK_CLIENT_KEY: undefined, TIKTOK_CLIENT_SECRET: undefined }, false],
+    ['with sign-in off when enabled but the client key is missing', { ...tiktokSignIn, TIKTOK_CLIENT_KEY: undefined }, false],
+    ['with sign-in off when enabled but the client secret is missing', { ...tiktokSignIn, TIKTOK_CLIENT_SECRET: undefined }, false],
     ['with sign-in off when enabled with credentials but no redirect base', { ...tiktokSignIn, OAUTH_REDIRECT_BASE: undefined }, false],
     // The flow is otherwise fully configured, so these isolate the enable flag,
     // the main gate keeping TikTok sign-in hidden. Only "true" turns it on.
