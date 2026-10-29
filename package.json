@@ -10,7 +10,8 @@
     "check:vendor": "node scripts/build-browser-vendor.mjs --check",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
-    "test:once": "vitest run"
+    "test:once": "vitest run",
+    "test:contract": "vitest run src/contract"
   },
   "type": "commonjs",
   "dependencies": {
