@@ -125,5 +125,8 @@ export async function handleTwitterCallback(
     return { success: false, returnUrl: state.returnUrl, error: 'Twitter did not return a username' }
   }
 
-  return holdSignIn(env, state, { platform: 'twitter', identity })
+  // The user ID stays with the account when its username changes, so it's
+  // kept with the link to tell this account from a later owner of the name.
+  const accountId = userData.data?.id
+  return holdSignIn(env, state, { platform: 'twitter', identity, ...(typeof accountId === 'string' && accountId ? { account_id: accountId } : {}) })
 }

@@ -12,8 +12,9 @@ export interface Confirmation {
 }
 
 // Bluesky sign-ins are saved under the handle and the DID, so a claim of
-// either verifies; other platforms under the one identity.
-function savedIdentities(account: SignedInAccount): string[] {
+// either verifies; other platforms under the one identity. Confirming accepts
+// a claim of exactly these.
+export function savedIdentities(account: SignedInAccount): string[] {
   return account.platform === 'bluesky' && account.account_id ? [account.identity, account.account_id] : [account.identity]
 }
 

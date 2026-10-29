@@ -67,11 +67,30 @@ describe('saving a sign-in', () => {
     expect(kv.put.mock.calls.some(c => String(c[0]).startsWith('oauth_verified:'))).toBe(false)
   })
 
-  it('does not let an unconfirmed sign-in replace a confirmed one on a platform without account IDs', async () => {
+  it('does not let an unconfirmed sign-in replace a confirmed one when neither has an account ID', async () => {
     const { env, store } = createEnv()
     await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack' }, CONFIRMATION)
     await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack' }, null)
     expect(read(store, 'twitter', 'jack').confirmed).toBe(true)
+  })
+
+  it('unlinks an X sign-in by its username, leaving a record of another X account alone', async () => {
+    const { env, store } = createEnv()
+    await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack', account_id: '12' }, CONFIRMATION)
+    // A username that happens to be another account's ID.
+    await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: '12', account_id: '99' }, CONFIRMATION)
+    await deleteOAuthVerification(env.CACHE_KV, 'twitter', 'jack', PUBKEY)
+    expect(store.has(oauthVerificationKey('twitter', 'jack', PUBKEY))).toBe(false)
+    expect(read(store, 'twitter', '12')).toMatchObject({ account_id: '99' })
+  })
+
+  it('unlinks a YouTube sign-in by its handle, leaving the same channel\'s link by channel ID', async () => {
+    const { env, store } = createEnv()
+    await saveSignIn(env, PUBKEY, { platform: 'youtube', identity: 'UC1', account_id: 'UC1' }, CONFIRMATION)
+    await saveSignIn(env, PUBKEY, { platform: 'youtube', identity: '@creator', account_id: 'UC1' }, CONFIRMATION)
+    await deleteOAuthVerification(env.CACHE_KV, 'youtube', '@creator', PUBKEY)
+    expect(store.has(oauthVerificationKey('youtube', '@creator', PUBKEY))).toBe(false)
+    expect(read(store, 'youtube', 'UC1')).toMatchObject({ account_id: 'UC1', confirmed: true })
   })
 
   it('lets an unconfirmed sign-in replace a confirmed one for a different account', async () => {

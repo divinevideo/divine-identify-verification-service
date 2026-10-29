@@ -9,7 +9,7 @@ import {
   getUsedCode, storeUsedCode, getPendingSignIn, deletePendingSignIn,
   startCheckFor, confirmBindingFor, isSignInToken, sameToken,
 } from '../oauth/confirm'
-import { saveSignIn } from '../oauth/signin-records'
+import { saveSignIn, savedIdentities } from '../oauth/signin-records'
 
 const confirm = new Hono<{ Bindings: Bindings }>()
 
@@ -78,9 +78,7 @@ confirm.post('/confirm', async (c) => {
   if (!sameToken(await startCheckFor(startSecret), pending.startCheck)) return refuse('not_yours', pending.platform)
 
   const binding = await confirmBindingFor(code, pending.startCheck)
-  const claims = [pending.identity, pending.account_id]
-    .filter((id): id is string => !!id)
-    .map(id => `${pending.platform}:${id}`.toLowerCase())
+  const claims = savedIdentities(pending).map(id => `${pending.platform}:${id}`.toLowerCase())
   const bound = event.tags.some(tag => tag[0] === 'i' && typeof tag[1] === 'string'
     && claims.includes(tag[1].toLowerCase()) && typeof tag[3] === 'string' && sameToken(tag[3], binding))
   if (!bound) return refuse('claim_mismatch', pending.platform)

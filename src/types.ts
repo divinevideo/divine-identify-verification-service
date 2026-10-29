@@ -56,8 +56,9 @@ export interface OAuthVerification {
   verified: true
   method: 'oauth'
   checked_at: number
-  // The provider's permanent account ID (a Bluesky DID), which the handle is
-  // checked against while the record lasts.
+  // The provider's permanent account ID: a Bluesky DID, an X user ID, a
+  // YouTube channel ID or a TikTok open_id. Only Bluesky's handle is checked
+  // against it so far.
   account_id?: string
   // The linked handle, so unlinking by handle or by DID removes both records.
   handle?: string

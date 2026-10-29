@@ -102,7 +102,7 @@ function callbackFetchFor(platform: Platform) {
     case 'tiktok':
       return vi.fn()
         .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
-        .mockResolvedValueOnce(jsonResponse({ data: { user: { username: 'creator' } } }))
+        .mockResolvedValueOnce(jsonResponse({ data: { user: { open_id: 'open-1', username: 'creator' } } }))
     case 'bluesky':
       return blueskyCallbackFetch()
   }
@@ -599,6 +599,29 @@ describe('POST /auth/confirm', () => {
     }
     expect(info).toHaveBeenCalledWith(`${platform} sign-in confirmed`)
   })
+
+  it.each([['twitter', '1'], ['youtube', 'UC1'], ['tiktok', 'open-1']] as const)(
+    '%s: keeps the account\'s stable ID with the confirmed record, saved under the username only',
+    async (platform, accountId) => {
+      const env = platformEnv(platform, { SIGNIN_CONFIRMATION: 'required' })
+      const s = await startedAndFinished(platform, env)
+      const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+      expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
+      const record = JSON.parse((await env.CACHE_KV.get(oauthVerificationKey(platform, identityFor(platform), s.pubkey))) as string)
+      expect(record).toMatchObject({ identity: identityFor(platform), account_id: accountId, confirmed: true })
+      expect(await env.CACHE_KV.get(oauthVerificationKey(platform, accountId, s.pubkey))).toBeNull()
+    },
+  )
+
+  it.each([['twitter', '1'], ['youtube', 'UC1'], ['tiktok', 'open-1']] as const)(
+    '%s: refuses a claim of the account ID instead of the username, since only the username is linked',
+    async (platform, accountId) => {
+      const env = platformEnv(platform, { SIGNIN_CONFIRMATION: 'required' })
+      const s = await startedAndFinished(platform, env)
+      const event = await signedList(s.secretKey, [['i', `${platform}:${accountId}`, 'oauth', s.binding]])
+      expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).json.code).toBe('signin_claim_mismatch')
+    },
+  )
 
   it('answers the same event sent again with the same 200, and another event with 409', async () => {
     const env = baseEnv()
