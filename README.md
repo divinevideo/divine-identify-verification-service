@@ -108,7 +108,7 @@ Configuration lives in `wrangler.toml`.
 - `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` — TikTok Login Kit credentials.
 - `OAUTH_REDIRECT_BASE`: base URL for OAuth callbacks (for example `https://verifier.divine.video`), also used to validate return URLs against open redirects. Its origin's `/` is also accepted as a return address, for staging and local development.
 
-See `PRD.md` for the full API contract and request/response shapes.
+The landing page (`GET /`) documents the API with request and response examples. `PRD.md` is the original product brief; its API section predates sign-in and the Discord, YouTube and TikTok verifiers.
 
 ## Deployment
 
