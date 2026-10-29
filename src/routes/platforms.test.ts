@@ -61,9 +61,10 @@ describe('GET /platforms', () => {
     ['with sign-in on once production OAuth is enabled and the flow is fully configured', tiktokSignIn, true],
     ['with sign-in off when enabled but the client credentials are missing', { TIKTOK_OAUTH_ENABLED: 'true' }, false],
     ['with sign-in off when enabled with credentials but no redirect base', { ...tiktokSignIn, OAUTH_REDIRECT_BASE: undefined }, false],
-    // The flow is otherwise fully configured, so this isolates the enable flag,
-    // the main gate keeping TikTok sign-in hidden.
-    ['with sign-in off when credentials are present but production OAuth is not enabled', { ...tiktokSignIn, TIKTOK_OAUTH_ENABLED: undefined }, false],
+    // The flow is otherwise fully configured, so these isolate the enable flag,
+    // the main gate keeping TikTok sign-in hidden. Only "true" turns it on.
+    ['with sign-in off when credentials are present but TIKTOK_OAUTH_ENABLED is unset', { ...tiktokSignIn, TIKTOK_OAUTH_ENABLED: undefined }, false],
+    ['with sign-in off when credentials are present but TIKTOK_OAUTH_ENABLED is "false", as wrangler.toml deploys it', { ...tiktokSignIn, TIKTOK_OAUTH_ENABLED: 'false' }, false],
   ])('reports TikTok supported %s', async (_label, env, oauth) => {
     const body = await fetchPlatforms(env)
     expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth })
