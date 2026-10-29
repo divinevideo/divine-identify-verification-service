@@ -668,6 +668,10 @@ describe('response fields in the API docs', () => {
     expect(html).toContain('a pasted post link was reduced to the part the check uses')
   })
 
+  it('says a /platforms entry is unsupported when this deployment cannot check its proof posts', async () => {
+    expect(await homeHtml()).toContain("Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token.")
+  })
+
   it('says canonical_identity also reports a tidied account', async () => {
     const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
     expect(html).toContain('the account as sent was tidied (for example a leading @ removed, or a Mastodon handle sent as <code>@user@server</code> returned as <code>server/@user</code>)')
