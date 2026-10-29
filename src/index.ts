@@ -1522,6 +1522,7 @@ Content-Type: application/json
         setButtonLoading('start-nostr-connect-btn', true, 'Waiting...');
         setStatus('verify-login-status', 'Preparing Nostr Connect session...', 'loading');
         const tools = await loadNostrTools();
+        if (attempt.ended) return;
         const clientSecretKey = tools.pure.generateSecretKey();
         const secret = randomBase64Url(18);
         const uri = tools.nip46.createNostrConnectURI({

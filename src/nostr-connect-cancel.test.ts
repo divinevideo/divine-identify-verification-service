@@ -106,7 +106,7 @@ function scriptBetween(html: string, from: string, to: string): string {
 const DEPS = ['document', 'loadNostrTools', 'REMOTE_SIGNER_RELAYS', 'randomBase64Url', 'window', 'WebSocket', 'AbortController',
   'setButtonLoading', 'setStatus', 'clearStatus', 'showNostrConnectUi', 'hideNostrConnectUi', 'activateSigner']
 
-async function nostrConnectHarness(opts: { activationFails?: boolean } = {}) {
+async function nostrConnectHarness(opts: { activationFails?: boolean; waitForTools?: Promise<void> } = {}) {
   const res = await worker.fetch(new Request(`${API}/`), {} as never)
   const html = await res.text()
   const source = scriptBetween(html, 'async function connectBunkerSigner()', 'async function copyNostrConnectUri()')
@@ -133,7 +133,7 @@ async function nostrConnectHarness(opts: { activationFails?: boolean } = {}) {
   let shownUri = ''
   const env: Record<string, unknown> = {
     document: { getElementById: (id: string) => (id === 'bunker-input' ? { value: 'bunker://example' } : null) },
-    loadNostrTools: async () => tools,
+    loadNostrTools: async () => { await opts.waitForTools; return tools },
     REMOTE_SIGNER_RELAYS: RELAYS,
     randomBase64Url: () => SECRET,
     window: { location: { origin: API } },
@@ -229,6 +229,21 @@ describe('Nostr Connect Cancel (#150)', () => {
     h.page.cancelNostrConnect()
     await settle()
     expect(h.buttonIsWaiting()).toBe(false)
+  })
+
+  it('Cancel while the browser module loads never opens a request afterwards', async () => {
+    let finishLoading!: () => void
+    const waitForTools = new Promise<void>(resolve => { finishLoading = resolve })
+    const h = await nostrConnectHarness({ waitForTools })
+    const started = h.page.startNostrConnect()
+    h.page.cancelNostrConnect()
+    finishLoading()
+    await settle()
+    expect(h.waitingShown()).toBe(false)
+    expect(sockets).toHaveLength(0)
+    expect(h.lastStatus()).toEqual(['', 'cleared'])
+    expect(h.buttonIsWaiting()).toBe(false)
+    await started
   })
 
   it('Cancel closes every relay connection the request opened', async () => {
