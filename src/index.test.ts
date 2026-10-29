@@ -111,6 +111,25 @@ function sliceSelect(html: string, id: string): string {
   return html.slice(start, end)
 }
 
+// Where each platform pill links to, by platform.
+function pillTargets(html: string): Record<string, string> {
+  const pills = [...html.matchAll(/<a class="platform-pill" href="#([a-z-]+)" data-platform="([a-z]+)"/g)]
+  return Object.fromEntries(pills.map(([, target, platform]) => [platform, target]))
+}
+
+function platformTableRow(html: string, code: string): string {
+  const marker = `<td><code>${code}</code></td>`
+  const idx = html.indexOf(marker)
+  expect(idx).toBeGreaterThan(-1)
+  return html.slice(html.lastIndexOf('<tr>', idx), html.indexOf('</tr>', idx))
+}
+
+function oauthDocsSection(html: string): string {
+  const start = html.indexOf('<section id="oauth">')
+  expect(start).toBeGreaterThan(-1)
+  return html.slice(start, html.indexOf('</section>', start))
+}
+
 // Twitter sign-in needs all three: the start step uses the client ID and
 // redirect base, and the callback's token exchange also needs the secret.
 const twitterOAuthConfig = {
@@ -118,6 +137,53 @@ const twitterOAuthConfig = {
   TWITTER_CLIENT_SECRET: 'test-client-secret',
   OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
 }
+
+// YouTube shows on the page with its API key; its sign-in also needs the
+// Google client ID and secret, and the redirect base.
+const youtubeSignInConfig = {
+  YOUTUBE_API_KEY: 'test-api-key',
+  GOOGLE_CLIENT_ID: 'test-client-id',
+  GOOGLE_CLIENT_SECRET: 'test-client-secret',
+  OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
+}
+
+describe('verifier youtube sign-in gating', () => {
+  const youtubeKeyOnly = { YOUTUBE_API_KEY: 'test-api-key' }
+
+  it('offers YouTube only as a post link when just its API key is set', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', youtubeKeyOnly)
+    expect(sliceSelect(html, 'oauth-platform-select')).not.toContain('value="youtube"')
+    expect(sliceSelect(html, 'proof-platform-select')).toContain('value="youtube"')
+    expect(pillTargets(html).youtube).toBe('link-with-post')
+    expect(platformTableRow(html, 'youtube')).toContain('<td>No</td>')
+    expect(oauthDocsSection(html)).not.toContain('/auth/youtube/')
+    expect(html).toContain('For Bluesky, sign in to it from this page. For Twitter, GitHub, Mastodon, Telegram, Discord, YouTube, and TikTok, post your npub there, then paste the link to that post.')
+  })
+
+  it('offers YouTube sign-in when it is fully configured', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', youtubeSignInConfig)
+    expect(sliceSelect(html, 'oauth-platform-select')).toContain('value="youtube"')
+    expect(pillTargets(html).youtube).toBe('quick-connect')
+    expect(platformTableRow(html, 'youtube')).toContain('<td>Yes</td>')
+    expect(oauthDocsSection(html)).toContain('POST https://verifier.divine.video/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}')
+    expect(html).toContain('For Bluesky and YouTube, sign in to it from this page. For Twitter, GitHub, Mastodon, Telegram, Discord, and TikTok, post your npub there, then paste the link to that post.')
+  })
+
+  it.each(Object.keys(youtubeSignInConfig).filter(key => key !== 'YOUTUBE_API_KEY'))('keeps YouTube sign-in hidden without %s', async (missing) => {
+    const partial = Object.fromEntries(Object.entries(youtubeSignInConfig).filter(([key]) => key !== missing))
+    const html = await homeHtml('https://verifier.divine.video/', partial)
+    expect(sliceSelect(html, 'oauth-platform-select')).not.toContain('value="youtube"')
+    expect(pillTargets(html).youtube).toBe('link-with-post')
+  })
+
+  // /platforms leaves YouTube out without its API key, so the page does too.
+  it('leaves YouTube off the page without its API key, even with sign-in configured', async () => {
+    const { YOUTUBE_API_KEY: _key, ...googleOnly } = youtubeSignInConfig
+    const html = await homeHtml('https://verifier.divine.video/', googleOnly)
+    expect(html).not.toContain('value="youtube"')
+    expect(pillTargets(html).youtube).toBeUndefined()
+  })
+})
 
 describe('verifier tiktok oauth gating', () => {
   const tiktokOAuthConfig = {
@@ -220,7 +286,7 @@ describe('verifier tiktok oauth gating', () => {
   })
 
   it('renders a grammatical Quick Connect list', async () => {
-    const html = await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, YOUTUBE_API_KEY: 'key' })
+    const html = await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, ...youtubeSignInConfig })
     expect(html).toContain('For Twitter/X, Bluesky, and YouTube, sign in to it from this page.')
   })
 
@@ -234,19 +300,6 @@ describe('verifier tiktok oauth gating', () => {
 })
 
 describe('verifier twitter oauth gating', () => {
-  function platformTableRow(html: string, code: string): string {
-    const marker = `<td><code>${code}</code></td>`
-    const idx = html.indexOf(marker)
-    expect(idx).toBeGreaterThan(-1)
-    return html.slice(html.lastIndexOf('<tr>', idx), html.indexOf('</tr>', idx))
-  }
-
-  function oauthDocsSection(html: string): string {
-    const start = html.indexOf('<section id="oauth">')
-    expect(start).toBeGreaterThan(-1)
-    return html.slice(start, html.indexOf('</section>', start))
-  }
-
   it('hides Twitter from the sign-in picker when Twitter sign-in is not configured', async () => {
     const oauthSelect = sliceSelect(await homeHtml(), 'oauth-platform-select')
     expect(oauthSelect).not.toContain('value="twitter"')
@@ -359,7 +412,7 @@ Content-Type: application/json
   })
 
   it('documents YouTube and TikTok sign-in starts as POSTs with a start check when they are on', async () => {
-    const docs = oauthDocsSection(await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, YOUTUBE_API_KEY: 'key', TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }))
+    const docs = oauthDocsSection(await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, ...youtubeSignInConfig, TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }))
     // The other platforms follow the full Bluesky example after a blank line.
     expect(docs).toContain(`secret))&gt;"}\n\nPOST https://verifier.divine.video/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}\nPOST https://verifier.divine.video/auth/youtube/start`)
     expect(docs).toContain('POST https://verifier.divine.video/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}')
@@ -382,12 +435,6 @@ describe('the two ways to link an account', () => {
     TIKTOK_CLIENT_SECRET: 'test-client-secret',
     OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
     TIKTOK_OAUTH_ENABLED: 'true',
-  }
-
-  // Where each platform pill links to, by platform.
-  function pillTargets(html: string): Record<string, string> {
-    const pills = [...html.matchAll(/<a class="platform-pill" href="#([a-z-]+)" data-platform="([a-z]+)"/g)]
-    return Object.fromEntries(pills.map(([, target, platform]) => [platform, target]))
   }
 
   // Each card runs from its id to the next card's id, in page order.
@@ -416,7 +463,7 @@ describe('the two ways to link an account', () => {
   })
 
   it('sends Twitter, TikTok and YouTube pills to Quick Connect once their sign-in is set up', async () => {
-    const targets = pillTargets(await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, ...tiktokOAuthOn, YOUTUBE_API_KEY: 'key' }))
+    const targets = pillTargets(await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, ...tiktokOAuthOn, ...youtubeSignInConfig }))
     expect(targets.twitter).toBe('quick-connect')
     expect(targets.tiktok).toBe('quick-connect')
     expect(targets.youtube).toBe('quick-connect')
@@ -425,7 +472,7 @@ describe('the two ways to link an account', () => {
 
   it.each([
     ['by default', {}],
-    ['with every sign-in set up', { ...twitterOAuthConfig, ...tiktokOAuthOn, YOUTUBE_API_KEY: 'key' }],
+    ['with every sign-in set up', { ...twitterOAuthConfig, ...tiktokOAuthOn, ...youtubeSignInConfig }],
   ])('only picks a platform the target card offers (%s)', async (_label, env) => {
     const html = await homeHtml('https://verifier.divine.video/', env)
     const targets = Object.entries(pillTargets(html))
@@ -617,7 +664,7 @@ describe('signing in with a Divine login first', () => {
 describe('example accounts on the page', () => {
   it.each([
     ['by default', {}],
-    ['with every sign-in set up', { ...twitterOAuthConfig, YOUTUBE_API_KEY: 'key', TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }],
+    ['with every sign-in set up', { ...twitterOAuthConfig, ...youtubeSignInConfig, TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }],
   ])('leaves none of the old sample names on the page (%s)', async (_label, env) => {
     const html = await homeHtml('https://verifier.divine.video/', env)
     expect(html).not.toMatch(/alice/i)

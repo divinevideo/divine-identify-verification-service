@@ -40,6 +40,8 @@ function createEnv(extra: Partial<Bindings> = {}): Bindings {
 
 const ALL_PLATFORMS_ON: Partial<Bindings> = {
   YOUTUBE_API_KEY: 'synthetic-key',
+  GOOGLE_CLIENT_ID: 'synthetic-id',
+  GOOGLE_CLIENT_SECRET: 'synthetic-secret',
   TWITTER_CLIENT_ID: 'synthetic-id',
   TWITTER_CLIENT_SECRET: 'synthetic-secret',
   TIKTOK_CLIENT_KEY: 'synthetic-key',
