@@ -212,15 +212,35 @@ describe('Bluesky sign-in links', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('a linked account that no longer matches keeps its own message', async () => {
+  it('a linked account that no longer matches answers signin_account_changed', async () => {
     const { env, store } = makeEnv()
     store.set(oauthVerificationKey('bluesky', 'alice.bsky.social', PUBKEY), JSON.stringify({
       platform: 'bluesky', identity: 'alice.bsky.social', pubkey: PUBKEY, verified: true, method: 'oauth',
-      checked_at: 1, confirmed: true, account_id: 'did:plc:someoneelsexxxxxxxxxxxxx',
+      checked_at: 1, confirmed: true, account_id: 'did:plc:old',
     }))
-    blueskyFetch([])
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input).includes('com.atproto.identity.resolveHandle')) return json({ did: 'did:plc:new' })
+      return new Response('', { status: 404 })
+    })
     const answer = await single(env, 'bluesky', 'alice.bsky.social', 'oauth')
     expect(answer.verified).toBe(false)
-    expect(answer.error).toContain('no longer matches')
+    expect(answer.code).toBe('signin_account_changed')
+    expect(answer.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts. Sign in again to verify it.')
+  })
+
+  it('a linked account whose handle no longer exists answers signin_account_changed', async () => {
+    const { env, store } = makeEnv()
+    store.set(oauthVerificationKey('bluesky', 'alice.bsky.social', PUBKEY), JSON.stringify({
+      platform: 'bluesky', identity: 'alice.bsky.social', pubkey: PUBKEY, verified: true, method: 'oauth',
+      checked_at: 1, confirmed: true, account_id: 'did:plc:old',
+    }))
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input).includes('com.atproto.identity.resolveHandle')) return json({ error: 'InvalidRequest', message: 'Unable to resolve handle' }, 400)
+      return new Response('', { status: 404 })
+    })
+    const answer = await single(env, 'bluesky', 'alice.bsky.social', 'oauth')
+    expect(answer.verified).toBe(false)
+    expect(answer.code).toBe('signin_account_changed')
+    expect(answer.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts. Sign in again to verify it.')
   })
 })

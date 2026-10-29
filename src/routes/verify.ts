@@ -103,7 +103,11 @@ async function verifySingleClaim(
           platform: normalizedClaim.platform,
           identity: normalizedClaim.identity,
           verified: false,
-          error: 'This Bluesky account no longer matches the one that was linked. Link it again.',
+          // Not "expired": the record is intact, but the handle was deleted or
+          // now points to another account. Apps offer the same "Sign in again"
+          // for both codes.
+          error: 'This handle no longer points to the account that signed in, so the link no longer counts. Sign in again to verify it.',
+          code: 'signin_account_changed',
           checked_at: now,
           cached: false,
         }
