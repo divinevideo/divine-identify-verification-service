@@ -1,14 +1,15 @@
 // ABOUTME: Pins the GET /platforms list the Divine app reads to decide which platforms
 // ABOUTME: it offers and where sign-in is shown, so a change cannot silently break it.
 import { describe, expect, it } from 'vitest'
-import { call, verifierAdapter as adapter } from './harness'
-import type { Bindings } from '../types'
+import { adapter } from './adapter'
+import { call, type ContractConfig } from './harness'
+import { SIGNIN_SETUPS, type SignInPlatform } from './signin-driver'
 
 const target = adapter.target
 
 type Entry = Record<string, unknown>
 
-async function platformsFor(overrides: Partial<Bindings> = {}): Promise<Record<string, Entry>> {
+async function platformsFor(overrides: ContractConfig = {}): Promise<Record<string, Entry>> {
   const { env } = adapter.env(overrides)
   const response = await call(target, 'GET', '/platforms', undefined, env)
   expect(response.status).toBe(200)
@@ -57,16 +58,20 @@ describe('GET /platforms (mobile verifier_platform.dart)', () => {
     expect(typeof platforms.tiktok?.supported).toBe('boolean')
   })
 
-  // mobile 1.0.26 verifier_platform.dart: oauth true is what shows the sign-in button.
-  it('T2.7 reports oauth true for Bluesky when its sign-in is set up', async () => {
-    const platforms = await platformsFor({ OAUTH_REDIRECT_BASE: 'https://synthetic.example' })
-    expect(platforms.bluesky.oauth).toBe(true)
+  // mobile 1.0.26 verifier_platform.dart: oauth true is what shows the sign-in button, and
+  // false hides it. The setups are the ones start answers 200 and 503 for
+  // (signin.contract.test.ts T3.1 and T3.2), so the two endpoints agree.
+  describe('T2.7 reports oauth as whether the platform sign-in is on', () => {
+    it.each(Object.keys(SIGNIN_SETUPS) as SignInPlatform[])('%s', async (platform) => {
+      expect((await platformsFor(SIGNIN_SETUPS[platform].on))[platform]?.oauth, 'on').toBe(true)
+      expect((await platformsFor(SIGNIN_SETUPS[platform].off))[platform]?.oauth, 'off').toBe(false)
+    })
   })
 
   // mobile 1.0.26 verifier_platform.dart: a missing oauth reads as "sign-in available",
   // so every sign-in platform must state it explicitly, in both configured and unconfigured setups.
   it('T2.3 gives every sign-in platform a boolean oauth', async () => {
-    const setups: Partial<Bindings>[] = [
+    const setups: ContractConfig[] = [
       {},
       { YOUTUBE_API_KEY: 'synthetic-key' },
     ]

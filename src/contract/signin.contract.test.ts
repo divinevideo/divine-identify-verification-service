@@ -1,26 +1,17 @@
 // ABOUTME: Pins how the Divine apps start a sign-in and how the verifier sends them back,
 // ABOUTME: so a change (or a move to another worker) cannot silently break shipped clients.
-import { describe, expect, it, vi } from 'vitest'
-import type { Bindings } from '../types'
-import { call, verifierAdapter as adapter } from './harness'
-import { RETURN_URL, SIGNIN_ID, startTwitter as startTwitterWith, stubTwitterCallback } from './signin-driver'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { adapter } from './adapter'
+import { call, type ContractConfig, type TargetEnv } from './harness'
+import {
+  RETURN_URL, SIGNIN_ID, SIGNIN_SETUPS, type SignInPlatform, signInEnv,
+  startTwitter as startTwitterWith, stubTwitterCallback,
+} from './signin-driver'
 
 const PUBKEY = 'ab'.repeat(32)
 const target = adapter.target
-const BASE = 'https://verifier.divine.video'
 // 43 characters of base64url, as mobile signin_confirmation.dart sends.
 const START_CHECK = 'G2CN_J8Es1JmsWz0QXd2Kc-4p-lCo8GCsR-tVw6vre4'
-
-// Production runs with confirmation required, the placement unset by default.
-function signInEnv(overrides: Partial<Bindings> = {}): Bindings {
-  return adapter.env({
-    OAUTH_REDIRECT_BASE: BASE,
-    SIGNIN_CONFIRMATION: 'required',
-    TWITTER_CLIENT_ID: 'synthetic-id',
-    TWITTER_CLIENT_SECRET: 'synthetic-secret',
-    ...overrides,
-  }).env
-}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -69,20 +60,29 @@ function stubBlueskyCallback() {
   }))
 }
 
-const startTwitter = (env: Bindings) => startTwitterWith(env, PUBKEY, START_CHECK)
+const startTwitter = (env: TargetEnv) => startTwitterWith(env, PUBKEY, START_CHECK)
 
 async function returnedTo(response: Response): Promise<URL> {
   expect(response.status).toBe(302)
   return new URL(response.headers.get('Location') as string)
 }
 
+const SIGNIN_PLATFORMS = Object.keys(SIGNIN_SETUPS) as SignInPlatform[]
+
+function startBody(platform: SignInPlatform) {
+  return {
+    pubkey: PUBKEY, return_url: RETURN_URL, start_check: START_CHECK,
+    ...(platform === 'bluesky' ? { handle: 'synthetic.bsky.social' } : {}),
+  }
+}
+
 describe('POST /auth/:platform/start (mobile verifier_client.dart)', () => {
-  // mobile 1.0.25+ verifier_client.dart startSignIn: success must carry an https url.
-  it('T3.1 answers 200 with an https url for a Bluesky start', async () => {
-    const env = signInEnv()
-    stubBlueskyStart({})
-    const res = await call(target, 'POST', '/auth/bluesky/start',
-      { pubkey: PUBKEY, return_url: RETURN_URL, start_check: START_CHECK, handle: 'synthetic.bsky.social' }, env)
+  // mobile 1.0.25+ verifier_client.dart startSignIn: success must carry an https url. The
+  // setups are the ones /platforms reports oauth true for (platforms.contract.test.ts T2.7).
+  it.each(SIGNIN_PLATFORMS)('T3.1 answers 200 with an https url when %s sign-in is on', async (platform) => {
+    const env = adapter.env({ SIGNIN_CONFIRMATION: 'required', ...SIGNIN_SETUPS[platform].on }).env
+    if (platform === 'bluesky') stubBlueskyStart({})
+    const res = await call(target, 'POST', `/auth/${platform}/start`, startBody(platform), env)
     expect(res.status).toBe(200)
     const body = await res.json() as { url: unknown }
     expect(typeof body.url).toBe('string')
@@ -90,20 +90,11 @@ describe('POST /auth/:platform/start (mobile verifier_client.dart)', () => {
   })
 
   // mobile 1.0.25 verifier_client.dart: only a 503 is read as "sign-in off"; any other
-  // status shows a generic failure.
-  describe('T3.2 answers 503 when a platform sign-in is off', () => {
-    const cases: [string, Partial<Bindings>][] = [
-      ['twitter', {}],
-      ['bluesky', { OAUTH_REDIRECT_BASE: undefined }],
-      ['youtube', { YOUTUBE_API_KEY: 'synthetic-key' }],
-      ['tiktok', { TIKTOK_CLIENT_KEY: 'synthetic-key', TIKTOK_CLIENT_SECRET: 'synthetic-secret', TIKTOK_OAUTH_ENABLED: 'false' }],
-    ]
-    it.each(cases)('%s', async (platform, overrides) => {
-      const env = signInEnv({ TWITTER_CLIENT_ID: undefined, TWITTER_CLIENT_SECRET: undefined, ...overrides })
-      const res = await call(target, 'POST', `/auth/${platform}/start`,
-        { pubkey: PUBKEY, return_url: RETURN_URL, start_check: START_CHECK, handle: 'synthetic.bsky.social' }, env)
-      expect(res.status).toBe(503)
-    })
+  // status shows a generic failure. The setups are the ones /platforms reports oauth false for.
+  it.each(SIGNIN_PLATFORMS)('T3.2 answers 503 when %s sign-in is off', async (platform) => {
+    const env = adapter.env({ SIGNIN_CONFIRMATION: 'required', ...SIGNIN_SETUPS[platform].off }).env
+    const res = await call(target, 'POST', `/auth/${platform}/start`, startBody(platform), env)
+    expect(res.status).toBe(503)
   })
 })
 
@@ -111,8 +102,13 @@ describe('the return to the app after sign-in', () => {
   // mobile 1.0.25+ verify_connect_cubit.dart and web stripSignInCode.ts: signin is kept,
   // platform and identity are added, and the one-time code is in the fragment because
   // web's /app/callback strips it from the query.
-  it('T3.3 returns to the return_url with the code in the fragment', async () => {
-    const env = signInEnv()
+  // Production sets SIGNIN_CODE_PLACEMENT = "fragment" (wrangler.toml); unset means the same.
+  const placements: [string, ContractConfig][] = [
+    ['unset', {}],
+    ['"fragment", as production sets it', { SIGNIN_CODE_PLACEMENT: 'fragment' }],
+  ]
+  it.each(placements)('T3.3 returns to the return_url with the code in the fragment, placement %s', async (_name, config) => {
+    const env = signInEnv(config)
     const stateId = await startTwitter(env)
     stubTwitterCallback()
     vi.spyOn(console, 'info').mockImplementation(() => {})
@@ -158,6 +154,8 @@ describe('the return to the app after sign-in', () => {
 
 describe('GET /auth/:platform/start while confirmation is required (mobile 1.0.24 verifier_client.dart)', () => {
   const query = `pubkey=${PUBKEY}&return_url=${encodeURIComponent('https://divine.video/app/callback')}`
+  // The refusal is logged; keep the expected line out of the test output.
+  beforeEach(() => { vi.spyOn(console, 'info').mockImplementation(() => {}) })
 
   // Today's behavior, pinned so the old app's refusal stays a refusal. The app reads only the status; no body is pinned.
   it('T3.6 refuses a plain request with 400', async () => {

@@ -3,23 +3,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import { schnorr } from '@noble/curves/secp256k1.js'
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js'
-import type { Bindings } from '../types'
-import { call, BASE_URL, verifierAdapter as adapter } from './harness'
-import { startTwitter, finishTwitter } from './signin-driver'
+import { adapter } from './adapter'
+import { call, BASE_URL, type TargetEnv } from './harness'
+import { signInEnv, startTwitter, finishTwitter } from './signin-driver'
 
 const target = adapter.target
 // 43 characters of base64url, as mobile signin_confirmation.dart sends.
 const START_SECRET = 'S'.repeat(43)
-
-// Production runs with confirmation required.
-function signInEnv(): Bindings {
-  return adapter.env({
-    OAUTH_REDIRECT_BASE: BASE_URL,
-    SIGNIN_CONFIRMATION: 'required',
-    TWITTER_CLIENT_ID: 'synthetic-id',
-    TWITTER_CLIENT_SECRET: 'synthetic-secret',
-  }).env
-}
+// A documentation address (RFC 5737), as the cf-connecting-ip header carries the client's.
+const CLIENT_IP = '192.0.2.1'
 
 async function sha256Bytes(text: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))
@@ -43,7 +35,7 @@ async function signed(secretKey: Uint8Array, kind: number, tags: string[][], cre
 }
 
 interface Pending {
-  env: Bindings
+  env: TargetEnv
   secretKey: Uint8Array
   pubkey: string
   code: string
@@ -75,7 +67,15 @@ async function pendingSignIn(): Promise<Pending> {
 const bound = (p: Pending) => [['i', `${p.platform}:${p.identity}`, 'oauth', p.binding]]
 
 function confirm(p: Pending, event: unknown, overrides: Record<string, unknown> = {}) {
-  return call(target, 'POST', '/auth/confirm', { code: p.code, start_secret: START_SECRET, event, ...overrides }, p.env)
+  return call(target, 'POST', '/auth/confirm', { code: p.code, start_secret: START_SECRET, event, ...overrides }, p.env,
+    { 'cf-connecting-ip': CLIENT_IP })
+}
+
+// What the app sees afterwards: whether its oauth claim verifies in the batch.
+async function oauthClaimVerifies(env: TargetEnv, claim: { platform: string; identity: string; pubkey: string }) {
+  const res = await call(target, 'POST', '/verify', { claims: [{ ...claim, proof: 'oauth' }] }, env)
+  expect(res.status).toBe(200)
+  return ((await res.json()) as { results: { verified: boolean }[] }).results[0].verified
 }
 
 // The app retries a 5xx and treats 429 as "keep waiting"; any other refusal is final.
@@ -100,6 +100,9 @@ describe('POST /auth/confirm (mobile verifier_client.dart confirmSignIn)', () =>
     // The app compares the confirm answer with the return redirect, identity ignoring case.
     expect(body.platform).toBe(p.platform)
     expect(String(body.identity).toLowerCase()).toBe(p.identity.toLowerCase())
+    // mobile 1.0.25+ identity_claims_repository.dart: the app then publishes the claim with
+    // proof "oauth", and every later batch must verify it.
+    expect(await oauthClaimVerifies(p.env, { platform: p.platform, identity: p.identity, pubkey: p.pubkey })).toBe(true)
   })
 
   // mobile 1.0.25+ verifier_client.dart: the same signed event sent again after a lost
@@ -168,6 +171,14 @@ describe('POST /auth/confirm (mobile verifier_client.dart confirmSignIn)', () =>
       expect(await refusal(await confirm(p, event, { start_secret: undefined }))).toBe('invalid_request')
     })
   })
+
+  // mobile 1.0.25+ verify_connect_cubit.dart: 429 keeps the sign-in pending, so a spent
+  // rate limit must answer exactly that, not a refusal that drops it.
+  it('T4.2 answers 429, not a refusal, when the client has spent its rate limit', async () => {
+    const p = await pendingSignIn()
+    await adapter.exhaustRateLimit(p.env, 'ip', CLIENT_IP)
+    expect((await confirm(p, await signed(p.secretKey, 10011, bound(p)))).status).toBe(429)
+  })
 })
 
 describe('POST /auth/oauth/revoke (mobile verifier_client.dart revoke)', () => {
@@ -179,12 +190,11 @@ describe('POST /auth/oauth/revoke (mobile verifier_client.dart revoke)', () => {
     const pubkey = bytesToHex(schnorr.getPublicKey(secretKey))
     const claim = { platform: 'twitter', identity: 'synthetic-user', pubkey }
     await adapter.seedSignIn(env, claim)
+    // After the unlink the check falls through to the platform, which is unreachable here;
+    // keep the expected warning out of the test output.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     // What the app sees: the oauth claim verifies before the unlink and not after.
-    const verified = async () => {
-      const res = await call(target, 'POST', '/verify', { claims: [{ ...claim, proof: 'oauth' }] }, env)
-      expect(res.status).toBe(200)
-      return ((await res.json()) as { results: { verified: boolean }[] }).results[0].verified
-    }
+    const verified = () => oauthClaimVerifies(env, claim)
     expect(await verified()).toBe(true)
 
     const event = await signed(secretKey, 27235, [['u', `${BASE_URL}/auth/oauth/revoke`], ['method', 'POST']])

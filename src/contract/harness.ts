@@ -1,21 +1,48 @@
-// ABOUTME: Shared harness for the app-contract suite: an in-process Worker target,
-// ABOUTME: stubbed KV and a fetch that fails on any unexpected platform call.
+// ABOUTME: Target-neutral harness for the app-contract suite: the adapter interface a
+// ABOUTME: target implements, the configuration names the suite sets, and a request helper.
 import { afterEach, vi } from 'vitest'
-import worker from '../index'
-import type { Bindings } from '../types'
-import { cacheKey } from '../utils/cache'
-import { oauthVerificationKey } from '../oauth/state'
 
-/** Anything that answers a request the way the deployed verifier does. */
-export type ContractTarget = (request: Request, env: Bindings) => Promise<Response>
+/**
+ * The environment a target is called with. The tests never read it: they only
+ * hand it back to the target and the adapter's seeders, so its shape is the
+ * adapter's business.
+ */
+export type TargetEnv = object
 
-/** Today's target: this repo's Worker, run in process. */
-export const workerTarget: ContractTarget = async (request, env) => worker.fetch(request, env)
+/** Anything that answers a request the way the deployed verifier does, run in this process. */
+export type ContractTarget = (request: Request, env: TargetEnv) => Promise<Response>
 
 export const BASE_URL = 'https://verifier.divine.video'
 
+/**
+ * Every configuration value the suite sets, named as this worker names them.
+ * A successor's adapter honors each name or translates it to its own. Setting a
+ * name to undefined means "not configured".
+ */
+export interface ContractConfig {
+  /** Base URL for sign-in callbacks. Unset turns every sign-in off. */
+  OAUTH_REDIRECT_BASE?: string
+  /** "required": only confirmed sign-ins count, as production runs. */
+  SIGNIN_CONFIRMATION?: string
+  /** "fragment" (production) or unset: the one-time code goes after the #. */
+  SIGNIN_CODE_PLACEMENT?: string
+  TWITTER_CLIENT_ID?: string
+  TWITTER_CLIENT_SECRET?: string
+  /** YouTube sign-in. */
+  GOOGLE_CLIENT_ID?: string
+  GOOGLE_CLIENT_SECRET?: string
+  /** YouTube proof checks; youtube is listed only when this is set. */
+  YOUTUBE_API_KEY?: string
+  /** Discord proof checks, through the bot API. */
+  DISCORD_BOT_TOKEN?: string
+  TIKTOK_CLIENT_KEY?: string
+  TIKTOK_CLIENT_SECRET?: string
+  /** "true" turns TikTok sign-in on when its keys are set; production sets "false". */
+  TIKTOK_OAUTH_ENABLED?: string
+}
+
 export interface ContractEnv {
-  env: Bindings
+  env: TargetEnv
 }
 
 export type RateLimitKind = 'pubkey' | 'platform' | 'ip'
@@ -32,62 +59,31 @@ export interface SeedClaim {
 
 /**
  * Everything a target needs to run the suite. A successor supplies its own
- * adapter; seeding is the only place internal storage layouts appear.
+ * adapter and names it in adapter.ts; seeding is the only place internal
+ * storage layouts appear.
  */
 export interface ContractAdapter {
   target: ContractTarget
-  /** A fresh environment. Any call to platform `fetch` throws unless a test installs its own. */
-  env(overrides?: Partial<Bindings>): ContractEnv
+  /**
+   * A fresh environment with this configuration. It also installs a global
+   * `fetch` that throws on any call, so a platform request the test did not
+   * stub fails loudly.
+   */
+  env(config?: ContractConfig): ContractEnv
   /** Store a confirmed sign-in record that answers this claim as verified. */
-  seedSignIn(env: Bindings, claim: SeedClaim): Promise<void>
+  seedSignIn(env: TargetEnv, claim: SeedClaim): Promise<void>
   /** Store a verified result for this claim, as an earlier check would have. */
-  seedCachedVerified(env: Bindings, claim: SeedClaim): Promise<void>
-  /** Make the named rate limit read as spent for this id. */
-  exhaustRateLimit(env: Bindings, kind: RateLimitKind, id: string): Promise<void>
+  seedCachedVerified(env: TargetEnv, claim: SeedClaim): Promise<void>
+  /**
+   * Make the named rate limit read as spent for this id: a pubkey, a platform
+   * name, or a client IP as the cf-connecting-ip header carries it.
+   */
+  exhaustRateLimit(env: TargetEnv, kind: RateLimitKind, id: string): Promise<void>
 }
 
-const RATE_LIMIT_PREFIXES: Record<RateLimitKind, string> = { pubkey: 'rl:pk', platform: 'rl:plat', ip: 'rl:ip' }
-// Rate-limit counters are keyed by a time window, so a spent limit is matched
-// by prefix and id rather than by the full key.
-const spentLimits = new WeakMap<object, string[]>()
-
-function verifierEnv(overrides: Partial<Bindings> = {}): ContractEnv {
-  const store = new Map<string, string>()
-  const kv = {
-    get: vi.fn(async (key: string) => store.get(key) ?? null),
-    put: vi.fn(async (key: string, value: string) => { store.set(key, value) }),
-    delete: vi.fn(async (key: string) => { store.delete(key) }),
-  }
-  const spent: string[] = []
-  const rateLimit = {
-    get: vi.fn(async (key: string) => (spent.some(prefix => key.startsWith(prefix)) ? '1000' : null)),
-    put: vi.fn(async () => {}),
-  }
-  spentLimits.set(rateLimit, spent)
+/** Replaces global fetch with one that throws, so no test reaches the network. */
+export function failEveryFetch(): void {
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected platform fetch') }))
-  return { env: { CACHE_KV: kv, RATE_LIMIT_KV: rateLimit, ...overrides } as unknown as Bindings }
-}
-
-/** The adapter for this repo's Worker, run in process. */
-export const verifierAdapter: ContractAdapter = {
-  target: workerTarget,
-  env: verifierEnv,
-  async seedSignIn(env, claim) {
-    await env.CACHE_KV.put(oauthVerificationKey(claim.platform, claim.identity, claim.pubkey), JSON.stringify({
-      platform: claim.platform, identity: claim.identity, pubkey: claim.pubkey, verified: true,
-      method: 'oauth', checked_at: Math.floor(Date.now() / 1000), confirmed: true,
-      ...(claim.account_id ? { account_id: claim.account_id } : {}),
-      ...(claim.handle ? { handle: claim.handle } : {}),
-    }))
-  },
-  async seedCachedVerified(env, claim) {
-    await env.CACHE_KV.put(cacheKey(claim.platform, claim.identity, claim.proof ?? '', claim.pubkey), JSON.stringify({
-      verified: true, checked_at: Math.floor(Date.now() / 1000), type: 'verified',
-    }))
-  },
-  async exhaustRateLimit(env, kind, id) {
-    spentLimits.get(env.RATE_LIMIT_KV)?.push(`${RATE_LIMIT_PREFIXES[kind]}:${id}:`)
-  },
 }
 
 // A suite file that uses the harness must not leak the fetch stub into the next one.
@@ -96,12 +92,16 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+/**
+ * Sends one request to the target. `env` is required: building one here would
+ * install a fresh throwing fetch over any stub the test set up.
+ */
 export function call(
   target: ContractTarget,
   method: string,
   path: string,
-  body?: unknown,
-  env?: Bindings,
+  body: unknown,
+  env: TargetEnv,
   headers: Record<string, string> = {},
 ): Promise<Response> {
   const init: RequestInit = { method, headers: { ...headers } }
@@ -109,5 +109,5 @@ export function call(
     ;(init.headers as Record<string, string>)['Content-Type'] = 'application/json'
     init.body = JSON.stringify(body)
   }
-  return target(new Request(`${BASE_URL}${path}`, init), env ?? verifierAdapter.env().env)
+  return target(new Request(`${BASE_URL}${path}`, init), env)
 }
