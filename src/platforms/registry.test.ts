@@ -5,7 +5,7 @@ import { getVerifier } from './registry'
 import { VALID_PLATFORMS } from '../utils/validation'
 
 describe('getVerifier', () => {
-  it.each(VALID_PLATFORMS)('has a verifier for every accepted platform: %s', (platform) => {
-    expect(getVerifier(platform).verify).toBeTypeOf('function')
+  it.each(VALID_PLATFORMS)('returns the %s verifier', (platform) => {
+    expect(getVerifier(platform).name).toBe(platform)
   })
 })
