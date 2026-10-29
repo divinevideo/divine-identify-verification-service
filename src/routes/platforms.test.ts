@@ -44,51 +44,29 @@ describe('GET /platforms', () => {
 
   // TikTok proof posts use TikTok's public oEmbed and need no credentials, so
   // TikTok is supported in every configuration (#63). Only its sign-in waits
-  // for production approval (#39), which `oauth` reports.
-  it('reports TikTok supported with no configuration, with sign-in off', async () => {
-    const body = await fetchPlatforms({})
-    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth: false })
-  })
+  // for production approval (#39), which `oauth` reports. A sandbox key is
+  // indistinguishable from a production one by inspection, so the enable flag
+  // is the operator's production signal. The flow still needs both credentials
+  // and a redirect base: startTikTokOAuth 503s without OAUTH_REDIRECT_BASE, so
+  // sign-in would otherwise advertise as available yet fail on start.
+  const tiktokSignIn: Partial<Bindings> = {
+    TIKTOK_OAUTH_ENABLED: 'true',
+    TIKTOK_CLIENT_KEY: 'prod-key',
+    TIKTOK_CLIENT_SECRET: 'prod-secret',
+    OAUTH_REDIRECT_BASE: 'https://verify.example',
+  }
 
-  it('reports TikTok sign-in on once production OAuth is enabled and the flow is fully configured', async () => {
-    const body = await fetchPlatforms({
-      TIKTOK_OAUTH_ENABLED: 'true',
-      TIKTOK_CLIENT_KEY: 'prod-key',
-      TIKTOK_CLIENT_SECRET: 'prod-secret',
-      OAUTH_REDIRECT_BASE: 'https://verify.example',
-    })
-    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth: true })
-  })
-
-  it('keeps TikTok sign-in off when enabled but the client credentials are missing', async () => {
-    // A sandbox key is indistinguishable from a production one by inspection, so the
-    // enable flag is the operator's production signal. The full OAuth flow still needs
-    // both credentials and a redirect base before it can be advertised.
-    const body = await fetchPlatforms({ TIKTOK_OAUTH_ENABLED: 'true' })
-    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth: false })
-  })
-
-  it('keeps TikTok sign-in off when enabled with credentials but no redirect base', async () => {
-    // startTikTokOAuth 503s without OAUTH_REDIRECT_BASE, so oauth must fold it in
-    // too, otherwise sign-in would advertise as available yet 503 on start.
-    const body = await fetchPlatforms({
-      TIKTOK_OAUTH_ENABLED: 'true',
-      TIKTOK_CLIENT_KEY: 'prod-key',
-      TIKTOK_CLIENT_SECRET: 'prod-secret',
-    })
-    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth: false })
-  })
-
-  it('keeps TikTok sign-in off when credentials are present but production OAuth is not enabled', async () => {
-    // The flow is otherwise fully configured (key + secret + redirect base) so this
-    // isolates the TIKTOK_OAUTH_ENABLED clause: oauth must be false purely because
-    // the enable flag is absent, which guards the primary "hide it" gate.
-    const body = await fetchPlatforms({
-      TIKTOK_CLIENT_KEY: 'sandbox-key',
-      TIKTOK_CLIENT_SECRET: 'sandbox-secret',
-      OAUTH_REDIRECT_BASE: 'https://verify.example',
-    })
-    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth: false })
+  it.each<[string, Partial<Bindings>, boolean]>([
+    ['with sign-in off when nothing is configured', {}, false],
+    ['with sign-in on once production OAuth is enabled and the flow is fully configured', tiktokSignIn, true],
+    ['with sign-in off when enabled but the client credentials are missing', { TIKTOK_OAUTH_ENABLED: 'true' }, false],
+    ['with sign-in off when enabled with credentials but no redirect base', { ...tiktokSignIn, OAUTH_REDIRECT_BASE: undefined }, false],
+    // The flow is otherwise fully configured, so this isolates the enable flag,
+    // the main gate keeping TikTok sign-in hidden.
+    ['with sign-in off when credentials are present but production OAuth is not enabled', { ...tiktokSignIn, TIKTOK_OAUTH_ENABLED: undefined }, false],
+  ])('reports TikTok supported %s', async (_label, env, oauth) => {
+    const body = await fetchPlatforms(env)
+    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth })
   })
 
   it('keeps the unauthenticated proof-post platforms supported with no configuration', async () => {
