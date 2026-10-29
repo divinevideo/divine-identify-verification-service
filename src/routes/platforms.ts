@@ -16,11 +16,11 @@ platforms.get('/', (c) => {
       twitter: isTwitterOAuthUsable(c.env),
       bluesky: isBlueskyOAuthUsable(c.env),
       youtube: isYouTubeOAuthUsable(c.env),
-      // Without the sandbox-review cookie: /platforms has no request-scoped
-      // review session to read it from, so it reports the state that applies
-      // to everyone else.
-      // Off until TIKTOK_OAUTH_ENABLED is set, once production OAuth
-      // credentials pass an end-to-end check (#39).
+      // Checked without the sandbox-review cookie on purpose: the app and the
+      // other clients that call /platforms never hold it, so this is the
+      // state everyone gets. Off until TIKTOK_OAUTH_ENABLED is "true" and the
+      // key, secret and redirect base are set. Production keeps the flag
+      // "false" until its credentials pass an end-to-end check (#39).
       tiktok: isTikTokOAuthUsable(c.env),
     },
   }) })
