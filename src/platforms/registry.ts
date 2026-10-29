@@ -23,8 +23,8 @@ export function getVerifier(platform: Platform, githubToken?: string, youtubeApi
       // A platform added to Platform without a case here fails the typecheck:
       // the claim check calls this outside its try, so a throw would fail every
       // claim in the request, not just this one.
-      const unknown: never = platform
-      throw new Error(`Unknown platform: ${unknown}`)
+      const unhandled: never = platform
+      throw new Error(`Unknown platform: ${unhandled}`)
     }
   }
 }
