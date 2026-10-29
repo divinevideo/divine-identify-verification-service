@@ -43,7 +43,7 @@ function handleLookup(answer: string | 'not-found' | 'unreachable') {
 }
 
 function signInRecord(identity: string, accountId?: string) {
-  return JSON.stringify({ platform: 'bluesky', identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1_700_000_000, ...(accountId ? { account_id: accountId } : {}) })
+  return JSON.stringify({ platform: 'bluesky', identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), ...(accountId ? { account_id: accountId } : {}) })
 }
 
 async function check(env: Bindings, identity = HANDLE) {

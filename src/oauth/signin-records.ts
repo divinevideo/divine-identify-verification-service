@@ -4,6 +4,7 @@ import type { Bindings, OAuthState, OAuthVerification, SignInCallbackResult } fr
 import { getOAuthVerification, storeOAuthVerification, oauthVerificationKey } from './state'
 import { forgetHandleLookup } from './signin-account'
 import { signInConfirmationMode, newConfirmCode, storePendingSignIn, type SignedInAccount } from './confirm'
+import { signInIsCurrent } from './signin-lifetime'
 
 /** The event that confirmed a sign-in. */
 export interface Confirmation {
@@ -76,12 +77,14 @@ export async function saveSignIn(env: Bindings, pubkey: string, account: SignedI
 
 /**
  * The sign-in record for a claim, if it counts. Every reader goes through
- * here: once confirmation is required, only confirmed records count.
+ * here: once confirmation is required, only confirmed records count, and a
+ * record counts only while its lifetime (signin-lifetime.ts) lasts.
  */
 export async function getCountedSignIn(env: Bindings, platform: string, identity: string, pubkey: string): Promise<OAuthVerification | null> {
   const record = await getOAuthVerification(env.CACHE_KV, platform, identity, pubkey)
   if (!record) return null
   if (signInConfirmationMode(env) === 'required' && record.confirmed !== true) return null
+  if (!signInIsCurrent(env, record, Math.floor(Date.now() / 1000))) return null
   return record
 }
 

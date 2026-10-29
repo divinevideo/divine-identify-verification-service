@@ -64,7 +64,7 @@ for (const path of ['/verify/single', '/api/verify']) {
 
     it.each(['', ' ', undefined, null, false, 0])('accepts a Bluesky proof of %s through OAuth', async proof => {
       const { env, store } = createEnv()
-      store.set(oauthVerificationKey('bluesky', 'synthetic.bsky.social', PUBKEY), JSON.stringify({ checked_at: 1_700_000_000 }))
+      store.set(oauthVerificationKey('bluesky', 'synthetic.bsky.social', PUBKEY), JSON.stringify({ checked_at: Math.floor(Date.now() / 1000) }))
       const response = await post(path, { ...CLAIM, platform: 'bluesky', identity: 'synthetic.bsky.social', proof }, env)
       expect(response.status).toBe(200)
       expect(await response.json()).toMatchObject({ verified: true, method: 'oauth' })
@@ -132,7 +132,7 @@ describe('GET /verify/:platform/*', () => {
 
   it('shows no proof link for a Bluesky claim whose proof is only spaces', async () => {
     const { env, store } = createEnv()
-    store.set(oauthVerificationKey('bluesky', 'synthetic.bsky.social', PUBKEY), JSON.stringify({ checked_at: 1_700_000_000 }))
+    store.set(oauthVerificationKey('bluesky', 'synthetic.bsky.social', PUBKEY), JSON.stringify({ checked_at: Math.floor(Date.now() / 1000) }))
     const response = await worker.fetch(new Request(`https://example.com/verify/bluesky/synthetic.bsky.social/%20?pubkey=${PUBKEY}`, { headers: { Accept: 'text/html' } }), env)
     expect(response.status).toBe(200)
     const html = await response.text()
@@ -142,7 +142,7 @@ describe('GET /verify/:platform/*', () => {
 
   it('accepts proofless Bluesky claims through OAuth', async () => {
     const { env, store } = createEnv()
-    store.set(oauthVerificationKey('bluesky', 'synthetic.bsky.social', PUBKEY), JSON.stringify({ checked_at: 1_700_000_000 }))
+    store.set(oauthVerificationKey('bluesky', 'synthetic.bsky.social', PUBKEY), JSON.stringify({ checked_at: Math.floor(Date.now() / 1000) }))
     const response = await worker.fetch(new Request(`https://example.com/verify/bluesky/synthetic.bsky.social/?pubkey=${PUBKEY}&format=json`), env)
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ verified: true, method: 'oauth' })

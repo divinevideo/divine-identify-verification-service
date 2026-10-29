@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Bindings } from '../types'
 import { oauthVerificationKey, deleteOAuthVerification } from './state'
 import { saveSignIn, getCountedSignIn } from './signin-records'
@@ -113,7 +113,7 @@ describe('which sign-in records count', () => {
   async function seeded(vars: Partial<Bindings>, record: Record<string, unknown>) {
     const { env, store } = createEnv(vars)
     store.set(oauthVerificationKey('twitter', 'jack', PUBKEY), JSON.stringify({
-      platform: 'twitter', identity: 'jack', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1, ...record,
+      platform: 'twitter', identity: 'jack', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), ...record,
     }))
     return env
   }
@@ -134,5 +134,58 @@ describe('which sign-in records count', () => {
   it('finds nothing when there is no record', async () => {
     const { env } = createEnv()
     expect(await getCountedSignIn(env, 'twitter', 'jack', PUBKEY)).toBeNull()
+  })
+})
+
+describe('how long a sign-in record counts', () => {
+  const NOW = 1_800_000_000
+  const DAY = 24 * 60 * 60
+  const required = { SIGNIN_CONFIRMATION: 'required' }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW * 1000)
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  function seededTikTok(vars: Partial<Bindings>, record: Record<string, unknown>) {
+    const { env, store } = createEnv(vars)
+    store.set(oauthVerificationKey('tiktok', 'creator', PUBKEY), JSON.stringify({
+      platform: 'tiktok', identity: 'creator', pubkey: PUBKEY, verified: true, method: 'oauth', account_id: 'acct-1', ...record,
+    }))
+    return env
+  }
+  const countsAt = async (vars: Partial<Bindings>, record: Record<string, unknown>) =>
+    (await getCountedSignIn(seededTikTok(vars, record), 'tiktok', 'creator', PUBKEY)) !== null
+
+  it.each([
+    ['29 days', NOW - 29 * DAY, true],
+    ['exactly 30 days', NOW - 30 * DAY, true],
+    ['30 days and a second', NOW - 30 * DAY - 1, false],
+    ['31 days', NOW - 31 * DAY, false],
+  ])('a confirmed TikTok record saved %s ago (checked_at %i) counts: %s', async (_label, checkedAt, expected) => {
+    expect(await countsAt(required, { confirmed: true, checked_at: checkedAt })).toBe(expected)
+  })
+
+  it.each([
+    ['missing', {}],
+    ['a string', { checked_at: String(NOW) }],
+    ['null', { checked_at: null }],
+  ])('a confirmed TikTok record whose checked_at is %s does not count, without throwing', async (_label, record) => {
+    await expect(countsAt(required, { confirmed: true, ...record })).resolves.toBe(false)
+  })
+
+  it('an unconfirmed record counts for a day before the switch', async () => {
+    expect(await countsAt({}, { checked_at: NOW - DAY })).toBe(true)
+    expect(await countsAt({}, { checked_at: NOW - DAY - 1 })).toBe(false)
+  })
+
+  it('a confirmed Bluesky record with a DID counts however old it is', async () => {
+    const { env, store } = createEnv(required)
+    store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), JSON.stringify({
+      platform: 'bluesky', identity: HANDLE, pubkey: PUBKEY, verified: true, method: 'oauth',
+      checked_at: NOW - 400 * DAY, account_id: DID, handle: HANDLE, confirmed: true,
+    }))
+    expect(await getCountedSignIn(env, 'bluesky', HANDLE, PUBKEY)).not.toBeNull()
   })
 })
