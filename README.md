@@ -118,6 +118,9 @@ npm run deploy    # wrangler deploy to Cloudflare
 
 The Worker is named `divine-identity-verification-service` in `wrangler.toml`. Set the required secrets in the target environment before deploying.
 
+For checked main-branch releases, CI prerequisites, release receipts, safe health
+verification, and operator rollback, see [production deployment](docs/production-deployment.md).
+
 ---
 
 Part of [Divine](https://divine.video) — your playground for human creativity · [Brand guidelines](https://github.com/divinevideo/brand-guidelines)

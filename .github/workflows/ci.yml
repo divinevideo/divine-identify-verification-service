@@ -8,13 +8,16 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never interrupt an activation halfway through. The release job rejects stale
+  # main commits after acquiring its separate production lock.
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -23,10 +26,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm
@@ -44,3 +49,60 @@ jobs:
 
       - name: Test
         run: npm run test:once
+
+  release-ready:
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Check before referencing the environment: GitHub otherwise creates a
+      # missing environment without protections when a job first references it.
+      - name: Require an explicitly enabled, protected production environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CD_ENABLED: ${{ vars.PRODUCTION_CD_ENABLED }}
+        run: |
+          test "$CD_ENABLED" = true || { echo 'Production CD prerequisites have not been enabled.'; exit 1; }
+          gh api "repos/$GH_REPO/environments/production" > "$RUNNER_TEMP/production-environment.json"
+          jq -e 'any(.protection_rules[]?; .type == "required_reviewers" and (.reviewers | length > 0))' "$RUNNER_TEMP/production-environment.json"
+
+  deploy:
+    needs: [test, release-ready]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://verifier.divine.video
+    concurrency:
+      group: production-worker
+      cancel-in-progress: false
+    steps:
+      - name: Checkout the checked commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install checked dependencies
+        run: npm ci
+      - name: Upload, activate, and verify the checked version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm run deploy:production
+      - name: Retain the release result, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: production-release.json
+          if-no-files-found: warn
+          retention-days: 90
