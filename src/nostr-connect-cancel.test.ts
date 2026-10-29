@@ -298,6 +298,24 @@ describe('Nostr Connect Cancel (#150)', () => {
     expect(h.buttonIsWaiting()).toBe(false)
   })
 
+  it('starting and cancelling another request keeps a Nostr Connect sign-in connected', async () => {
+    const h = await nostrConnectHarness()
+    const first = h.page.startNostrConnect()
+    await untilSubscribed()
+    h.approve()
+    await first
+    expect(h.signedIn).toEqual(['nostrconnect'])
+    const signedIn = [...sockets]
+    h.page.startNostrConnect()
+    await until(() => sockets.length === 2 * RELAYS.length, 'the second request opened its relay connections')
+    await untilSubscribed()
+    h.page.cancelNostrConnect()
+    await settle()
+    // The signer still listens for its replies on every relay.
+    expect(signedIn.map(s => s.readyState)).toEqual(RELAYS.map(() => FakeWebSocket.OPEN))
+    expect(signedIn.every(s => s.subscriptions.size > 0)).toBe(true)
+  })
+
   it('connecting a bunker ends the waiting request', async () => {
     const h = await nostrConnectHarness()
     h.page.startNostrConnect()
