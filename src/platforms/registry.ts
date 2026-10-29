@@ -19,7 +19,13 @@ export function getVerifier(platform: Platform, githubToken?: string, youtubeApi
     case 'discord': return new DiscordVerifier(discordBotToken, discordVerifyChannelId)
     case 'youtube': return new YouTubeVerifier(youtubeApiKey)
     case 'tiktok': return new TikTokVerifier()
-    default: throw new Error(`Unknown platform: ${platform}`)
+    default: {
+      // A platform added to Platform without a case here fails the typecheck:
+      // the claim check calls this outside its try, so a throw would fail every
+      // claim in the request, not just this one.
+      const unhandled: never = platform
+      throw new Error(`Unknown platform: ${unhandled}`)
+    }
   }
 }
 
