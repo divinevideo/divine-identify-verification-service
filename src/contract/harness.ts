@@ -91,7 +91,10 @@ export const verifierAdapter: ContractAdapter = {
 }
 
 // A suite file that uses the harness must not leak the fetch stub into the next one.
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 export function call(
   target: ContractTarget,

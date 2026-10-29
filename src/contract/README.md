@@ -11,6 +11,8 @@ To run the suite against another implementation, supply your own `ContractAdapte
 unexpected call, and has three seeders (`seedSignIn`, `seedCachedVerified`, `exhaustRateLimit`). Seeding is the only
 place internal storage layouts appear; the tests themselves touch no keys. Run just this suite with `npm run test:contract`.
 
+The sign-in tests stub global `fetch` and read the sign-in state from the provider-facing request (the authorize URL, or the Bluesky PAR body), so a successor must pass state to the provider the same way or supply a seed method.
+
 | Client | Version | Calls |
 |---|---|---|
 | divine-mobile | 1.0.24 | `/verify`, `/verify/single`, `/platforms`, revoke; legacy `GET /auth/:platform/start` |
