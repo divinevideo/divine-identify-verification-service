@@ -33,7 +33,8 @@ create credentials, environments, resources, routes, or runtime secrets.
    set repository variable `PRODUCTION_CD_ENABLED=true`. Without this deliberate
    enablement, main's release-readiness job fails visibly and **does not deploy**.
 
-The workflow's GitHub token has only `contents: read`. GitHub's environment
+The workflow's GitHub token has only `contents: read`, except the readiness job
+also has `actions: read` to inspect environment protections. GitHub's environment
 approval happens before the Cloudflare credential is made available. Pin
 Wrangler in the lockfile and use `npm ci`; actions are pinned to commit SHAs.
 Update those pins through reviewed changes.
