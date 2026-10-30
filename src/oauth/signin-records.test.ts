@@ -84,9 +84,10 @@ describe('saving a sign-in', () => {
     expect(read(store, 'twitter', '12')).toMatchObject({ account_id: '99' })
   })
 
-  it('unlinks an X sign-in by its username, leaving the same account\'s link by account ID', async () => {
+  it('unlinks an X sign-in by its username, leaving the same account\'s link under a username that is its ID', async () => {
     const { env, store } = createEnv()
     await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack', account_id: '12' }, CONFIRMATION)
+    // A username that happens to be this account's own ID; X links by username only.
     await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: '12', account_id: '12' }, CONFIRMATION)
     await deleteOAuthVerification(env.CACHE_KV, 'twitter', 'jack', PUBKEY)
     expect(store.has(oauthVerificationKey('twitter', 'jack', PUBKEY))).toBe(false)
