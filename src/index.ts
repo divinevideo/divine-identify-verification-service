@@ -909,6 +909,22 @@ Content-Type: application/json
 
 {"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}${otherOAuthStartExamples ? `\n\n${otherOAuthStartExamples}` : ''}</pre>
       <p>The answer is <code>{"url":"https://…"}</code>, the provider page to open.</p>
+      <h3>Back from the sign-in</h3>
+      <p>The sign-in returns to <code>return_url</code> with these added (any of them already there are replaced):</p>
+      <ul>
+        <li><code>platform</code> and <code>identity</code>: the account that signed in;</li>
+        <li><code>oauth_confirm</code>: the one-time code, after the <code>#</code>, valid for 10 minutes;</li>
+        <li><code>oauth_verified</code> (<code>true</code>): sent only while confirmation is optional, for app versions that can't confirm. Don't rely on it.</li>
+      </ul>
+      <p>A sign-in that didn't finish returns with <code>oauth_error</code>, a readable reason kept for older app versions (don't parse it), and <code>oauth_error_code</code>, a fixed value to branch on:</p>
+      <ul>
+        <li><code>cancelled</code>: the person cancelled or declined at the platform;</li>
+        <li><code>provider_error</code>: the platform reported another error;</li>
+        <li><code>failed</code>: the verifier couldn't check the account with the platform;</li>
+        <li><code>update_required</code>: the sign-in was started with <code>GET /auth/:platform/start</code>, as older app versions do, which is no longer accepted.</li>
+      </ul>
+      <p>Treat a code you don't know as <code>failed</code>. When the verifier can't tell where a sign-in started, or the sign-in fails unexpectedly, it returns to this page instead.</p>
+      <h3>Confirm the sign-in</h3>
       <pre>POST ${origin}/auth/confirm
 Content-Type: application/json
 
@@ -2302,10 +2318,13 @@ Content-Type: application/json
       bringIntoViewOnceLoaded(document.getElementById('verify-global-status'));
     }
 
-    // Only messages the verifier's sign-in callbacks actually send are shown.
-    function signInErrorMessage(reason) {
-      if (reason === 'Verification failed') return 'Sign-in was not completed: the account could not be verified.';
-      if (/^(cancelled or declined|could not be completed) at (Twitter|YouTube|TikTok|Bluesky)$/.test(reason)) return 'Sign-in was not completed: ' + reason;
+    // Read from the verifier's reason code (#104), not its wording, and named
+    // only with the platform of a sign-in this page started.
+    function signInErrorMessage(reasonCode, pending) {
+      const label = pending ? SIGN_IN_LABELS[pending.platform] : '';
+      if (reasonCode === 'cancelled') return 'Sign-in was not completed: ' + (label ? 'cancelled or declined at ' + label : 'it was cancelled or declined.');
+      if (reasonCode === 'provider_error') return 'Sign-in was not completed: ' + (label ? 'could not be completed at ' + label : 'it could not be completed.');
+      if (reasonCode === 'failed') return 'Sign-in was not completed: the account could not be verified.';
       return 'Sign-in was not completed.';
     }
 
@@ -2363,14 +2382,15 @@ Content-Type: application/json
       const params = new URLSearchParams(window.location.search);
       const code = signInCodeFromAddress();
       const verified = params.get('oauth_verified') === 'true';
-      const reason = params.get('oauth_error');
-      if (!code && !verified && !reason) return;
+      const reasonCode = params.get('oauth_error_code');
+      const unfinished = !!(params.get('oauth_error') || reasonCode);
+      if (!code && !verified && !unfinished) return;
       signInReturnHandled = true;
 
       const platform = params.get('platform') || '';
       const identity = params.get('identity') || '';
       const nonce = params.get('signin') || '';
-      ['signin', 'oauth_verified', 'platform', 'identity', 'oauth_error', 'oauth_confirm'].forEach(name => params.delete(name));
+      ['signin', 'oauth_verified', 'platform', 'identity', 'oauth_error', 'oauth_error_code', 'oauth_confirm'].forEach(name => params.delete(name));
       // The code leaves the address before anything else can read it, and
       // before this function first waits on anything.
       // A return with a code, wherever it was, goes back to the section anchor.
@@ -2378,9 +2398,9 @@ Content-Type: application/json
       window.history.replaceState({}, '', window.location.pathname + (params.toString() ? '?' + params.toString() : '') + hash);
 
       const pending = readPendingSignIn(nonce);
-      if (reason) {
+      if (unfinished) {
         if (pending) forgetPendingSignIn(nonce);
-        showSignInStatus(signInErrorMessage(reason), 'error');
+        showSignInStatus(signInErrorMessage(reasonCode, pending), 'error');
         return;
       }
       const handleMatches = !pending || pending.platform !== 'bluesky' || !pending.handle
