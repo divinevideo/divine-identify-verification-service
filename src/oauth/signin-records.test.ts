@@ -78,10 +78,10 @@ describe('saving a sign-in', () => {
     // A channel without a handle is linked by its channel ID.
     ['youtube', '@creator', 'UC1', 'UC1'],
     // X and TikTok link by username only: a username that happens to be this account's own ID.
-    ['twitter', 'jack', '1', '1'],
+    ['twitter', 'synthetic-x-user', '1', '1'],
     ['tiktok', 'creator', 'open-1', 'open-1'],
     // A username that happens to be another account's ID.
-    ['twitter', 'jack', '1', '99'],
+    ['twitter', 'synthetic-x-user', '1', '99'],
   ] as const)('unlinks a %s sign-in by %s, leaving the link under %s, of account %s', async (platform, identity, accountId, ownerId) => {
     const { env, store } = createEnv()
     await saveSignIn(env, PUBKEY, { platform, identity, account_id: accountId }, CONFIRMATION)
@@ -92,7 +92,7 @@ describe('saving a sign-in', () => {
   })
 
   it.each([
-    ['twitter', 'jack', '1'],
+    ['twitter', 'synthetic-x-user', '1'],
     ['youtube', '@creator', 'UC1'],
     ['tiktok', 'creator', 'open-1'],
   ] as const)('unlinks a %s sign-in by %s, leaving no record of it', async (platform, identity, accountId) => {
