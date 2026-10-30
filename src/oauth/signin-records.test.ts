@@ -91,6 +91,17 @@ describe('saving a sign-in', () => {
     expect(read(store, platform, accountId)).toMatchObject({ account_id: ownerId, confirmed: true })
   })
 
+  it.each([
+    ['twitter', 'jack', '1'],
+    ['youtube', '@creator', 'UC1'],
+    ['tiktok', 'creator', 'open-1'],
+  ] as const)('unlinks a %s sign-in by %s, leaving no record of it', async (platform, identity, accountId) => {
+    const { env, store } = createEnv()
+    await saveSignIn(env, PUBKEY, { platform, identity, account_id: accountId }, CONFIRMATION)
+    await deleteOAuthVerification(env.CACHE_KV, platform, identity, PUBKEY)
+    expect([...store.keys()]).toEqual([])
+  })
+
   it('lets an unconfirmed sign-in replace a confirmed one for a different account', async () => {
     const { env, store } = createEnv()
     await saveSignIn(env, PUBKEY, { ...bluesky, account_id: OTHER_DID }, CONFIRMATION)
