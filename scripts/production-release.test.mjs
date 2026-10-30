@@ -110,6 +110,46 @@ describe('production release guard', () => {
     if (failure === 'concurrent operator') expect(h.run).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    { hostname: 'other.example.com' }, { service: 'another-worker' },
+    { enabled: false }, { enabled: undefined },
+  ])('refuses upload when the existing domain is unsafe: %j', async changes => {
+    const h = harness()
+    const original = h.fetchImpl.getMockImplementation()
+    h.fetchImpl.mockImplementation(async (url, options) => {
+      const response = await original(url, options)
+      if (!url.includes('/workers/domains?')) return response
+      const body = await response.json()
+      return { ...response, json: async () => ({ ...body,
+        result: body.result.map(domain => ({ ...domain, ...changes })),
+      }) }
+    })
+
+    await expect(release(h)).rejects.toThrow('Production health hostname is not attached to the verified Worker')
+    expect(h.run).not.toHaveBeenCalled()
+    expect(JSON.parse(h.files.get('production-release.json'))).toMatchObject({ result: 'failed' })
+  })
+
+  it.each([
+    ['CACHE_KV', { namespace_id: '00000000000000000000000000000000' }],
+    ['RATE_LIMIT_KV', { namespace_id: '00000000000000000000000000000000' }],
+    ['CACHE_KV', { type: 'plain_text' }],
+    ['RATE_LIMIT_KV', { type: 'plain_text' }],
+  ])('refuses upload when %s has a mismatched binding: %j', async (name, changes) => {
+    const h = harness()
+    const original = h.fetchImpl.getMockImplementation()
+    h.fetchImpl.mockImplementation(async (url, options) => {
+      if (!url.endsWith(`/versions/${previous}`)) return original(url, options)
+      return { ok: true, json: async () => ({ success: true, result: { resources: {
+        bindings: bindings.map(binding => binding.name === name ? { ...binding, ...changes } : binding),
+      } } }) }
+    })
+
+    await expect(release(h)).rejects.toThrow(`Production ${name} does not match the repository configuration`)
+    expect(h.run).not.toHaveBeenCalled()
+    expect(JSON.parse(h.files.get('production-release.json'))).toMatchObject({ result: 'failed' })
+  })
+
   it('retains failure and does not activate when Wrangler upload fails', async () => {
     const h = harness({ run: vi.fn(() => ({ status: 1 })) })
     await expect(release(h)).rejects.toThrow('Wrangler release command failed')
