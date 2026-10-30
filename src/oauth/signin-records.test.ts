@@ -98,6 +98,7 @@ describe('saving a sign-in', () => {
   ] as const)('unlinks a %s sign-in by %s, leaving no record of it', async (platform, identity, accountId) => {
     const { env, store } = createEnv()
     await saveSignIn(env, PUBKEY, { platform, identity, account_id: accountId }, CONFIRMATION)
+    expect(read(store, platform, identity)).toMatchObject({ account_id: accountId, confirmed: true })
     await deleteOAuthVerification(env.CACHE_KV, platform, identity, PUBKEY)
     expect([...store.keys()]).toEqual([])
   })
