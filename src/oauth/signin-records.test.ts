@@ -74,29 +74,21 @@ describe('saving a sign-in', () => {
     expect(read(store, 'twitter', 'jack').confirmed).toBe(true)
   })
 
-  it('unlinks an X sign-in by its username, leaving a record of another X account alone', async () => {
-    const { env, store } = createEnv()
-    await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack', account_id: '1' }, CONFIRMATION)
-    // A username that happens to be another account's ID.
-    await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: '1', account_id: '99' }, CONFIRMATION)
-    await deleteOAuthVerification(env.CACHE_KV, 'twitter', 'jack', PUBKEY)
-    expect(store.has(oauthVerificationKey('twitter', 'jack', PUBKEY))).toBe(false)
-    expect(read(store, 'twitter', '1')).toMatchObject({ account_id: '99' })
-  })
-
   it.each([
     // A channel without a handle is linked by its channel ID.
-    ['youtube', '@creator', 'UC1'],
+    ['youtube', '@creator', 'UC1', 'UC1'],
     // X and TikTok link by username only: a username that happens to be this account's own ID.
-    ['twitter', 'jack', '1'],
-    ['tiktok', 'creator', 'open-1'],
-  ] as const)('unlinks a %s sign-in by %s, leaving the same account\'s link under %s', async (platform, identity, accountId) => {
+    ['twitter', 'jack', '1', '1'],
+    ['tiktok', 'creator', 'open-1', 'open-1'],
+    // A username that happens to be another account's ID.
+    ['twitter', 'jack', '1', '99'],
+  ] as const)('unlinks a %s sign-in by %s, leaving the link under %s, of account %s', async (platform, identity, accountId, ownerId) => {
     const { env, store } = createEnv()
     await saveSignIn(env, PUBKEY, { platform, identity, account_id: accountId }, CONFIRMATION)
-    await saveSignIn(env, PUBKEY, { platform, identity: accountId, account_id: accountId }, CONFIRMATION)
+    await saveSignIn(env, PUBKEY, { platform, identity: accountId, account_id: ownerId }, CONFIRMATION)
     await deleteOAuthVerification(env.CACHE_KV, platform, identity, PUBKEY)
     expect(store.has(oauthVerificationKey(platform, identity, PUBKEY))).toBe(false)
-    expect(read(store, platform, accountId)).toMatchObject({ account_id: accountId, confirmed: true })
+    expect(read(store, platform, accountId)).toMatchObject({ account_id: ownerId, confirmed: true })
   })
 
   it('lets an unconfirmed sign-in replace a confirmed one for a different account', async () => {
