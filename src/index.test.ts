@@ -294,8 +294,10 @@ describe('verifier tiktok oauth gating', () => {
     expect(await homeHtml()).toContain('Existing TikTok OAuth verifications remain recognized.')
   })
 
-  it('documents why TikTok is unavailable through the platforms endpoint', async () => {
-    expect(await homeHtml()).toContain('TikTok reports unsupported while production OAuth rollout is gated')
+  it('documents the platforms endpoint without a TikTok unsupported caveat', async () => {
+    const html = await homeHtml()
+    expect(html).not.toContain('TikTok reports unsupported')
+    expect(html).toContain('<p>List platforms currently available to clients. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field')
   })
 })
 
@@ -711,6 +713,10 @@ describe('response fields in the API docs', () => {
   it('says canonical_proof also reports a pasted link reduced to its post', async () => {
     const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
     expect(html).toContain('a pasted post link was reduced to the part the check uses')
+  })
+
+  it('says a /platforms entry is unsupported when this deployment cannot check its proof posts', async () => {
+    expect(await homeHtml()).toContain("Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token.")
   })
 
   it('says canonical_identity also reports a tidied account', async () => {

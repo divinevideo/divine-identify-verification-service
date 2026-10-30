@@ -1,6 +1,5 @@
-// ABOUTME: Tests that GET /platforms reports Discord support honestly.
-// ABOUTME: Discord proof posts resolve a message through the bot API, so without
-// ABOUTME: DISCORD_BOT_TOKEN there is no verification path — invites are refused.
+// ABOUTME: Tests that GET /platforms reports each platform's supported and oauth
+// ABOUTME: flags honestly, such as Discord needing its bot token and TikTok sign-in staying off until enabled.
 import { describe, it, expect } from 'vitest'
 import { Hono } from 'hono'
 import type { Bindings } from '../types'
@@ -43,55 +42,39 @@ describe('GET /platforms', () => {
     expect(body.platforms.discord).toMatchObject({ label: 'Discord', supported: true })
   })
 
-  it('reports TikTok unsupported until production OAuth is enabled', async () => {
-    const body = await fetchPlatforms({})
-    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
-  })
+  // TikTok proof posts use TikTok's public oEmbed and need no credentials, so
+  // TikTok is supported in every configuration (#63). Only its sign-in waits
+  // for production approval (#39), which `oauth` reports. A sandbox key is
+  // indistinguishable from a production one by inspection, so the enable flag
+  // is the operator's production signal. The flow still needs both credentials
+  // and a redirect base: startTikTokOAuth 503s without OAUTH_REDIRECT_BASE, so
+  // sign-in would otherwise advertise as available yet fail on start.
+  const tiktokSignIn: Partial<Bindings> = {
+    TIKTOK_OAUTH_ENABLED: 'true',
+    TIKTOK_CLIENT_KEY: 'prod-key',
+    TIKTOK_CLIENT_SECRET: 'prod-secret',
+    OAUTH_REDIRECT_BASE: 'https://verify.example',
+  }
 
-  it('reports TikTok supported once production OAuth is enabled and the flow is fully configured', async () => {
-    const body = await fetchPlatforms({
-      TIKTOK_OAUTH_ENABLED: 'true',
-      TIKTOK_CLIENT_KEY: 'prod-key',
-      TIKTOK_CLIENT_SECRET: 'prod-secret',
-      OAUTH_REDIRECT_BASE: 'https://verify.example',
-    })
-    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: true })
-  })
-
-  it('keeps TikTok unsupported when enabled but the client credentials are missing', async () => {
-    // A sandbox key is indistinguishable from a production one by inspection, so the
-    // enable flag is the operator's production signal. The full OAuth flow still needs
-    // both credentials and a redirect base before it can be advertised.
-    const body = await fetchPlatforms({ TIKTOK_OAUTH_ENABLED: 'true' })
-    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
-  })
-
-  it('keeps TikTok unsupported when enabled with credentials but no redirect base', async () => {
-    // startTikTokOAuth 503s without OAUTH_REDIRECT_BASE, so supported must fold it in
-    // too, otherwise the flow would advertise as available yet 503 on start.
-    const body = await fetchPlatforms({
-      TIKTOK_OAUTH_ENABLED: 'true',
-      TIKTOK_CLIENT_KEY: 'prod-key',
-      TIKTOK_CLIENT_SECRET: 'prod-secret',
-    })
-    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
-  })
-
-  it('keeps TikTok unsupported when credentials are present but production OAuth is not enabled', async () => {
-    // The flow is otherwise fully configured (key + secret + redirect base) so this
-    // isolates the TIKTOK_OAUTH_ENABLED clause: supported must be false purely because
-    // the enable flag is absent, which guards the primary "hide it" gate.
-    const body = await fetchPlatforms({
-      TIKTOK_CLIENT_KEY: 'sandbox-key',
-      TIKTOK_CLIENT_SECRET: 'sandbox-secret',
-      OAUTH_REDIRECT_BASE: 'https://verify.example',
-    })
-    expect(body.platforms.tiktok).toMatchObject({ label: 'TikTok', supported: false })
+  it.each<[string, Partial<Bindings>, boolean]>([
+    ['with sign-in off when nothing is configured', {}, false],
+    ['with sign-in on once production OAuth is enabled and the flow is fully configured', tiktokSignIn, true],
+    ['with sign-in off when enabled but the client credentials are missing', { ...tiktokSignIn, TIKTOK_CLIENT_KEY: undefined, TIKTOK_CLIENT_SECRET: undefined }, false],
+    ['with sign-in off when enabled but the client key is missing', { ...tiktokSignIn, TIKTOK_CLIENT_KEY: undefined }, false],
+    ['with sign-in off when enabled but the client secret is missing', { ...tiktokSignIn, TIKTOK_CLIENT_SECRET: undefined }, false],
+    ['with sign-in off when enabled with credentials but no redirect base', { ...tiktokSignIn, OAUTH_REDIRECT_BASE: undefined }, false],
+    // The flow is otherwise fully configured, so these isolate the enable flag,
+    // the main gate keeping TikTok sign-in hidden. Only "true" turns it on.
+    ['with sign-in off when credentials are present but TIKTOK_OAUTH_ENABLED is unset', { ...tiktokSignIn, TIKTOK_OAUTH_ENABLED: undefined }, false],
+    ['with sign-in off when credentials are present but TIKTOK_OAUTH_ENABLED is "false", as wrangler.toml deploys it', { ...tiktokSignIn, TIKTOK_OAUTH_ENABLED: 'false' }, false],
+  ])('reports TikTok supported %s', async (_label, env, oauth) => {
+    const body = await fetchPlatforms(env)
+    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth })
   })
 
   it('keeps the unauthenticated proof-post platforms supported with no configuration', async () => {
     const body = await fetchPlatforms({})
-    for (const key of ['github', 'twitter', 'mastodon', 'telegram', 'bluesky']) {
+    for (const key of ['github', 'twitter', 'mastodon', 'telegram', 'bluesky', 'tiktok']) {
       expect(body.platforms[key]).toMatchObject({ supported: true })
     }
   })

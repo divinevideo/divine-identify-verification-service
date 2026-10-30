@@ -146,6 +146,8 @@ export interface Nip05VerifyResult {
 
 export interface PlatformInfo {
   label: string
+  // Whether this deployment can check a proof post for this platform. Sign-in
+  // is reported separately, by oauth, and does not affect this flag.
   supported: boolean
   // Whether sign-in (OAuth) is set up for this platform, matching what
   // /auth/:platform/start would do. Present only for the platforms that
