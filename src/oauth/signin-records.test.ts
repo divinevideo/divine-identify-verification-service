@@ -74,32 +74,34 @@ describe('saving a sign-in', () => {
     expect(read(store, 'twitter', 'jack').confirmed).toBe(true)
   })
 
-  it('unlinks an X sign-in by its username, leaving a record of another X account alone', async () => {
-    const { env, store } = createEnv()
-    await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack', account_id: '12' }, CONFIRMATION)
+  it.each([
+    // A channel without a handle is linked by its channel ID.
+    ['youtube', '@creator', 'UC1', 'the same'],
+    // X and TikTok link by username only: a username that happens to be this account's own ID.
+    ['twitter', 'synthetic-x-user', '1', 'the same'],
+    ['tiktok', 'creator', 'open-1', 'the same'],
     // A username that happens to be another account's ID.
-    await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: '12', account_id: '99' }, CONFIRMATION)
-    await deleteOAuthVerification(env.CACHE_KV, 'twitter', 'jack', PUBKEY)
-    expect(store.has(oauthVerificationKey('twitter', 'jack', PUBKEY))).toBe(false)
-    expect(read(store, 'twitter', '12')).toMatchObject({ account_id: '99' })
+    ['twitter', 'synthetic-x-user', '1', 'another'],
+  ] as const)('unlinks a %s sign-in by %s, leaving the link under %s, of %s account', async (platform, identity, accountId, owner) => {
+    const ownerId = owner === 'the same' ? accountId : '99'
+    const { env, store } = createEnv()
+    await saveSignIn(env, PUBKEY, { platform, identity, account_id: accountId }, CONFIRMATION)
+    await saveSignIn(env, PUBKEY, { platform, identity: accountId, account_id: ownerId }, CONFIRMATION)
+    await deleteOAuthVerification(env.CACHE_KV, platform, identity, PUBKEY)
+    expect(store.has(oauthVerificationKey(platform, identity, PUBKEY))).toBe(false)
+    expect(read(store, platform, accountId)).toMatchObject({ account_id: ownerId, confirmed: true })
   })
 
-  it('unlinks an X sign-in by its username, leaving the same account\'s link by account ID', async () => {
+  it.each([
+    ['twitter', 'synthetic-x-user', '1'],
+    ['youtube', '@creator', 'UC1'],
+    ['tiktok', 'creator', 'open-1'],
+  ] as const)('unlinks a %s sign-in by %s, leaving no record of it', async (platform, identity, accountId) => {
     const { env, store } = createEnv()
-    await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack', account_id: '12' }, CONFIRMATION)
-    await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: '12', account_id: '12' }, CONFIRMATION)
-    await deleteOAuthVerification(env.CACHE_KV, 'twitter', 'jack', PUBKEY)
-    expect(store.has(oauthVerificationKey('twitter', 'jack', PUBKEY))).toBe(false)
-    expect(read(store, 'twitter', '12')).toMatchObject({ account_id: '12', confirmed: true })
-  })
-
-  it('unlinks a YouTube sign-in by its handle, leaving the same channel\'s link by channel ID', async () => {
-    const { env, store } = createEnv()
-    await saveSignIn(env, PUBKEY, { platform: 'youtube', identity: 'UC1', account_id: 'UC1' }, CONFIRMATION)
-    await saveSignIn(env, PUBKEY, { platform: 'youtube', identity: '@creator', account_id: 'UC1' }, CONFIRMATION)
-    await deleteOAuthVerification(env.CACHE_KV, 'youtube', '@creator', PUBKEY)
-    expect(store.has(oauthVerificationKey('youtube', '@creator', PUBKEY))).toBe(false)
-    expect(read(store, 'youtube', 'UC1')).toMatchObject({ account_id: 'UC1', confirmed: true })
+    await saveSignIn(env, PUBKEY, { platform, identity, account_id: accountId }, CONFIRMATION)
+    expect(read(store, platform, identity)).toMatchObject({ account_id: accountId, confirmed: true })
+    await deleteOAuthVerification(env.CACHE_KV, platform, identity, PUBKEY)
+    expect([...store.keys()]).toEqual([])
   })
 
   it('lets an unconfirmed sign-in replace a confirmed one for a different account', async () => {
