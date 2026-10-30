@@ -983,7 +983,8 @@ Content-Type: application/json
     let activeSignerSource = null;
     let nostrToolsPromise = null;
     let nostrToolsFailures = 0;
-    let nostrConnectAbortController = null;
+    // The Nostr Connect request waiting for the signer's approval, if any.
+    let nostrConnectAttempt = null;
 
     function npubToHex(npub) {
       const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
@@ -1507,7 +1508,7 @@ Content-Type: application/json
         }
         const signer = tools.nip46.BunkerSigner.fromBunker(tools.pure.generateSecretKey(), parsed);
         await signer.connect();
-        hideNostrConnectUi();
+        endNostrConnect();
         await activateSigner(signer, 'bunker', 'Connected with bunker signer.');
       } catch (e) {
         setStatus('verify-login-status', e.message || 'Could not connect bunker signer.', 'error');
@@ -1517,11 +1518,15 @@ Content-Type: application/json
     }
 
     async function startNostrConnect() {
+      endNostrConnect();
       clearStatus('verify-login-status');
+      const attempt = { ended: false, sockets: [] };
+      nostrConnectAttempt = attempt;
       try {
         setButtonLoading('start-nostr-connect-btn', true, 'Waiting...');
         setStatus('verify-login-status', 'Preparing Nostr Connect session...', 'loading');
         const tools = await loadNostrTools();
+        if (attempt.ended) return;
         const clientSecretKey = tools.pure.generateSecretKey();
         const secret = randomBase64Url(18);
         const uri = tools.nip46.createNostrConnectURI({
@@ -1532,39 +1537,61 @@ Content-Type: application/json
           name: 'Divine Verification',
           url: window.location.origin,
         });
-        if (nostrConnectAbortController) {
-          nostrConnectAbortController.abort();
-        }
-        nostrConnectAbortController = new AbortController();
         showNostrConnectUi(uri);
         setStatus('verify-login-status', 'Waiting for your signer to approve the Nostr Connect request...', 'loading');
+        // The request gets its own relay connections, so ending it can close
+        // all of them. nostr-tools' abort signal can't end it: it stops only
+        // one relay's subscription.
+        const pool = new tools.pool.SimplePool({
+          websocketImplementation: class extends WebSocket {
+            constructor(url) {
+              super(url);
+              attempt.sockets.push(this);
+            }
+          },
+        });
         const signer = await tools.nip46.BunkerSigner.fromURI(
           clientSecretKey,
           uri,
-          {},
-          nostrConnectAbortController.signal
+          { pool: pool },
+          // A signal that is never aborted, instead of a time limit: with
+          // one, the request waits for approval without a deadline and each
+          // relay gets the usual few seconds to connect.
+          new AbortController().signal
         );
-        nostrConnectAbortController = null;
+        if (attempt.ended) return;
+        nostrConnectAttempt = null;
         hideNostrConnectUi();
         await activateSigner(signer, 'nostrconnect', 'Connected with Nostr Connect.');
       } catch (e) {
-        const aborted = e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'));
-        if (aborted) {
-          clearStatus('verify-login-status');
-        } else {
-          setStatus('verify-login-status', e.message || 'Could not connect with Nostr Connect.', 'error');
-        }
+        // An ended request reports nothing.
+        if (attempt.ended) return;
+        closeNostrConnectAttempt(attempt);
+        setStatus('verify-login-status', e.message || 'Could not connect with Nostr Connect.', 'error');
       } finally {
-        setButtonLoading('start-nostr-connect-btn', false, '');
+        if (!attempt.ended) setButtonLoading('start-nostr-connect-btn', false, '');
       }
     }
 
-    function cancelNostrConnect() {
-      if (nostrConnectAbortController) {
-        nostrConnectAbortController.abort();
-        nostrConnectAbortController = null;
+    // Closes every relay connection a Nostr Connect request opened.
+    function closeNostrConnectAttempt(attempt) {
+      attempt.sockets.forEach(function(socket) { socket.close(); });
+      if (nostrConnectAttempt === attempt) nostrConnectAttempt = null;
+    }
+
+    // Ends the waiting Nostr Connect request, if any, and resets its controls.
+    // Nothing from an ended request reaches the page afterwards.
+    function endNostrConnect() {
+      if (nostrConnectAttempt) {
+        nostrConnectAttempt.ended = true;
+        closeNostrConnectAttempt(nostrConnectAttempt);
       }
       hideNostrConnectUi();
+      setButtonLoading('start-nostr-connect-btn', false, '');
+    }
+
+    function cancelNostrConnect() {
+      endNostrConnect();
       clearStatus('verify-login-status');
     }
 
