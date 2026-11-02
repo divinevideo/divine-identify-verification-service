@@ -194,7 +194,7 @@ describe('POST /auth/oauth/revoke (mobile verifier_client.dart revoke)', () => {
     const claim = { platform: 'twitter', identity: 'synthetic-user', pubkey }
     await adapter.seedSignIn(env, claim)
     // What the app sees: the oauth claim verifies before the unlink. After it, the claim
-    // answers signin_expired without a platform request.
+    // is a definite no, answered without a platform request.
     expect(await oauthClaimVerifies(env, claim)).toBe(true)
 
     const event = await signed(secretKey, 27235, [['u', `${BASE_URL}/auth/oauth/revoke`], ['method', 'POST']])
@@ -207,6 +207,7 @@ describe('POST /auth/oauth/revoke (mobile verifier_client.dart revoke)', () => {
     expect(Array.isArray(body)).toBe(false)
     const after = await oauthClaimAnswer(env, claim)
     expectAppShape(after)
-    expect(after).toMatchObject({ platform: 'twitter', identity: 'synthetic-user', verified: false, code: 'signin_expired' })
+    expect(after).toMatchObject({ platform: 'twitter', identity: 'synthetic-user', verified: false })
+    expect(after.code).not.toBe('temporarily_unavailable')
   })
 })

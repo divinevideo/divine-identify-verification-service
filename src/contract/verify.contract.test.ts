@@ -80,10 +80,9 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
     expect(byKey('github:synthetic-limited')).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
   })
 
-  // mobile 1.0.26 verification_result.dart (code temporarily_unavailable is inconclusive) and
-  // identity_claims_repository.dart (an inconclusive batch writes no verdicts, and a known-good
-  // claim is kept unless its own result is a conclusive negative): a per-platform rate limit
-  // is a retry, and a sign-in link that no longer counts is a definite no.
+  // mobile 1.0.24 identity_claims_repository.dart and 1.0.25-1.0.27 verification_result.dart:
+  // code temporarily_unavailable is inconclusive, so the batch writes no verdicts and a
+  // known-good claim keeps its badge. A per-platform rate limit is that kind of retry.
   it('T1.2 answers a per-platform rate limit as temporarily_unavailable, with the app shape', async () => {
     const { env } = adapter.env()
     await adapter.exhaustRateLimit(env, 'platform', 'github')
@@ -96,26 +95,34 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
     expect(out[0]).toMatchObject({ platform: 'github', identity: 'synthetic-platform-limited', verified: false, code: 'temporarily_unavailable' })
   })
 
-  it('T1.2 answers a sign-in link with no counted record as a definite signin_expired', async () => {
+  // mobile 1.0.24-1.0.27 (same files as above): any code but temporarily_unavailable makes
+  // verified false a definite no, so a known-good claim loses its badge. A sign-in link that
+  // no longer counts must be that. No app reads which code it is, so only that is pinned.
+  it('T1.2 answers a sign-in link with no counted record as a definite no', async () => {
     const { env } = verifyEnv()
     const out = await results(await call(target, 'POST', '/verify', {
       claims: [{ pubkey: PUBKEY, platform: 'twitter', identity: '@Synthetic-Lapsed', proof: 'oauth' }],
     }, env))
     expect(out).toHaveLength(1)
     expectAppShape(out[0])
-    expect(out[0]).toMatchObject({ platform: 'twitter', identity: '@Synthetic-Lapsed', verified: false, code: 'signin_expired' })
+    expect(out[0]).toMatchObject({ platform: 'twitter', identity: '@Synthetic-Lapsed', verified: false })
+    expect(out[0].code).not.toBe('temporarily_unavailable')
   })
 
-  it('T1.2 answers a sign-in whose account changed as a definite signin_account_changed', async () => {
+  // mobile 1.0.24-1.0.27 (same files as above): a Bluesky handle that now points to another
+  // account is a definite no, not a retry.
+  it('T1.2 answers a signed-in Bluesky handle that now points elsewhere as a definite no', async () => {
     const { env } = verifyEnv()
-    // A Bluesky link saved under a DID that differs from the account it was linked to.
-    await adapter.seedSignIn(env, { platform: 'bluesky', identity: 'did:plc:syntheticother', pubkey: PUBKEY, account_id: 'did:plc:syntheticlinked' })
+    await adapter.seedSignIn(env, { platform: 'bluesky', identity: 'synthetic.bsky.social', pubkey: PUBKEY, account_id: 'did:plc:syntheticlinked' })
+    // Bluesky now resolves the handle to a different account.
+    stubFetch(() => Response.json({ did: 'did:plc:syntheticother' }))
     const out = await results(await call(target, 'POST', '/verify', {
-      claims: [{ pubkey: PUBKEY, platform: 'bluesky', identity: 'did:plc:syntheticother', proof: '' }],
+      claims: [{ pubkey: PUBKEY, platform: 'bluesky', identity: 'synthetic.bsky.social', proof: '' }],
     }, env))
     expect(out).toHaveLength(1)
     expectAppShape(out[0])
-    expect(out[0]).toMatchObject({ platform: 'bluesky', identity: 'did:plc:syntheticother', verified: false, code: 'signin_account_changed' })
+    expect(out[0]).toMatchObject({ platform: 'bluesky', identity: 'synthetic.bsky.social', verified: false })
+    expect(out[0].code).not.toBe('temporarily_unavailable')
   })
 
   // mobile 1.0.26 identity_claims_repository.dart: results are matched on
@@ -153,8 +160,9 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
     expect(await single.json()).toMatchObject({ verified: true })
   })
 
-  // mobile 1.0.24-1.0.27 verification_result.dart: code temporarily_unavailable makes a batch result
-  // inconclusive; without it, verified false is a confirmed negative the app records.
+  // mobile 1.0.24 identity_claims_repository.dart and 1.0.25-1.0.27 verification_result.dart: code
+  // temporarily_unavailable makes a batch result inconclusive; without it, verified false is a
+  // confirmed negative the app records.
   it('T1.6 answers a platform outage in the batch as temporarily_unavailable and not verified', async () => {
     const { env } = adapter.env()
     platformDown()
