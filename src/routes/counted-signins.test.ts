@@ -71,4 +71,9 @@ describe('sign-in records answer every check the same way', () => {
   it.each(CHECKS)('%s: once required, a confirmed record counts', async (_name, check) => {
     expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required' }, { confirmed: true }))).toBe(true)
   })
+
+  it.each(CHECKS)('%s: a confirmed X record past its lifetime does not count', async (_name, check) => {
+    const checkedAt = Math.floor(Date.now() / 1000) - 31 * 24 * 60 * 60
+    expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required' }, { confirmed: true, checked_at: checkedAt }))).toBe(false)
+  })
 })
