@@ -1,6 +1,6 @@
 # App contract suite
 
-These tests pin what the Divine apps (mobile 1.0.24 to 1.0.26 and divine-web) read from this
+These tests pin what the Divine apps (mobile 1.0.24 to 1.0.27 and divine-web) read from this
 service: field names, types, statuses and codes the clients branch on. They do not pin wording
 the clients ignore. Any successor to this worker must pass the whole suite before
 `verifier.divine.video` is moved to it. Run just this suite with `npm run test:contract`.
@@ -10,6 +10,7 @@ the clients ignore. Any successor to this worker must pass the whole suite befor
 | divine-mobile | 1.0.24 | `/verify`, `/verify/single`, `/platforms`, revoke; legacy `GET /auth/:platform/start` |
 | divine-mobile | 1.0.25 | the above, with `POST /auth/:platform/start`, the return, and `POST /auth/confirm`; `/platforms` read for `label` and `supported` |
 | divine-mobile | 1.0.26 | as 1.0.25, and `/platforms` `oauth` hides the sign-in button |
+| divine-mobile | 1.0.27 | reads this service as 1.0.26 does |
 | divine-web | main | `POST /api/verify`, links to `GET /verify/:platform/:identity/:proof` |
 
 ## Running it against another implementation

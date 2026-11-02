@@ -5,6 +5,7 @@ import { bech32 } from '@scure/base'
 import { hexToBytes } from '@noble/curves/utils.js'
 import { adapter } from './adapter'
 import { call, type TargetEnv } from './harness'
+import { expectAppShape } from './app-shape'
 
 const PUBKEY = 'ab'.repeat(32)
 const OTHER_PUBKEY = 'cd'.repeat(32)
@@ -20,25 +21,10 @@ function platformDown() {
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 }
 
-// mobile 1.0.24-1.0.26 verification_result.dart: platform, identity and verified are
-// hard casts, checked_at is cast `as int`, error and code are String? (a wrong type throws).
-function expectAppShape(result: Record<string, unknown>) {
-  expect(typeof result.platform).toBe('string')
-  expect(typeof result.identity).toBe('string')
-  expect(typeof result.verified).toBe('boolean')
-  expect(Number.isInteger(result.checked_at)).toBe(true)
-  // mobile 1.0.26 identity_claims_repository.dart: checked_at is epoch seconds (a verified
-  // snapshot is fresh for 24 hours after it). Milliseconds would keep it fresh for ages.
-  expect(result.checked_at as number).toBeGreaterThan(1e9)
-  expect(result.checked_at as number).toBeLessThan(1e10)
-  for (const field of ['error', 'code']) {
-    if (field in result) expect(typeof result[field]).toBe('string')
-  }
-  // mobile verification_result.dart: cached is a bool and canonical_* are strings when present.
-  if ('cached' in result) expect(typeof result.cached).toBe('boolean')
-  for (const field of ['canonical_identity', 'canonical_proof']) {
-    if (field in result) expect(typeof result[field]).toBe('string')
-  }
+// Production runs sign-in confirmation as required, which decides whether a sign-in link counts.
+// Tests with a sign-in link in the batch run in that mode.
+function verifyEnv(config: Parameters<typeof adapter.env>[0] = {}) {
+  return adapter.env({ SIGNIN_CONFIRMATION: 'required', ...config })
 }
 
 async function results(response: Response): Promise<Record<string, unknown>[]> {
@@ -72,7 +58,7 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
   // mobile 1.0.26 verification_result.dart: one result with a missing or non-integer
   // checked_at (or missing platform, identity, verified) fails the whole batch.
   it('T1.2 gives every result in a mixed batch the shape the app hard-casts', async () => {
-    const { env } = adapter.env()
+    const { env } = verifyEnv()
     await adapter.seedSignIn(env, { platform: 'twitter', identity: 'synthetic-signin', pubkey: PUBKEY })
     await adapter.exhaustRateLimit(env, 'pubkey', OTHER_PUBKEY)
     stubFetch(() => new Response('{}', { status: 404 }))
@@ -94,30 +80,68 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
     expect(byKey('github:synthetic-limited')).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
   })
 
+  // mobile 1.0.26 verification_result.dart (code temporarily_unavailable is inconclusive) and
+  // identity_claims_repository.dart (an inconclusive batch writes no verdicts, and a known-good
+  // claim is kept unless its own result is a conclusive negative): a per-platform rate limit
+  // is a retry, and a sign-in link that no longer counts is a definite no.
+  it('T1.2 answers a per-platform rate limit as temporarily_unavailable, with the app shape', async () => {
+    const { env } = adapter.env()
+    await adapter.exhaustRateLimit(env, 'platform', 'github')
+    stubFetch(() => new Response('{}', { status: 404 }))
+    const out = await results(await call(target, 'POST', '/verify', {
+      claims: [{ pubkey: PUBKEY, platform: 'github', identity: 'synthetic-platform-limited', proof: 'abc123' }],
+    }, env))
+    expect(out).toHaveLength(1)
+    expectAppShape(out[0])
+    expect(out[0]).toMatchObject({ platform: 'github', identity: 'synthetic-platform-limited', verified: false, code: 'temporarily_unavailable' })
+  })
+
+  it('T1.2 answers a sign-in link with no counted record as a definite signin_expired', async () => {
+    const { env } = verifyEnv()
+    const out = await results(await call(target, 'POST', '/verify', {
+      claims: [{ pubkey: PUBKEY, platform: 'twitter', identity: '@Synthetic-Lapsed', proof: 'oauth' }],
+    }, env))
+    expect(out).toHaveLength(1)
+    expectAppShape(out[0])
+    expect(out[0]).toMatchObject({ platform: 'twitter', identity: '@Synthetic-Lapsed', verified: false, code: 'signin_expired' })
+  })
+
+  it('T1.2 answers a sign-in whose account changed as a definite signin_account_changed', async () => {
+    const { env } = verifyEnv()
+    // A Bluesky link saved under a DID that differs from the account it was linked to.
+    await adapter.seedSignIn(env, { platform: 'bluesky', identity: 'did:plc:syntheticother', pubkey: PUBKEY, account_id: 'did:plc:syntheticlinked' })
+    const out = await results(await call(target, 'POST', '/verify', {
+      claims: [{ pubkey: PUBKEY, platform: 'bluesky', identity: 'did:plc:syntheticother', proof: '' }],
+    }, env))
+    expect(out).toHaveLength(1)
+    expectAppShape(out[0])
+    expect(out[0]).toMatchObject({ platform: 'bluesky', identity: 'did:plc:syntheticother', verified: false, code: 'signin_account_changed' })
+  })
+
   // mobile 1.0.26 identity_claims_repository.dart: results are matched on
   // platform:identity (lowercased) of what the app sent, never the tidy form.
   it('T1.3 echoes identity exactly as sent, with the tidy form only in canonical_identity', async () => {
-    const { env } = adapter.env()
+    const { env } = verifyEnv()
     await adapter.seedSignIn(env, { platform: 'twitter', identity: 'Synthetic-User', pubkey: PUBKEY })
     await adapter.seedSignIn(env, { platform: 'twitter', identity: 'Synthetic-Spaced', pubkey: PUBKEY })
-    await adapter.seedCachedVerified(env, { platform: 'mastodon', identity: 'mastodon.social/@user', proof: '123456', pubkey: PUBKEY })
+    await adapter.seedCachedVerified(env, { platform: 'mastodon', identity: 'mastodon.social/@synthetic-user', proof: '123456', pubkey: PUBKEY })
     const out = await results(await call(target, 'POST', '/verify', {
       claims: [
         { pubkey: PUBKEY, platform: 'twitter', identity: '@Synthetic-User', proof: 'oauth' },
-        { pubkey: PUBKEY, platform: 'mastodon', identity: '@user@mastodon.social', proof: '123456' },
+        { pubkey: PUBKEY, platform: 'mastodon', identity: '@synthetic-user@mastodon.social', proof: '123456' },
         // Surrounding spaces pass the app's isServerValid, so they can be sent.
         { pubkey: PUBKEY, platform: 'twitter', identity: ' Synthetic-Spaced ', proof: 'oauth' },
       ],
     }, env))
     expect(answerFor(out, '@Synthetic-User')).toMatchObject({ verified: true, canonical_identity: 'Synthetic-User' })
-    expect(answerFor(out, '@user@mastodon.social')).toMatchObject({ verified: true, canonical_identity: 'mastodon.social/@user' })
+    expect(answerFor(out, '@synthetic-user@mastodon.social')).toMatchObject({ verified: true, canonical_identity: 'mastodon.social/@synthetic-user' })
     expect(answerFor(out, ' Synthetic-Spaced ')).toMatchObject({ verified: true, canonical_identity: 'Synthetic-Spaced' })
   })
 
   // mobile 1.0.26 identity_claim.dart isServerValid: a Bluesky claim may be sent with proof "" or
   // whitespace (sign-in only). It must be answered from the sign-in, not rejected as invalid.
   it.each(['', '  '])('T1.4 verifies a signed-in Bluesky claim sent with proof %j', async (proof) => {
-    const { env } = adapter.env()
+    const { env } = verifyEnv()
     await adapter.seedSignIn(env, { platform: 'bluesky', identity: 'synthetic.bsky.social', pubkey: PUBKEY })
     const claim = { pubkey: PUBKEY, platform: 'bluesky', identity: 'synthetic.bsky.social', proof }
     const batch = await results(await call(target, 'POST', '/verify', { claims: [claim] }, env))
@@ -129,7 +153,7 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
     expect(await single.json()).toMatchObject({ verified: true })
   })
 
-  // mobile 1.0.26 verification_result.dart: code temporarily_unavailable makes a batch result
+  // mobile 1.0.24-1.0.27 verification_result.dart: code temporarily_unavailable makes a batch result
   // inconclusive; without it, verified false is a confirmed negative the app records.
   it('T1.6 answers a platform outage in the batch as temporarily_unavailable and not verified', async () => {
     const { env } = adapter.env()
@@ -143,11 +167,12 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
 })
 
 for (const path of ['/verify/single', '/api/verify']) {
-  // mobile verifier_client.dart (single) and divine-web useExternalIdentities.ts (/api/verify):
-  // flat { platform, identity, proof, pubkey } in, one result out.
+  // mobile 1.0.24-1.0.27 verifier_client.dart (single) and divine-web useExternalIdentities.ts
+  // (/api/verify): flat { platform, identity, proof, pubkey } in, one result out.
   describe(`POST ${path}`, () => {
     const claim = { platform: 'github', identity: 'synthetic-user', proof: 'abc123', pubkey: PUBKEY }
 
+    // mobile 1.0.24-1.0.27 verification_result.dart: the same hard casts as a batch result.
     it('T1.5 takes a flat claim and returns one result with the app shape', async () => {
       const { env } = adapter.env()
       stubFetch(() => new Response('{}', { status: 404 }))
@@ -160,7 +185,7 @@ for (const path of ['/verify/single', '/api/verify']) {
       expect(typeof result.error).toBe('string')
     })
 
-    // mobile verify_connect_cubit.dart and web useExternalIdentities.ts both branch on this exact string.
+    // mobile 1.0.24-1.0.27 verify_connect_cubit.dart and web useExternalIdentities.ts both branch on this exact string.
     it('T1.6 answers a platform outage as temporarily_unavailable and not verified', async () => {
       const { env } = adapter.env()
       platformDown()
@@ -171,7 +196,7 @@ for (const path of ['/verify/single', '/api/verify']) {
       expectAppShape(result)
     })
 
-    // mobile 1.0.26 verify_connect_cubit.dart: verified true is the connect flow's success, and the
+    // mobile 1.0.26-1.0.27 verify_connect_cubit.dart: verified true is the connect flow's success, and the
     // app then publishes canonical_identity ?? identity. web LinkedAccounts.tsx: a truthy
     // verified shows the badge.
     describe('T1.8 answers a verified claim as verified, with an identity the app can publish', () => {
@@ -196,7 +221,7 @@ for (const path of ['/verify/single', '/api/verify']) {
         ],
       ]
       it.each(cases)('%s', async (_name, seed, sent, published) => {
-        const { env } = adapter.env()
+        const { env } = verifyEnv()
         await seed(env)
         const response = await call(target, 'POST', path, sent, env)
         expect(response.status).toBe(200)
@@ -226,7 +251,7 @@ describe('GET /verify/:platform/:identity/:proof', () => {
   })
 })
 
-// mobile 1.0.24-1.0.26 verify_rejection.dart: these codes from /verify/single pick the
+// mobile 1.0.24-1.0.27 verify_rejection.dart: these codes from /verify/single pick the
 // message the app shows; any other code shows a generic rejection.
 describe('POST /verify/single Discord rejections', () => {
   const USER = 'synthetic-user'

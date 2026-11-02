@@ -1,10 +1,11 @@
 // ABOUTME: Pins how the Divine app confirms a sign-in and unlinks one, so a change
 // ABOUTME: (or a move to another worker) cannot silently break shipped clients.
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { schnorr } from '@noble/curves/secp256k1.js'
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js'
 import { adapter } from './adapter'
 import { call, BASE_URL, type TargetEnv } from './harness'
+import { expectAppShape } from './app-shape'
 import { signInEnv, startTwitter, finishTwitter } from './signin-driver'
 
 const target = adapter.target
@@ -71,12 +72,14 @@ function confirm(p: Pending, event: unknown, overrides: Record<string, unknown> 
     { 'cf-connecting-ip': CLIENT_IP })
 }
 
-// What the app sees afterwards: whether its oauth claim verifies in the batch.
-async function oauthClaimVerifies(env: TargetEnv, claim: { platform: string; identity: string; pubkey: string }) {
+// What the app sees afterwards: its oauth claim's answer in the batch.
+async function oauthClaimAnswer(env: TargetEnv, claim: { platform: string; identity: string; pubkey: string }) {
   const res = await call(target, 'POST', '/verify', { claims: [{ ...claim, proof: 'oauth' }] }, env)
   expect(res.status).toBe(200)
-  return ((await res.json()) as { results: { verified: boolean }[] }).results[0].verified
+  return ((await res.json()) as { results: Record<string, unknown>[] }).results[0]
 }
+const oauthClaimVerifies = async (env: TargetEnv, claim: { platform: string; identity: string; pubkey: string }) =>
+  (await oauthClaimAnswer(env, claim)).verified
 
 // The app retries a 5xx and treats 429 as "keep waiting"; any other refusal is final.
 async function refusal(res: Response) {
@@ -182,20 +185,17 @@ describe('POST /auth/confirm (mobile verifier_client.dart confirmSignIn)', () =>
 })
 
 describe('POST /auth/oauth/revoke (mobile verifier_client.dart revoke)', () => {
-  // mobile verifier_client.dart revoke: the NIP-98 event travels in the JSON body, with
+  // mobile 1.0.24-1.0.27 verifier_client.dart revoke: the NIP-98 event travels in the JSON body, with
   // u = the exact request URL, and no Authorization header is sent.
   it('T4.3 removes the stored sign-in when the signed event is in the JSON body', async () => {
-    const env = adapter.env().env
+    const env = adapter.env({ SIGNIN_CONFIRMATION: 'required' }).env
     const secretKey = schnorr.utils.randomSecretKey()
     const pubkey = bytesToHex(schnorr.getPublicKey(secretKey))
     const claim = { platform: 'twitter', identity: 'synthetic-user', pubkey }
     await adapter.seedSignIn(env, claim)
-    // After the unlink the check falls through to the platform, which is unreachable here;
-    // keep the expected warning out of the test output.
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
-    // What the app sees: the oauth claim verifies before the unlink and not after.
-    const verified = () => oauthClaimVerifies(env, claim)
-    expect(await verified()).toBe(true)
+    // What the app sees: the oauth claim verifies before the unlink. After it, the claim
+    // answers signin_expired without a platform request.
+    expect(await oauthClaimVerifies(env, claim)).toBe(true)
 
     const event = await signed(secretKey, 27235, [['u', `${BASE_URL}/auth/oauth/revoke`], ['method', 'POST']])
     const res = await call(target, 'POST', '/auth/oauth/revoke', { ...claim, event }, env)
@@ -205,6 +205,8 @@ describe('POST /auth/oauth/revoke (mobile verifier_client.dart revoke)', () => {
     expect(body).not.toBeNull()
     expect(typeof body).toBe('object')
     expect(Array.isArray(body)).toBe(false)
-    expect(await verified()).toBe(false)
+    const after = await oauthClaimAnswer(env, claim)
+    expectAppShape(after)
+    expect(after).toMatchObject({ platform: 'twitter', identity: 'synthetic-user', verified: false, code: 'signin_expired' })
   })
 })
