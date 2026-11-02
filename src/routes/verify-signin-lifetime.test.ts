@@ -131,6 +131,7 @@ describe('a Bluesky link saved with the old 30-day expiry', () => {
     ['a different handle', { handle: 'old.bsky.social' }],
     ['an unconfirmed sign-in', { confirmed: undefined }],
     ['a record already stored without an expiry', { stored_without_expiry: true }],
+    ['a sign-in saved at another time', { checked_at: NOW - 5 * DAY }],
   ])('leaves the DID record alone when it belongs to %s', async (_label, partner) => {
     handlePointsTo(DID)
     const { env, store, put } = blueskyEnv({}, partner)
@@ -168,6 +169,19 @@ describe('a Bluesky link saved with the old 30-day expiry', () => {
     expect(store.has(key(DID))).toBe(false)
   })
 
+  // Unlinking by the DID removes the handle record first, and a handle change
+  // removes the old handle record before saving the new pair, so the claimed
+  // record can be gone while its pair is still there.
+  it('does not store the pair again when the claimed record was removed while it was being checked', async () => {
+    const { env, store, put } = blueskyEnv()
+    const before = store.get(key(DID))
+    changeDuringLookup(() => { store.delete(key(HANDLE)) })
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(signInWrites(put)).toHaveLength(0)
+    expect(store.has(key(HANDLE))).toBe(false)
+    expect(store.get(key(DID))).toBe(before)
+  })
+
   it('does not write over a newer sign-in saved while it was being checked', async () => {
     const { env, store, put } = blueskyEnv()
     const newer = (identity: string) => JSON.stringify({ ...read(store, identity), checked_at: NOW, stored_without_expiry: true })
@@ -179,13 +193,15 @@ describe('a Bluesky link saved with the old 30-day expiry', () => {
     expect(store.get(key(DID))).toBe(replaced[DID])
   })
 
-  it('does not store again a record that changed while it was being checked', async () => {
+  it('stores neither record again when the claimed one changed while it was being checked', async () => {
     const { env, store, put } = blueskyEnv()
     const changed = JSON.stringify({ ...read(store, HANDLE), checked_at: NOW })
+    const before = store.get(key(DID))
     changeDuringLookup(() => { store.set(key(HANDLE), changed) })
     expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
-    expect(signInWrites(put).map(c => c[0])).not.toContain(key(HANDLE))
+    expect(signInWrites(put)).toHaveLength(0)
     expect(store.get(key(HANDLE))).toBe(changed)
+    expect(store.get(key(DID))).toBe(before)
   })
 
   it('is still verified when storing it again fails', async () => {
@@ -208,6 +224,27 @@ describe('a Bluesky link saved with the old 30-day expiry', () => {
     })
     expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
     expect(read(store, HANDLE).stored_without_expiry).toBeUndefined()
+    expect(read(store, DID).stored_without_expiry).toBe(true)
+  })
+
+  // The claimed record is marked last, so a pair whose DID record wasn't
+  // stored again is tried again at the next verification.
+  it('leaves neither record marked when storing the DID record fails, and stores both at the next verification', async () => {
+    handlePointsTo(DID)
+    const { env, store, put } = blueskyEnv()
+    let failing = true
+    put.mockImplementation(async (key: string, value: string) => {
+      if (failing && key === oauthVerificationKey('bluesky', DID, PUBKEY)) throw new Error('KV PUT failed: 429 Too Many Requests')
+      store.set(key, value)
+    })
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(console.warn).toHaveBeenCalled()
+    expect(read(store, HANDLE).stored_without_expiry).toBeUndefined()
+    expect(read(store, DID).stored_without_expiry).toBeUndefined()
+
+    failing = false
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(read(store, HANDLE).stored_without_expiry).toBe(true)
     expect(read(store, DID).stored_without_expiry).toBe(true)
   })
 
@@ -234,24 +271,24 @@ describe('a Bluesky link saved with the old 30-day expiry', () => {
 
   // Unlinking pairs the handle and DID records by account and handle, so the
   // records stored again still unlink together, as does a pair where storing
-  // one of them again failed.
+  // the DID record again failed, which leaves both as they were.
   it.each([
-    { by: 'the handle', unlinked: HANDLE, other: DID, stored: 'both stored again', onlyOne: false },
-    { by: 'the DID', unlinked: DID, other: HANDLE, stored: 'both stored again', onlyOne: false },
-    { by: 'the handle', unlinked: HANDLE, other: DID, stored: 'only the handle record stored again', onlyOne: true },
-    { by: 'the DID', unlinked: DID, other: HANDLE, stored: 'only the handle record stored again', onlyOne: true },
-  ])('is removed with its pair when unlinked by $by, $stored', async ({ unlinked, other, onlyOne }) => {
+    { by: 'the handle', unlinked: HANDLE, other: DID, stored: 'both stored again', failed: false },
+    { by: 'the DID', unlinked: DID, other: HANDLE, stored: 'both stored again', failed: false },
+    { by: 'the handle', unlinked: HANDLE, other: DID, stored: 'after storing the DID record again failed', failed: true },
+    { by: 'the DID', unlinked: DID, other: HANDLE, stored: 'after storing the DID record again failed', failed: true },
+  ])('is removed with its pair when unlinked by $by, $stored', async ({ unlinked, other, failed }) => {
     handlePointsTo(DID)
     const { env, store, put } = blueskyEnv()
-    if (onlyOne) {
+    if (failed) {
       put.mockImplementation(async (key: string, value: string) => {
         if (key === oauthVerificationKey('bluesky', DID, PUBKEY)) throw new Error('KV PUT failed')
         store.set(key, value)
       })
     }
     await check(env)
-    expect(read(store, HANDLE).stored_without_expiry).toBe(true)
-    expect(read(store, DID).stored_without_expiry).toBe(onlyOne ? undefined : true)
+    expect(read(store, HANDLE).stored_without_expiry).toBe(failed ? undefined : true)
+    expect(read(store, DID).stored_without_expiry).toBe(failed ? undefined : true)
     await deleteOAuthVerification(env.CACHE_KV, 'bluesky', unlinked, PUBKEY)
     expect(read(store, unlinked)).toBeNull()
     expect(read(store, other)).toBeNull()

@@ -174,6 +174,18 @@ describe('GET /platforms', () => {
       expect(body.platforms.tiktok).not.toHaveProperty('signin_expires_after_days')
     })
 
+    it.each(['twitter', 'youtube'])('is 30 for %s with sign-in on', async platform => {
+      const body = await fetchPlatforms(ALL_OAUTH_CONFIGURED)
+      expect(body.platforms[platform].oauth).toBe(true)
+      expect(body.platforms[platform].signin_expires_after_days).toBe(30)
+    })
+
+    it.each(['twitter', 'youtube'])('is absent for %s with sign-in off', async platform => {
+      const body = await fetchPlatforms({ YOUTUBE_API_KEY: 'yt-key' }) // keep youtube listed so its oauth:false is observable
+      expect(body.platforms[platform].oauth).toBe(false)
+      expect(body.platforms[platform]).not.toHaveProperty('signin_expires_after_days')
+    })
+
     it('is absent on platforms without sign-in', async () => {
       const body = await fetchPlatforms(ALL_OAUTH_CONFIGURED)
       expect(body.platforms.github).not.toHaveProperty('signin_expires_after_days')

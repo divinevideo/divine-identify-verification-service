@@ -69,13 +69,13 @@ describe('how long a sign-in record lasts', () => {
     expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 86400 })
   })
 
-  it('still expires a Bluesky sign-in saved without its account', async () => {
+  it('keeps an unconfirmed Bluesky sign-in saved without its account for a day', async () => {
     const { kv } = createEnv()
     await storeOAuthVerification(kv as unknown as KVNamespace, { platform: 'bluesky', identity: HANDLE, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1 })
     expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 86400 })
   })
 
-  it.each(['twitter', 'youtube', 'tiktok'] as const)('still expires %s sign-ins after a day, even with an account ID', async platform => {
+  it.each(['twitter', 'youtube', 'tiktok'] as const)('keeps an unconfirmed %s sign-in for a day, even with an account ID', async platform => {
     const { kv } = createEnv()
     await storeOAuthVerification(kv as unknown as KVNamespace, { platform, identity: 'alice', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1, account_id: 'acct-1' })
     expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 86400 })
