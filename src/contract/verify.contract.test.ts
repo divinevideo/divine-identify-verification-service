@@ -21,6 +21,23 @@ function platformDown() {
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 }
 
+// Bluesky's handle lookup answers this account; any other request throws, as the README says.
+function blueskyResolvesTo(did: string) {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = input instanceof Request ? input.url : String(input)
+    if (url.includes('/xrpc/com.atproto.identity.resolveHandle?')) return Response.json({ did })
+    throw new Error(`unexpected request: ${url}`)
+  }))
+}
+
+// A Bluesky sign-in as production saves it: under the handle and the account's DID, each
+// carrying that DID and the handle.
+async function seedBlueskySignIn(env: TargetEnv, handle: string, did: string) {
+  for (const identity of [handle, did]) {
+    await adapter.seedSignIn(env, { platform: 'bluesky', identity, pubkey: PUBKEY, account_id: did, handle })
+  }
+}
+
 // Production runs sign-in confirmation as required, which decides whether a sign-in link counts.
 // Tests with a sign-in link in the batch run in that mode.
 function verifyEnv(config: Parameters<typeof adapter.env>[0] = {}) {
@@ -113,9 +130,9 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
   // account is a definite no, not a retry.
   it('T1.2 answers a signed-in Bluesky handle that now points elsewhere as a definite no', async () => {
     const { env } = verifyEnv()
-    await adapter.seedSignIn(env, { platform: 'bluesky', identity: 'synthetic.bsky.social', pubkey: PUBKEY, account_id: 'did:plc:syntheticlinked' })
+    await seedBlueskySignIn(env, 'synthetic.bsky.social', 'did:plc:syntheticlinked')
     // Bluesky now resolves the handle to a different account.
-    stubFetch(() => Response.json({ did: 'did:plc:syntheticother' }))
+    blueskyResolvesTo('did:plc:syntheticother')
     const out = await results(await call(target, 'POST', '/verify', {
       claims: [{ pubkey: PUBKEY, platform: 'bluesky', identity: 'synthetic.bsky.social', proof: '' }],
     }, env))
@@ -149,7 +166,8 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
   // whitespace (sign-in only). It must be answered from the sign-in, not rejected as invalid.
   it.each(['', '  '])('T1.4 verifies a signed-in Bluesky claim sent with proof %j', async (proof) => {
     const { env } = verifyEnv()
-    await adapter.seedSignIn(env, { platform: 'bluesky', identity: 'synthetic.bsky.social', pubkey: PUBKEY })
+    await seedBlueskySignIn(env, 'synthetic.bsky.social', 'did:plc:syntheticlinked')
+    blueskyResolvesTo('did:plc:syntheticlinked')
     const claim = { pubkey: PUBKEY, platform: 'bluesky', identity: 'synthetic.bsky.social', proof }
     const batch = await results(await call(target, 'POST', '/verify', { claims: [claim] }, env))
     expect(batch[0]).toMatchObject({ platform: 'bluesky', identity: 'synthetic.bsky.social', verified: true })
@@ -158,6 +176,19 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
     const single = await call(target, 'POST', '/verify/single', claim, env)
     expect(single.status).toBe(200)
     expect(await single.json()).toMatchObject({ verified: true })
+  })
+
+  // mobile 1.0.24-1.0.27 (same files as T1.2): a definite no drops the badge, so a handle lookup
+  // Bluesky can't answer must not turn a signed-in claim into one.
+  it('T1.4 keeps a signed-in Bluesky claim verified when Bluesky cannot be asked', async () => {
+    const { env } = verifyEnv()
+    await seedBlueskySignIn(env, 'synthetic.bsky.social', 'did:plc:syntheticlinked')
+    // The environment's fetch throws on every request.
+    const batch = await results(await call(target, 'POST', '/verify', {
+      claims: [{ pubkey: PUBKEY, platform: 'bluesky', identity: 'synthetic.bsky.social', proof: '' }],
+    }, env))
+    expect(batch[0]).toMatchObject({ platform: 'bluesky', identity: 'synthetic.bsky.social', verified: true })
+    expectAppShape(batch[0])
   })
 
   // mobile 1.0.24 identity_claims_repository.dart and 1.0.25-1.0.27 verification_result.dart: code
