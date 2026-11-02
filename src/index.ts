@@ -846,7 +846,7 @@ Content-Type: application/json
         <tr><th>Field</th><th>Type</th><th>Description</th></tr>
         <tr><td><code>verified</code></td><td>boolean</td><td><code>true</code> if proof post contains the npub and the author matches</td></tr>
         <tr><td><code>error</code></td><td>string?</td><td>Error message (only when <code>verified</code> is <code>false</code>)</td></tr>
-        <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable reason the claim isn't verified. <code>temporarily_unavailable</code> means the claim couldn't be checked right now (the platform didn't answer, or the per-person or per-platform check limit was hit), not that it was rejected: try again in a few minutes. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.</td></tr>
+        <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable reason the claim isn't verified. <code>temporarily_unavailable</code> means the claim couldn't be checked right now (the platform didn't answer, or the per-person or per-platform check limit was hit), not that it was rejected: try again in a few minutes. <code>signin_expired</code> means no sign-in currently counts for an account linked by signing in (proof <code>oauth</code>): it lapsed, was unlinked, was never confirmed, or never happened. On Bluesky it also means no identity-link record was found on the account. <code>signin_account_changed</code> means the handle no longer points to the account that signed in (it was deleted, or now points to another account). Apps can offer sign-in for either, where <code>GET /platforms</code> reports <code>oauth: true</code> for that platform. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.</td></tr>
         <tr><td><code>canonical_proof</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the proof was resolved to a simpler stable form: a pasted post link was reduced to the part the check uses, or a TikTok link or share link to its post number. Publish this instead of the proof you sent.</td></tr>
         <tr><td><code>canonical_identity</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the account as sent was tidied (for example a leading @ removed, or a Mastodon handle sent as <code>@user@server</code> returned as <code>server/@user</code>), or confirmed on a different host from the one in the claim (Mastodon: a server whose handles use another domain from its website). Publish this instead of the account you sent; links to the post use it.</td></tr>
         <tr><td><code>checked_at</code></td><td>number</td><td>Unix timestamp (seconds)</td></tr>
@@ -909,6 +909,22 @@ Content-Type: application/json
 
 {"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}${otherOAuthStartExamples ? `\n\n${otherOAuthStartExamples}` : ''}</pre>
       <p>The answer is <code>{"url":"https://…"}</code>, the provider page to open.</p>
+      <h3>Back from the sign-in</h3>
+      <p>The sign-in returns to <code>return_url</code> with these added (any of them already there are replaced):</p>
+      <ul>
+        <li><code>platform</code> and <code>identity</code>: the account that signed in;</li>
+        <li><code>oauth_confirm</code>: the one-time code, after the <code>#</code>, valid for 10 minutes;</li>
+        <li><code>oauth_verified</code> (<code>true</code>): sent only while confirmation is optional, for app versions that can't confirm. Don't rely on it.</li>
+      </ul>
+      <p>A sign-in that didn't finish returns with <code>oauth_error</code>, a readable reason kept for older app versions (don't parse it), and <code>oauth_error_code</code>, a fixed value to branch on:</p>
+      <ul>
+        <li><code>cancelled</code>: the person cancelled or declined at the platform;</li>
+        <li><code>provider_error</code>: the platform reported another error;</li>
+        <li><code>failed</code>: the verifier couldn't check the account with the platform;</li>
+        <li><code>update_required</code>: the sign-in was started with <code>GET /auth/:platform/start</code>, as older app versions do, which is no longer accepted.</li>
+      </ul>
+      <p>Treat a code you don't know as <code>failed</code>. When the verifier can't tell where a sign-in started, or the sign-in fails unexpectedly, it returns to this page instead.</p>
+      <h3>Confirm the sign-in</h3>
       <pre>POST ${origin}/auth/confirm
 Content-Type: application/json
 
@@ -983,7 +999,8 @@ Content-Type: application/json
     let activeSignerSource = null;
     let nostrToolsPromise = null;
     let nostrToolsFailures = 0;
-    let nostrConnectAbortController = null;
+    // The Nostr Connect request waiting for the signer's approval, if any.
+    let nostrConnectAttempt = null;
 
     function npubToHex(npub) {
       const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
@@ -1507,7 +1524,7 @@ Content-Type: application/json
         }
         const signer = tools.nip46.BunkerSigner.fromBunker(tools.pure.generateSecretKey(), parsed);
         await signer.connect();
-        hideNostrConnectUi();
+        endNostrConnect();
         await activateSigner(signer, 'bunker', 'Connected with bunker signer.');
       } catch (e) {
         setStatus('verify-login-status', e.message || 'Could not connect bunker signer.', 'error');
@@ -1517,11 +1534,15 @@ Content-Type: application/json
     }
 
     async function startNostrConnect() {
+      endNostrConnect();
       clearStatus('verify-login-status');
+      const attempt = { ended: false, sockets: [] };
+      nostrConnectAttempt = attempt;
       try {
         setButtonLoading('start-nostr-connect-btn', true, 'Waiting...');
         setStatus('verify-login-status', 'Preparing Nostr Connect session...', 'loading');
         const tools = await loadNostrTools();
+        if (attempt.ended) return;
         const clientSecretKey = tools.pure.generateSecretKey();
         const secret = randomBase64Url(18);
         const uri = tools.nip46.createNostrConnectURI({
@@ -1532,39 +1553,61 @@ Content-Type: application/json
           name: 'Divine Verification',
           url: window.location.origin,
         });
-        if (nostrConnectAbortController) {
-          nostrConnectAbortController.abort();
-        }
-        nostrConnectAbortController = new AbortController();
         showNostrConnectUi(uri);
         setStatus('verify-login-status', 'Waiting for your signer to approve the Nostr Connect request...', 'loading');
+        // The request gets its own relay connections, so ending it can close
+        // all of them. nostr-tools' abort signal can't end it: it stops only
+        // one relay's subscription.
+        const pool = new tools.pool.SimplePool({
+          websocketImplementation: class extends WebSocket {
+            constructor(url) {
+              super(url);
+              attempt.sockets.push(this);
+            }
+          },
+        });
         const signer = await tools.nip46.BunkerSigner.fromURI(
           clientSecretKey,
           uri,
-          {},
-          nostrConnectAbortController.signal
+          { pool: pool },
+          // A signal that is never aborted, instead of a time limit: with
+          // one, the request waits for approval without a deadline and each
+          // relay gets the usual few seconds to connect.
+          new AbortController().signal
         );
-        nostrConnectAbortController = null;
+        if (attempt.ended) return;
+        nostrConnectAttempt = null;
         hideNostrConnectUi();
         await activateSigner(signer, 'nostrconnect', 'Connected with Nostr Connect.');
       } catch (e) {
-        const aborted = e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'));
-        if (aborted) {
-          clearStatus('verify-login-status');
-        } else {
-          setStatus('verify-login-status', e.message || 'Could not connect with Nostr Connect.', 'error');
-        }
+        // An ended request reports nothing.
+        if (attempt.ended) return;
+        closeNostrConnectAttempt(attempt);
+        setStatus('verify-login-status', e.message || 'Could not connect with Nostr Connect.', 'error');
       } finally {
-        setButtonLoading('start-nostr-connect-btn', false, '');
+        if (!attempt.ended) setButtonLoading('start-nostr-connect-btn', false, '');
       }
     }
 
-    function cancelNostrConnect() {
-      if (nostrConnectAbortController) {
-        nostrConnectAbortController.abort();
-        nostrConnectAbortController = null;
+    // Closes every relay connection a Nostr Connect request opened.
+    function closeNostrConnectAttempt(attempt) {
+      attempt.sockets.forEach(function(socket) { socket.close(); });
+      if (nostrConnectAttempt === attempt) nostrConnectAttempt = null;
+    }
+
+    // Ends the waiting Nostr Connect request, if any, and resets its controls.
+    // Nothing from an ended request reaches the page afterwards.
+    function endNostrConnect() {
+      if (nostrConnectAttempt) {
+        nostrConnectAttempt.ended = true;
+        closeNostrConnectAttempt(nostrConnectAttempt);
       }
       hideNostrConnectUi();
+      setButtonLoading('start-nostr-connect-btn', false, '');
+    }
+
+    function cancelNostrConnect() {
+      endNostrConnect();
       clearStatus('verify-login-status');
     }
 
@@ -2275,10 +2318,13 @@ Content-Type: application/json
       bringIntoViewOnceLoaded(document.getElementById('verify-global-status'));
     }
 
-    // Only messages the verifier's sign-in callbacks actually send are shown.
-    function signInErrorMessage(reason) {
-      if (reason === 'Verification failed') return 'Sign-in was not completed: the account could not be verified.';
-      if (/^(cancelled or declined|could not be completed) at (Twitter|YouTube|TikTok|Bluesky)$/.test(reason)) return 'Sign-in was not completed: ' + reason;
+    // Read from the verifier's reason code (#104), not its wording, and named
+    // only with the platform of a sign-in this page started.
+    function signInErrorMessage(reasonCode, pending) {
+      const label = pending ? SIGN_IN_LABELS[pending.platform] : '';
+      if (reasonCode === 'cancelled') return 'Sign-in was not completed: ' + (label ? 'cancelled or declined at ' + label : 'it was cancelled or declined.');
+      if (reasonCode === 'provider_error') return 'Sign-in was not completed: ' + (label ? 'could not be completed at ' + label : 'it could not be completed.');
+      if (reasonCode === 'failed') return 'Sign-in was not completed: the account could not be verified.';
       return 'Sign-in was not completed.';
     }
 
@@ -2336,14 +2382,15 @@ Content-Type: application/json
       const params = new URLSearchParams(window.location.search);
       const code = signInCodeFromAddress();
       const verified = params.get('oauth_verified') === 'true';
-      const reason = params.get('oauth_error');
-      if (!code && !verified && !reason) return;
+      const reasonCode = params.get('oauth_error_code');
+      const unfinished = !!(params.get('oauth_error') || reasonCode);
+      if (!code && !verified && !unfinished) return;
       signInReturnHandled = true;
 
       const platform = params.get('platform') || '';
       const identity = params.get('identity') || '';
       const nonce = params.get('signin') || '';
-      ['signin', 'oauth_verified', 'platform', 'identity', 'oauth_error', 'oauth_confirm'].forEach(name => params.delete(name));
+      ['signin', 'oauth_verified', 'platform', 'identity', 'oauth_error', 'oauth_error_code', 'oauth_confirm'].forEach(name => params.delete(name));
       // The code leaves the address before anything else can read it, and
       // before this function first waits on anything.
       // A return with a code, wherever it was, goes back to the section anchor.
@@ -2351,9 +2398,9 @@ Content-Type: application/json
       window.history.replaceState({}, '', window.location.pathname + (params.toString() ? '?' + params.toString() : '') + hash);
 
       const pending = readPendingSignIn(nonce);
-      if (reason) {
+      if (unfinished) {
         if (pending) forgetPendingSignIn(nonce);
-        showSignInStatus(signInErrorMessage(reason), 'error');
+        showSignInStatus(signInErrorMessage(reasonCode, pending), 'error');
         return;
       }
       const handleMatches = !pending || pending.platform !== 'bluesky' || !pending.handle
