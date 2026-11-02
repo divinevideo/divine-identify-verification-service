@@ -102,7 +102,7 @@ function callbackFetchFor(platform: Platform) {
     case 'tiktok':
       return vi.fn()
         .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
-        .mockResolvedValueOnce(jsonResponse({ data: { user: { username: 'creator' } } }))
+        .mockResolvedValueOnce(jsonResponse({ data: { user: { open_id: 'open-1', username: 'creator' } } }))
     case 'bluesky':
       return blueskyCallbackFetch()
   }
@@ -210,6 +210,7 @@ describe('what a sign-in callback logs', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     const res = await app.request(`${BASE}/auth/twitter/callback?code=c&state=unknown-state`, {}, env)
     expect(new URL(res.headers.get('Location') as string, BASE).searchParams.get('oauth_error')).toBe('Verification failed')
+    expect(new URL(res.headers.get('Location') as string, BASE).searchParams.get('oauth_error_code')).toBe('failed')
     expect(info).not.toHaveBeenCalled()
   })
 
@@ -220,6 +221,7 @@ describe('what a sign-in callback logs', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     const res = await app.request(`${BASE}/auth/twitter/callback?code=c&state=${stateId}`, {}, env)
     expect(new URL(res.headers.get('Location') as string, BASE).searchParams.get('oauth_error')).toBe('Verification failed')
+    expect(new URL(res.headers.get('Location') as string, BASE).searchParams.get('oauth_error_code')).toBe('failed')
     expect(info).not.toHaveBeenCalled()
   })
 })
@@ -302,9 +304,11 @@ describe('a finished sign-in started with a start check', () => {
 
   it('replaces names the return address arrived with, and a fragment that carried a code', async () => {
     const env = baseEnv()
-    const returnUrl = `${BASE}/?signin=n&identity=evil&oauth_confirm=old#oauth_confirm=old`
+    const returnUrl = `${BASE}/?signin=n&identity=evil&oauth_confirm=old&oauth_error=old&oauth_error_code=cancelled#oauth_confirm=old`
     const { location } = await finishWithState('twitter', env, { returnUrl, startCheck: START_CHECK })
     expect(location.searchParams.get('identity')).toBe('jack')
+    expect(location.searchParams.has('oauth_error')).toBe(false)
+    expect(location.searchParams.has('oauth_error_code')).toBe(false)
     expect(location.searchParams.getAll('oauth_confirm')).toEqual([])
     const code = new URLSearchParams(location.hash.slice(1)).get('oauth_confirm') as string
     expect(code).toMatch(CODE)
@@ -376,7 +380,7 @@ describe('a sign-in callback that throws', () => {
     const { res, info } = await finishWithState(platform, env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK },
       vi.fn().mockRejectedValue(new Error('network down')))
     expect(res.status).toBe(302)
-    expect(res.headers.get('Location')).toBe('/?oauth_error=Verification+failed')
+    expect(res.headers.get('Location')).toBe('/?oauth_error=Verification+failed&oauth_error_code=failed')
     expect(res.headers.get('Set-Cookie')).toBeNull()
     expect(info).not.toHaveBeenCalled()
   })
@@ -528,6 +532,7 @@ describe('GET /auth/:platform/start', () => {
     const location = new URL(res.headers.get('Location') as string)
     expect(location.origin + location.pathname).toBe('https://divine.video/app/callback')
     expect(location.searchParams.get('oauth_error')).toBe('update the Divine app to link by signing in')
+    expect(location.searchParams.get('oauth_error_code')).toBe('update_required')
   })
 
   it('once required, answers a browser with a return address it does not allow with 400, not a redirect', async () => {
@@ -599,6 +604,29 @@ describe('POST /auth/confirm', () => {
     }
     expect(info).toHaveBeenCalledWith(`${platform} sign-in confirmed`)
   })
+
+  it.each([['twitter', '1'], ['youtube', 'UC1'], ['tiktok', 'open-1']] as const)(
+    '%s: keeps the account\'s stable ID with the confirmed record, saved under the username only',
+    async (platform, accountId) => {
+      const env = platformEnv(platform, { SIGNIN_CONFIRMATION: 'required' })
+      const s = await startedAndFinished(platform, env)
+      const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+      expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
+      const record = JSON.parse((await env.CACHE_KV.get(oauthVerificationKey(platform, identityFor(platform), s.pubkey))) as string)
+      expect(record).toMatchObject({ identity: identityFor(platform), account_id: accountId, confirmed: true })
+      expect(await env.CACHE_KV.get(oauthVerificationKey(platform, accountId, s.pubkey))).toBeNull()
+    },
+  )
+
+  it.each([['twitter', '1'], ['youtube', 'UC1'], ['tiktok', 'open-1']] as const)(
+    '%s: refuses a claim of the account ID instead of the username, since only the username is linked',
+    async (platform, accountId) => {
+      const env = platformEnv(platform, { SIGNIN_CONFIRMATION: 'required' })
+      const s = await startedAndFinished(platform, env)
+      const event = await signedList(s.secretKey, [['i', `${platform}:${accountId}`, 'oauth', s.binding]])
+      expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).json.code).toBe('signin_claim_mismatch')
+    },
+  )
 
   it('answers the same event sent again with the same 200, and another event with 409', async () => {
     const env = baseEnv()

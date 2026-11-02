@@ -40,8 +40,9 @@ describe('the built nostr-tools module', () => {
   })
 
   it('exports only what the page uses', () => {
-    expect(Object.keys(tools).sort()).toEqual(['nip46', 'pure'])
+    expect(Object.keys(tools).sort()).toEqual(['nip46', 'pool', 'pure'])
     expect(Object.keys(tools.nip46).sort()).toEqual(['BunkerSigner', 'createNostrConnectURI', 'parseBunkerInput'])
+    expect(Object.keys(tools.pool)).toEqual(['SimplePool'])
     expect(Object.keys(tools.pure).sort()).toEqual(['generateSecretKey', 'getPublicKey', 'verifyEvent'])
     expect(typeof tools.nip46.BunkerSigner.fromBunker).toBe('function')
     expect(typeof tools.nip46.BunkerSigner.fromURI).toBe('function')

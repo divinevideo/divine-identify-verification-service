@@ -71,7 +71,8 @@ export function sameToken(a: string, b: string): boolean {
 export interface SignedInAccount {
   platform: OAuthPlatform
   identity: string
-  // Bluesky: the DID and the handle, so the link is saved under both.
+  // The provider's permanent account ID. Bluesky's (the DID) also comes with
+  // the handle, so its link is saved under both.
   account_id?: string
   handle?: string
 }

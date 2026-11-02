@@ -129,5 +129,6 @@ export async function handleYouTubeCallback(
   // Use customUrl (handle) if available, otherwise channel ID
   const identity = channel.snippet?.customUrl || channel.id
 
-  return holdSignIn(env, state, { platform: 'youtube', identity })
+  // The channel ID stays with the channel when its handle changes.
+  return holdSignIn(env, state, { platform: 'youtube', identity, ...(typeof channel.id === 'string' ? { account_id: channel.id } : {}) })
 }

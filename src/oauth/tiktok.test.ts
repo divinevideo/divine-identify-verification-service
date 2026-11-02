@@ -95,8 +95,24 @@ describe('handleTikTokCallback', () => {
     expect(result.identity).toBe('creator')
     // Verification is persisted to KV.
     expect(env.CACHE_KV.put).toHaveBeenCalled()
-    // user.info request asks for the username field.
-    expect(fetchMock.mock.calls[1][0]).toContain('fields=display_name,username')
+    // user.info request asks for the username and the account's stable ID.
+    expect(new URL(fetchMock.mock.calls[1][0]).searchParams.get('fields')?.split(',')).toEqual(expect.arrayContaining(['username', 'open_id']))
+  })
+
+  it('keeps open_id with the sign-in, and signs in without one when it is missing or not a string', async () => {
+    for (const [user, expected] of [
+      [{ open_id: 'open-1', username: 'creator' }, 'open-1'],
+      [{ username: 'creator' }, undefined],
+      [{ open_id: 7, username: 'creator' }, undefined],
+    ] as const) {
+      vi.stubGlobal('fetch', vi.fn()
+        .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+        .mockResolvedValueOnce(jsonResponse({ data: { user } })))
+      const env = envWithState()
+      const result = await handleTikTokCallback(env, 'auth-code', 'state123')
+      expect(result.success).toBe(true)
+      expect(JSON.parse(env.CACHE_KV.put.mock.calls[0][1]).account_id).toBe(expected)
+    }
   })
 
   it('fails when TikTok omits the username (e.g. user.info.profile scope not granted)', async () => {

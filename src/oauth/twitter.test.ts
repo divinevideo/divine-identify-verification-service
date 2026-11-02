@@ -113,6 +113,22 @@ describe('handleTwitterCallback', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('https://api.twitter.com/2/users/me')
   })
 
+  it('keeps the user ID with the sign-in, and signs in without one when it is missing or not a string', async () => {
+    for (const [user, expected] of [
+      [{ id: '123', username: 'jack' }, '123'],
+      [{ username: 'jack' }, undefined],
+      [{ id: 123, username: 'jack' }, undefined],
+    ] as const) {
+      vi.stubGlobal('fetch', vi.fn()
+        .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+        .mockResolvedValueOnce(jsonResponse({ data: user })))
+      const env = envWithState()
+      const result = await handleTwitterCallback(env, 'auth-code', 'state123')
+      expect(result.success).toBe(true)
+      expect(JSON.parse(env.CACHE_KV.put.mock.calls[0][1]).account_id).toBe(expected)
+    }
+  })
+
   it('fails when Twitter omits the username', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))

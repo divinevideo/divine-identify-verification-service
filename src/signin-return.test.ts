@@ -323,20 +323,51 @@ describe('sign-in return on the verifier page', () => {
     expect(h.store.has(PENDING_KEY)).toBe(false)
   })
 
+  // The verifier sends a reason code next to its wording (#104). The page
+  // reads the code, and names the platform only from the sign-in it started.
+  const unfinished = (code: string, text = 'any wording') => `oauth_error=${encodeURIComponent(text)}&oauth_error_code=${code}`
   it.each([
-    ['Verification failed', 'Sign-in was not completed: the account could not be verified.'],
-    ['cancelled or declined at Twitter', 'Sign-in was not completed: cancelled or declined at Twitter'],
-    ['cancelled or declined at Bluesky', 'Sign-in was not completed: cancelled or declined at Bluesky'],
-    ['could not be completed at TikTok', 'Sign-in was not completed: could not be completed at TikTok'],
-    ['cancelled or declined at YouTube', 'Sign-in was not completed: cancelled or declined at YouTube'],
-    ['cancelled or declined at Somewhere', 'Sign-in was not completed.'],
-    ['cancelled or declined at Twitter and some more text', 'Sign-in was not completed.'],
-    ['some text then cancelled or declined at Twitter', 'Sign-in was not completed.'],
-    ['anything else at all', 'Sign-in was not completed.'],
-  ])('shows a known message for oauth_error=%s', async (reason, expected) => {
-    const h = returnHarness({ search: `?oauth_error=${encodeURIComponent(reason)}` })
+    ['cancelled', 'twitter', 'Sign-in was not completed: cancelled or declined at Twitter'],
+    ['cancelled', 'bluesky', 'Sign-in was not completed: cancelled or declined at Bluesky'],
+    ['provider_error', 'tiktok', 'Sign-in was not completed: could not be completed at TikTok'],
+    ['provider_error', 'youtube', 'Sign-in was not completed: could not be completed at YouTube'],
+    ['failed', 'twitter', 'Sign-in was not completed: the account could not be verified.'],
+    ['update_required', 'twitter', 'Sign-in was not completed.'],
+    ['something_new', 'twitter', 'Sign-in was not completed.'],
+  ])('shows a known message for oauth_error_code=%s after a %s sign-in started here', async (code, platform, expected) => {
+    const h = returnHarness({ search: `?signin=${NONCE}&${unfinished(code)}`, pending: startedEntry({ platform }) })
     await h.page.handleOAuthCallbackMessage()
     expect(h.statuses).toEqual([['verify-global-status', expected, 'error']])
+    expect(h.location.search).toBe('')
+  })
+
+  it.each([
+    ['cancelled', 'Sign-in was not completed: it was cancelled or declined.'],
+    ['provider_error', 'Sign-in was not completed: it could not be completed.'],
+    ['failed', 'Sign-in was not completed: the account could not be verified.'],
+    ['something_new', 'Sign-in was not completed.'],
+  ])('shows a message without a platform for oauth_error_code=%s when no sign-in was started here', async (code, expected) => {
+    const h = returnHarness({ search: `?${unfinished(code)}` })
+    await h.page.handleOAuthCallbackMessage()
+    expect(h.statuses).toEqual([['verify-global-status', expected, 'error']])
+    expect(h.location.search).toBe('')
+  })
+
+  it.each([
+    'cancelled or declined at Twitter',
+    'Verification failed',
+    '<b>anything else</b>',
+  ])('no longer reads the wording: oauth_error=%s with no code gets the plain message', async (text) => {
+    const h = returnHarness({ search: `?signin=${NONCE}&oauth_error=${encodeURIComponent(text)}`, pending: startedEntry() })
+    await h.page.handleOAuthCallbackMessage()
+    expect(h.statuses).toEqual([['verify-global-status', 'Sign-in was not completed.', 'error']])
+  })
+
+  it('handles a return that carries only a reason code', async () => {
+    const h = returnHarness({ search: `?signin=${NONCE}&oauth_error_code=cancelled`, pending: startedEntry() })
+    await h.page.handleOAuthCallbackMessage()
+    expect(h.statuses).toEqual([['verify-global-status', 'Sign-in was not completed: cancelled or declined at Twitter', 'error']])
+    expect(h.store.has(PENDING_KEY)).toBe(false)
     expect(h.location.search).toBe('')
   })
 
@@ -999,7 +1030,7 @@ describe('landing after a returning sign-in', () => {
     vi.useFakeTimers()
     try {
       // A cancelled sign-in is answered straight away, before the page has finished loading.
-      const h = returnHarness({ search: `?oauth_error=${encodeURIComponent('cancelled or declined at Twitter')}`, readyState })
+      const h = returnHarness({ search: `?signin=${NONCE}&oauth_error=${encodeURIComponent('cancelled or declined at Twitter')}&oauth_error_code=cancelled`, pending: startedEntry(), readyState })
       await h.page.handleOAuthCallbackMessage()
       expect(h.statuses).toEqual([['verify-global-status', 'Sign-in was not completed: cancelled or declined at Twitter', 'error']])
       expect(h.scrolledTo).toEqual([])

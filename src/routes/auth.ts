@@ -159,7 +159,18 @@ export function isAllowedReturnUrl(url: string, oauthRedirectBase?: string, requ
 
 // Names only the verifier sets. A return address that arrived carrying any of
 // them gets the verifier's values instead.
-const RESERVED_RETURN_NAMES = ['oauth_verified', 'oauth_error', 'oauth_confirm', 'platform', 'identity']
+const RESERVED_RETURN_NAMES = ['oauth_verified', 'oauth_error', 'oauth_error_code', 'oauth_confirm', 'platform', 'identity']
+
+// Why a sign-in didn't finish, as a code apps can branch on (#104), next to
+// `oauth_error`, a readable reason kept for older app versions.
+// TODO(#113): drop 'update_required' along with the GET start that sends it.
+type UnfinishedSignInCode = 'cancelled' | 'provider_error' | 'failed' | 'update_required'
+
+function unfinishedSignIn(code: UnfinishedSignInCode, text: string): Record<string, string> {
+  return { oauth_error: text, oauth_error_code: code }
+}
+
+const SIGN_IN_FAILED = unfinishedSignIn('failed', 'Verification failed')
 
 function buildReturnUrl(
   returnUrl: string,
@@ -340,7 +351,7 @@ auth.get('/:platform/start', async (c) => {
     // A browser opening this address (an app's fallback when its own request
     // failed) is sent back with a reason rather than left on a JSON page.
     if (c.req.header('sec-fetch-mode') === 'navigate' && returnUrl && isAllowedReturnUrl(returnUrl, c.env.OAUTH_REDIRECT_BASE, c.req.url)) {
-      return c.redirect(buildReturnUrl(returnUrl, { oauth_error: 'update the Divine app to link by signing in' }))
+      return c.redirect(buildReturnUrl(returnUrl, unfinishedSignIn('update_required', 'update the Divine app to link by signing in')))
     }
     return c.json({ error: 'Update the Divine app to link by signing in' }, 400)
   }
@@ -363,7 +374,7 @@ const SIGN_IN_LABELS: Record<OAuthPlatform, string> = {
 // Logged with nothing that identifies the person. The two finish lines are
 // told apart so the share of installed-app sign-ins can be read from the logs.
 function finishSignIn(c: Context<{ Bindings: Bindings }>, platform: OAuthPlatform, result: SignInCallbackResult): Response {
-  if (!result.success) return c.redirect(buildReturnUrl(result.returnUrl, { oauth_error: 'Verification failed' }))
+  if (!result.success) return c.redirect(buildReturnUrl(result.returnUrl, SIGN_IN_FAILED))
   console.info(`${platform} sign-in finished: ${result.confirmCode ? 'awaiting confirmation' : 'installed app, unconfirmed'}`)
   const params: Record<string, string> = { platform, identity: result.identity || '' }
   // Apps that can't confirm read this as "linked"; once confirmation is
@@ -391,14 +402,13 @@ async function redirectAfterUnfinishedSignIn(
   // description and the state id are never logged.
   console.warn(`${platform} sign-in returned an error:`, /^[a-z_]{1,64}$/.test(providerError) ? providerError : 'other')
 
-  // The page shows this after "Sign-in was not completed: ". `access_denied`
-  // means the request was refused, usually by the person; any other code means
-  // the sign-in failed for another reason, possibly our own configuration, so
-  // it isn't described as a cancel.
+  // `access_denied` means the request was refused, usually by the person; any
+  // other code means the sign-in failed for another reason, possibly our own
+  // configuration, so it isn't described as a cancel.
   const label = SIGN_IN_LABELS[platform]
-  const reason = {
-    oauth_error: providerError === 'access_denied' ? `cancelled or declined at ${label}` : `could not be completed at ${label}`,
-  }
+  const reason = providerError === 'access_denied'
+    ? unfinishedSignIn('cancelled', `cancelled or declined at ${label}`)
+    : unfinishedSignIn('provider_error', `could not be completed at ${label}`)
   const fallback = () => c.redirect(buildReturnUrl('/', reason))
   if (!stateId) return fallback()
 
@@ -440,7 +450,7 @@ auth.get('/twitter/callback', async (c) => {
     return finishSignIn(c, 'twitter', result)
   } catch (err) {
     console.error('Twitter callback error:', err instanceof Error ? err.message : err)
-    return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
+    return c.redirect(buildReturnUrl('/', SIGN_IN_FAILED))
   }
 })
 
@@ -461,7 +471,7 @@ auth.get('/youtube/callback', async (c) => {
     return finishSignIn(c, 'youtube', result)
   } catch (err) {
     console.error('YouTube callback error:', err instanceof Error ? err.message : err)
-    return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
+    return c.redirect(buildReturnUrl('/', SIGN_IN_FAILED))
   }
 })
 
@@ -482,7 +492,7 @@ auth.get('/tiktok/callback', async (c) => {
     return finishSignIn(c, 'tiktok', result)
   } catch (err) {
     console.error('TikTok callback error:', err instanceof Error ? err.message : err)
-    return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
+    return c.redirect(buildReturnUrl('/', SIGN_IN_FAILED))
   }
 })
 
@@ -504,7 +514,7 @@ auth.get('/bluesky/callback', async (c) => {
     return finishSignIn(c, 'bluesky', result)
   } catch (err) {
     console.error('Bluesky callback error:', err instanceof Error ? err.message : err)
-    return c.redirect(buildReturnUrl('/', { oauth_error: 'Verification failed' }))
+    return c.redirect(buildReturnUrl('/', SIGN_IN_FAILED))
   }
 })
 

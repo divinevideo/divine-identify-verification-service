@@ -68,11 +68,41 @@ describe('saving a sign-in', () => {
     expect(kv.put.mock.calls.some(c => String(c[0]).startsWith('oauth_verified:'))).toBe(false)
   })
 
-  it('does not let an unconfirmed sign-in replace a confirmed one on a platform without account IDs', async () => {
+  it('does not let an unconfirmed sign-in replace a confirmed one when neither has an account ID', async () => {
     const { env, store } = createEnv()
     await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack' }, CONFIRMATION)
     await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack' }, null)
     expect(read(store, 'twitter', 'jack').confirmed).toBe(true)
+  })
+
+  it.each([
+    // A channel without a handle is linked by its channel ID.
+    ['youtube', '@creator', 'UC1', 'the same'],
+    // X and TikTok link by username only: a username that happens to be this account's own ID.
+    ['twitter', 'synthetic-x-user', '1', 'the same'],
+    ['tiktok', 'creator', 'open-1', 'the same'],
+    // A username that happens to be another account's ID.
+    ['twitter', 'synthetic-x-user', '1', 'another'],
+  ] as const)('unlinks a %s sign-in by %s, leaving the link under %s, of %s account', async (platform, identity, accountId, owner) => {
+    const ownerId = owner === 'the same' ? accountId : '99'
+    const { env, store } = createEnv()
+    await saveSignIn(env, PUBKEY, { platform, identity, account_id: accountId }, CONFIRMATION)
+    await saveSignIn(env, PUBKEY, { platform, identity: accountId, account_id: ownerId }, CONFIRMATION)
+    await deleteOAuthVerification(env.CACHE_KV, platform, identity, PUBKEY)
+    expect(store.has(oauthVerificationKey(platform, identity, PUBKEY))).toBe(false)
+    expect(read(store, platform, accountId)).toMatchObject({ account_id: ownerId, confirmed: true })
+  })
+
+  it.each([
+    ['twitter', 'synthetic-x-user', '1'],
+    ['youtube', '@creator', 'UC1'],
+    ['tiktok', 'creator', 'open-1'],
+  ] as const)('unlinks a %s sign-in by %s, leaving no record of it', async (platform, identity, accountId) => {
+    const { env, store } = createEnv()
+    await saveSignIn(env, PUBKEY, { platform, identity, account_id: accountId }, CONFIRMATION)
+    expect(read(store, platform, identity)).toMatchObject({ account_id: accountId, confirmed: true })
+    await deleteOAuthVerification(env.CACHE_KV, platform, identity, PUBKEY)
+    expect([...store.keys()]).toEqual([])
   })
 
   it('lets an unconfirmed sign-in replace a confirmed one for a different account', async () => {

@@ -1,6 +1,9 @@
 name = "divine-identity-verification-service"
 main = "src/index.ts"
 compatibility_date = "2024-11-15"
+# Keep dashboard-only runtime variables and existing secrets during version
+# uploads. Explicit vars below remain the source of truth for their own keys.
+keep_vars = true
 
 # Wrangler runs this before every deploy, versions upload and dev start: it
 # stops if public/vendor/nostr-tools.mjs differs from a fresh build of the

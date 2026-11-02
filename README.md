@@ -7,7 +7,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 ## Features
 
 - **Eight platforms** — GitHub, Twitter/X, Bluesky, Mastodon, Telegram, Discord, YouTube, and TikTok, verified through a single API.
-- **Two verification methods**: a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A sign-in link counts only once the Divine account owner confirms it; a confirmed Bluesky sign-in has no fixed lifetime: it is re-checked at each verification and counts while the handle still points to the same account; other sign-in links last 30 days, then sign in again. TikTok uses proof posts while its production OAuth app is pending.
+- **Two verification methods**: a *proof post* containing the user's npub, or an *OAuth login* (Twitter/X, Bluesky, and YouTube) that skips posting entirely. A sign-in link counts only once the Divine account owner confirms it; a confirmed Bluesky sign-in has no fixed lifetime: it is re-checked at each verification and counts while the handle still points to the same account; other sign-in links last 30 days, then sign in again. TikTok uses proof posts while its production OAuth app is pending. When no sign-in currently counts for a sign-in link (it lapsed, was unlinked, was never confirmed, or never happened), `/verify` answers with the code `signin_expired`. `signin_account_changed` means the handle no longer points to the account that signed in (it was deleted, or now points to another account). Apps can offer sign-in for either, where `GET /platforms` reports `oauth: true` for that platform.
 - **Batch and single verification** — check up to 10 claims in one request, or verify a single claim over JSON or a shareable URL that returns HTML for browsers and JSON for API clients.
 - **NIP-05 verification** — confirm that a NIP-05 identifier resolves to a given pubkey.
 - **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and platform outages for 5 minutes (answered with the code `temporarily_unavailable`, meaning "try again", not a rejection).
@@ -48,7 +48,15 @@ The service backs Divine's identity and trust surface: divine-web and Divine mob
    ```
 
    The answer is `{"url":"https://…"}`, the provider page to open.
-2. After the provider, the verifier returns to `return_url` with `platform` and `identity` in the query, and a one-time code after the `#`: `#oauth_confirm=<code>`. The code is valid for 10 minutes.
+2. After the provider, the verifier returns to `return_url` with `platform` and `identity` in the query, and a one-time code after the `#`: `#oauth_confirm=<code>`. The code is valid for 10 minutes. Any of these names already in `return_url` are replaced. While confirmation is optional, the query also carries `oauth_verified=true` for app versions that can't confirm; don't rely on it.
+
+   A sign-in that didn't finish returns with `oauth_error`, a readable reason kept for older app versions (don't parse it), and `oauth_error_code`, a fixed value to branch on:
+   - `cancelled`: the person cancelled or declined at the platform;
+   - `provider_error`: the platform reported another error;
+   - `failed`: the verifier couldn't check the account with the platform;
+   - `update_required`: the sign-in was started with `GET /auth/:platform/start`, as older app versions do, which is no longer accepted.
+
+   Treat a code you don't know as `failed`. When the verifier can't tell where a sign-in started, or the sign-in fails unexpectedly, it returns to its own page instead.
 3. The owner signs their linked-accounts list (kind 10011). The new claim's tag carries a fourth value, `base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))`. The client sends:
 
    ```http
@@ -104,7 +112,7 @@ Configuration lives in `wrangler.toml`.
 - `YOUTUBE_API_KEY` — enables YouTube verification (the platform is hidden when unset).
 - `DISCORD_BOT_TOKEN` — enables message-based Discord verification.
 - `TWITTER_CLIENT_ID`, `TWITTER_CLIENT_SECRET` — Twitter/X OAuth 2.0 credentials. Twitter sign-in is offered only when both are set along with `OAUTH_REDIRECT_BASE`; Twitter proof posts work without them.
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — Google OAuth 2.0 credentials, used for YouTube login.
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — Google OAuth 2.0 credentials, used for YouTube login. YouTube sign-in is offered only when both are set along with `OAUTH_REDIRECT_BASE` and `YOUTUBE_API_KEY`; otherwise, while `YOUTUBE_API_KEY` is set, YouTube is linked with a post.
 - `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` — TikTok Login Kit credentials.
 - `OAUTH_REDIRECT_BASE`: base URL for OAuth callbacks (for example `https://verifier.divine.video`), also used to validate return URLs against open redirects. Its origin's `/` is also accepted as a return address, for staging and local development.
 
@@ -117,6 +125,9 @@ npm run deploy    # wrangler deploy to Cloudflare
 ```
 
 The Worker is named `divine-identity-verification-service` in `wrangler.toml`. Set the required secrets in the target environment before deploying.
+
+For checked main-branch releases, CI prerequisites, release receipts, safe health
+verification, and operator rollback, see [production deployment](docs/production-deployment.md).
 
 ---
 
