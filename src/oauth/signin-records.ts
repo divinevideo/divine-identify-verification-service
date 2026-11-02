@@ -118,31 +118,36 @@ export async function keepSignInWithoutExpiry(env: Bindings, record: OAuthVerifi
   // again first, and each record just before it is written. KV reads can lag a
   // change made elsewhere, so this narrows the window rather than closing it.
   try {
-    if (!(await stillSameSignIn(env, record.identity, record))) return
+    if (!(await stillSameSignIn(env, record.identity, record, true))) return
     const others = new Set([record.handle, record.account_id]
       .filter((id): id is string => !!id && id.toLowerCase() !== record.identity.toLowerCase())
       .map(id => id.toLowerCase()))
-    for (const id of others) await storeAgainWithoutExpiry(env, id, record)
-    await storeAgainWithoutExpiry(env, record.identity, record)
+    for (const id of others) await storeAgainWithoutExpiry(env, id, record, false)
+    await storeAgainWithoutExpiry(env, record.identity, record, true)
   } catch (err) {
     console.warn('Sign-in record not stored again without an expiry:', err)
   }
 }
 
 // The record under `identity`, if it is still the same sign-in and hasn't been
-// stored without an expiry yet. Both records of a pair are saved together with
-// one `checked_at`, and unlinking pairs them by account and handle.
-async function stillSameSignIn(env: Bindings, identity: string, signIn: OAuthVerification): Promise<OAuthVerification | null> {
+// stored without an expiry yet. Unlinking pairs records by account and handle.
+// The verified record must also be the one that was verified (same
+// `checked_at`); the pair's record needn't, since a sign-in whose DID write
+// failed leaves the DID record from an earlier sign-in of the same account and
+// handle, and that record is stored again as it is.
+async function stillSameSignIn(env: Bindings, identity: string, signIn: OAuthVerification, sameTime: boolean): Promise<OAuthVerification | null> {
   const current = await getOAuthVerification(env.CACHE_KV, signIn.platform, identity, signIn.pubkey)
   if (!current || current.stored_without_expiry === true || !isRecheckedLink(env, current)) return null
-  if (current.account_id !== signIn.account_id || current.handle !== signIn.handle || current.checked_at !== signIn.checked_at) return null
+  if (current.account_id !== signIn.account_id || current.handle !== signIn.handle) return null
+  if (sameTime && current.checked_at !== signIn.checked_at) return null
   return current
 }
 
-// Stores the record under `identity` again with no expiry while it is still
-// the same sign-in. A record that isn't is left alone; a failed write throws.
-async function storeAgainWithoutExpiry(env: Bindings, identity: string, signIn: OAuthVerification): Promise<void> {
-  const current = await stillSameSignIn(env, identity, signIn)
+// Stores the record under `identity` again, as it is, with no expiry while it
+// is still the same sign-in. A record that isn't is left alone; a failed write
+// throws.
+async function storeAgainWithoutExpiry(env: Bindings, identity: string, signIn: OAuthVerification, sameTime: boolean): Promise<void> {
+  const current = await stillSameSignIn(env, identity, signIn, sameTime)
   if (current) await storeOAuthVerification(env.CACHE_KV, current)
 }
 

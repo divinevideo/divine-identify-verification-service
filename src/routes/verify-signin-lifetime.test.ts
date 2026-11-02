@@ -131,7 +131,6 @@ describe('a Bluesky link saved with the old 30-day expiry', () => {
     ['a different handle', { handle: 'old.bsky.social' }],
     ['an unconfirmed sign-in', { confirmed: undefined }],
     ['a record already stored without an expiry', { stored_without_expiry: true }],
-    ['a sign-in saved at another time', { checked_at: NOW - 5 * DAY }],
   ])('leaves the DID record alone when it belongs to %s', async (_label, partner) => {
     handlePointsTo(DID)
     const { env, store, put } = blueskyEnv({}, partner)
@@ -139,6 +138,31 @@ describe('a Bluesky link saved with the old 30-day expiry', () => {
     expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
     expect(signInWrites(put).map(c => c[0])).toEqual([oauthVerificationKey('bluesky', HANDLE, PUBKEY)])
     expect(read(store, DID)).toEqual(before)
+  })
+
+  // A sign-in whose DID write failed leaves the DID record from an earlier
+  // sign-in of the same account and handle. It is stored again as it is, so it
+  // doesn't lapse and unlinking by the DID still finds the handle record.
+  it('stores the DID record again when it was saved at another time for the same account and handle', async () => {
+    handlePointsTo(DID)
+    const { env, store } = blueskyEnv({}, { checked_at: NOW - 5 * DAY })
+    const before = read(store, DID)
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(read(store, DID)).toEqual({ ...before, stored_without_expiry: true })
+    expect(read(store, HANDLE).stored_without_expiry).toBe(true)
+  })
+
+  // Unlinking by the DID removes the handle record before the DID record, so
+  // the handle record is read again just before it is written.
+  it('does not bring back the handle record when an unlink removes it while the DID record is stored', async () => {
+    handlePointsTo(DID)
+    const { env, store, put } = blueskyEnv()
+    put.mockImplementation(async (k: string, value: string) => {
+      store.set(k, value)
+      if (k === key(DID)) store.delete(key(HANDLE))
+    })
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(store.has(key(HANDLE))).toBe(false)
   })
 
   it('stores the handle record again when there is no DID record', async () => {
