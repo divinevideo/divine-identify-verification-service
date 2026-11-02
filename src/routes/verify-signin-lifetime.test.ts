@@ -145,7 +145,7 @@ describe('a Bluesky link saved with the old 30-day expiry', () => {
   // doesn't lapse and unlinking by the DID still finds the handle record.
   it('stores the DID record again when it was saved at another time for the same account and handle', async () => {
     handlePointsTo(DID)
-    const { env, store } = blueskyEnv({}, { checked_at: NOW - 5 * DAY })
+    const { env, store } = blueskyEnv({}, { checked_at: NOW - 15 * DAY })
     const before = read(store, DID)
     expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
     expect(read(store, DID)).toEqual({ ...before, stored_without_expiry: true })
