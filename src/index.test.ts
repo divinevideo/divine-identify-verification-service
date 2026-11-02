@@ -724,6 +724,11 @@ describe('how long sign-in links last, on the page', () => {
     expect(signInCard(html)).toContain(sentence('YouTube'))
   })
 
+  it('has no YouTube sentence when only the YouTube API key is set, since sign-in is not offered', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', { YOUTUBE_API_KEY: 'key' })
+    expect(html).not.toContain('signing in to YouTube')
+  })
+
   it('has the TikTok sentence but none for Bluesky when both are on', async () => {
     const card = signInCard(await homeHtml('https://verifier.divine.video/', tiktokOn))
     expect(card).toContain(sentence('TikTok'))

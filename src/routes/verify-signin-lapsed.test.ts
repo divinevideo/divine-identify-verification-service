@@ -65,9 +65,10 @@ async function link(env: Bindings, platform: string, identity: string, proof: st
 const ROUTES = [['single', single], ['batch', batch], ['link', link]] as const
 const ACCOUNTS = [['twitter', 'jack'], ['youtube', 'somechannel'], ['tiktok', 'someone']] as const
 
-function confirmedRecord(store: Map<string, string>, platform: string, identity: string) {
+function confirmedRecord(store: Map<string, string>, platform: string, identity: string, ageDays = 0) {
   store.set(oauthVerificationKey(platform as 'twitter', identity, PUBKEY), JSON.stringify({
-    platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), confirmed: true,
+    platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth',
+    checked_at: Math.floor(Date.now() / 1000) - ageDays * 24 * 60 * 60, confirmed: true,
   }))
 }
 
@@ -98,6 +99,15 @@ describe('a sign-in link with no counted sign-in answers signin_expired and the 
       expect(answer.verified).toBe(true)
       expect(answer.method).toBe('oauth')
       expect(answer.code).toBeUndefined()
+    })
+
+    it.each(ACCOUNTS)('%s: a confirmed record past its lifetime gives signin_expired without asking the platform', async (platform, identity) => {
+      const { env, store } = makeEnv()
+      confirmedRecord(store, platform, identity, 31)
+      const answer = await check(env, platform, identity, 'oauth')
+      expect(answer.verified).toBe(false)
+      expect(answer.code).toBe('signin_expired')
+      expect(fetchMock).not.toHaveBeenCalled()
     })
   })
 
