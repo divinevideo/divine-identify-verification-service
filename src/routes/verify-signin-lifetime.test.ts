@@ -36,7 +36,7 @@ function envWithTikTokSignIn(checkedAt: number) {
   return { env, put }
 }
 
-type Result = { verified: boolean; method?: string }
+type Result = { verified: boolean; method?: string; code?: string }
 
 const signInWrites = (put: ReturnType<typeof vi.fn>) => put.mock.calls.filter(c => String(c[0]).startsWith('oauth_verified:'))
 
@@ -65,6 +65,8 @@ describe.each([['/verify/single', single], ['/verify', batch]] as const)('a TikT
     const result = await check(envWithTikTokSignIn(NOW - 31 * DAY).env)
     expect(result.verified).toBe(false)
     expect(result.method).not.toBe('oauth')
+    // Lapsed, not a failed proof-post lookup or an outage answer.
+    expect(result.code).toBe('signin_expired')
   })
 })
 
@@ -96,12 +98,12 @@ describe.each([
     return { env, put }
   }
 
-  async function check(env: Bindings): Promise<Result & { code?: string }> {
+  async function check(env: Bindings): Promise<Result> {
     const res = await worker.fetch(new Request('https://verifier.divine.video/verify/single', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ platform: 'bluesky', identity: claimed, proof: 'oauth', pubkey: PUBKEY }),
     }), env)
-    return res.json() as Promise<Result & { code?: string }>
+    return res.json() as Promise<Result>
   }
 
   // The handle points to the DID, whose account has no identity-link records
