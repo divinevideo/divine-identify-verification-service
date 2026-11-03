@@ -20,7 +20,7 @@ const confirmed = { confirmed: true }
 const withDid = { confirmed: true, account_id: 'did:plc:alice111111111111111111' }
 
 describe('the sign-in lifetime constants', () => {
-  it('gives fixed-lifetime links 30 days and unconfirmed sign-ins a day', () => {
+  it('gives confirmed links 30 days and unconfirmed sign-ins a day', () => {
     expect(FIXED_SIGNIN_LIFETIME_DAYS).toBe(30)
     expect(UNCONFIRMED_SIGNIN_LIFETIME_SECONDS).toBe(DAY)
   })
@@ -48,7 +48,7 @@ describe('whether a sign-in record is current', () => {
     ['null', null],
     ['not a number', NaN],
     ['infinite', Infinity],
-  ])('does not count a fixed-lifetime record whose checked_at is %s, without throwing', (_label, checkedAt) => {
+  ])('does not count a confirmed record whose checked_at is %s, without throwing', (_label, checkedAt) => {
     const rec = { ...record('tiktok', 0, confirmed), checked_at: checkedAt } as unknown as OAuthVerification
     expect(() => signInIsCurrent(rec, NOW)).not.toThrow()
     expect(signInIsCurrent(rec, NOW)).toBe(false)
@@ -73,6 +73,7 @@ describe('the README states the fixed lifetime', () => {
     const readme = readFileSync('README.md', 'utf8')
     expect(readme).toContain(`and lasts ${FIXED_SIGNIN_LIFETIME_DAYS} days from then`)
     expect(readme).toContain('stops counting once the handle points to another account or no longer resolves')
+    expect(readme).toContain("the link keeps counting). A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.")
     expect(readme).not.toMatch(/no fixed lifetime|re-checked at each verification/)
     expect(readme).not.toMatch(/until (it is )?unlinked/)
   })

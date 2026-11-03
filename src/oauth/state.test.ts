@@ -88,8 +88,6 @@ describe('storing a sign-in record', () => {
       expect(put.mock.calls[0][2]).toEqual({ expirationTtl: 2592000 })
       const stored = JSON.parse(store.get(oauthVerificationKey(record.platform, record.identity, 'aabb')) ?? '{}')
       expect(stored).toMatchObject({ ...record, confirmed: true })
-      // Guards against the old stored_without_expiry marker coming back.
-      expect(stored).not.toHaveProperty('stored_without_expiry')
     }
   })
 

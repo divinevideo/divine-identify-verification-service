@@ -20,18 +20,20 @@ beforeEach(() => {
 })
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-function envWithTikTokSignIn(checkedAt: number): Bindings {
+function envWithTikTokSignIn(checkedAt: number) {
   const store = new Map<string, string>()
+  const put = vi.fn(async (key: string, value: string, _opts?: { expirationTtl?: number }) => { store.set(key, value) })
   const kv = {
     get: async (key: string) => store.get(key) ?? null,
-    put: async (key: string, value: string) => { store.set(key, value) },
+    put,
     delete: async (key: string) => { store.delete(key) },
   } as unknown as KVNamespace
   store.set(oauthVerificationKey('tiktok', 'creator', PUBKEY), JSON.stringify({
     platform: 'tiktok', identity: 'creator', pubkey: PUBKEY, verified: true, method: 'oauth',
     checked_at: checkedAt, account_id: 'acct-1', confirmed: true,
   }))
-  return { CACHE_KV: kv, RATE_LIMIT_KV: kv, SIGNIN_CONFIRMATION: 'required' } as Bindings
+  const env = { CACHE_KV: kv, RATE_LIMIT_KV: kv, SIGNIN_CONFIRMATION: 'required' } as Bindings
+  return { env, put }
 }
 
 type Result = { verified: boolean; method?: string }
@@ -54,11 +56,13 @@ async function batch(env: Bindings): Promise<Result> {
 
 describe.each([['/verify/single', single], ['/verify', batch]] as const)('a TikTok sign-in through %s', (_path, check) => {
   it('is verified 29 days after it was confirmed', async () => {
-    expect(await check(envWithTikTokSignIn(NOW - 29 * DAY))).toMatchObject({ verified: true, method: 'oauth' })
+    const { env, put } = envWithTikTokSignIn(NOW - 29 * DAY)
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(signInWrites(put)).toHaveLength(0)
   })
 
   it('is not verified 31 days after it was confirmed', async () => {
-    const result = await check(envWithTikTokSignIn(NOW - 31 * DAY))
+    const result = await check(envWithTikTokSignIn(NOW - 31 * DAY).env)
     expect(result.verified).toBe(false)
     expect(result.method).not.toBe('oauth')
   })
