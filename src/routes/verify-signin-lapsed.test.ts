@@ -85,8 +85,10 @@ describe('a sign-in link with no counted sign-in answers signin_expired and the 
 
     it.each(ACCOUNTS)('%s: a record that does not count (unconfirmed, once required) gives signin_expired', async (platform, identity) => {
       const { env, store } = makeEnv()
+      // Saved just now, so only the unconfirmed rule can end it: a stale checked_at
+      // would let the age check pass this test without the rule.
       store.set(oauthVerificationKey(platform as 'twitter', identity, PUBKEY), JSON.stringify({
-        platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1,
+        platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000),
       }))
       const answer = await check(env, platform, identity, 'oauth')
       expect(answer.code).toBe('signin_expired')
