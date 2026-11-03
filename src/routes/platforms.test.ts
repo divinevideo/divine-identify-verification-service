@@ -160,18 +160,20 @@ describe('GET /platforms', () => {
   })
 
   describe('signin_expires_after_days', () => {
-    it('is 30 for TikTok with sign-in on, and absent for Bluesky', async () => {
+    it('is 30 for Bluesky and TikTok with sign-in on', async () => {
       const body = await fetchPlatforms(ALL_OAUTH_CONFIGURED)
-      expect(body.platforms.tiktok.oauth).toBe(true)
-      expect(body.platforms.tiktok.signin_expires_after_days).toBe(30)
-      expect(body.platforms.bluesky.oauth).toBe(true)
-      expect(body.platforms.bluesky).not.toHaveProperty('signin_expires_after_days')
+      for (const platform of ['bluesky', 'tiktok']) {
+        expect(body.platforms[platform].oauth).toBe(true)
+        expect(body.platforms[platform].signin_expires_after_days).toBe(30)
+      }
     })
 
-    it('is absent for TikTok with sign-in off', async () => {
+    it('is absent for Bluesky and TikTok with sign-in off', async () => {
       const body = await fetchPlatforms({})
-      expect(body.platforms.tiktok.oauth).toBe(false)
-      expect(body.platforms.tiktok).not.toHaveProperty('signin_expires_after_days')
+      for (const platform of ['bluesky', 'tiktok']) {
+        expect(body.platforms[platform].oauth).toBe(false)
+        expect(body.platforms[platform]).not.toHaveProperty('signin_expires_after_days')
+      }
     })
 
     it.each(['twitter', 'youtube'])('is 30 for %s with sign-in on', async platform => {

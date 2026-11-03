@@ -226,7 +226,7 @@ describe('Bluesky sign-in links', () => {
     const { env, store } = makeEnv()
     store.set(oauthVerificationKey('bluesky', 'alice.bsky.social', PUBKEY), JSON.stringify({
       platform: 'bluesky', identity: 'alice.bsky.social', pubkey: PUBKEY, verified: true, method: 'oauth',
-      checked_at: 1, confirmed: true, account_id: 'did:plc:old',
+      checked_at: Math.floor(Date.now() / 1000), confirmed: true, account_id: 'did:plc:old',
     }))
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       if (String(input).includes('com.atproto.identity.resolveHandle')) return json({ did: 'did:plc:new' })
@@ -242,7 +242,7 @@ describe('Bluesky sign-in links', () => {
     const { env, store } = makeEnv()
     store.set(oauthVerificationKey('bluesky', 'alice.bsky.social', PUBKEY), JSON.stringify({
       platform: 'bluesky', identity: 'alice.bsky.social', pubkey: PUBKEY, verified: true, method: 'oauth',
-      checked_at: 1, confirmed: true, account_id: 'did:plc:old',
+      checked_at: Math.floor(Date.now() / 1000), confirmed: true, account_id: 'did:plc:old',
     }))
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       if (String(input).includes('com.atproto.identity.resolveHandle')) return json({ error: 'InvalidRequest', message: 'Unable to resolve handle' }, 400)

@@ -37,9 +37,9 @@ export function getPlatformInfo(opts?: {
   // what /auth/:platform/start would do. Only read for twitter, bluesky,
   // youtube and tiktok; other platforms have no sign-in path.
   oauthAvailable?: { twitter?: boolean; bluesky?: boolean; youtube?: boolean; tiktok?: boolean }
-  // Days a confirmed sign-in link lasts, per platform; null or missing where it
-  // counts while the account still matches. Reported only where sign-in is usable.
-  signinLifetimeDays?: Record<string, number | null>
+  // Days a confirmed sign-in link lasts. Reported on every platform where
+  // sign-in is set up (oauth is true).
+  signinLifetimeDays?: number
 }): Record<string, PlatformInfo> {
   const platforms: Record<string, PlatformInfo> = {
     github: { label: 'GitHub', supported: true },
@@ -55,9 +55,11 @@ export function getPlatformInfo(opts?: {
     platforms.youtube = { label: 'YouTube', supported: true, oauth: !!opts?.oauthAvailable?.youtube }
   }
   platforms.tiktok = { label: 'TikTok', supported: !!opts?.tiktokOAuthAvailable, oauth: !!opts?.oauthAvailable?.tiktok }
-  for (const [name, info] of Object.entries(platforms)) {
-    const days = opts?.signinLifetimeDays?.[name]
-    if (info.oauth && typeof days === 'number') info.signin_expires_after_days = days
+  const days = opts?.signinLifetimeDays
+  if (typeof days === 'number') {
+    for (const info of Object.values(platforms)) {
+      if (info.oauth) info.signin_expires_after_days = days
+    }
   }
   return platforms
 }

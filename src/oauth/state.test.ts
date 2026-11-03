@@ -74,24 +74,28 @@ describe('storing a sign-in record', () => {
   }
   const base = { pubkey: 'aabb', verified: true as const, method: 'oauth' as const, checked_at: 1 }
 
-  // How long a confirmed record counts is decided when it is read
-  // (signin-lifetime.ts), so storage keeps it with no expiry.
-  it.each([
-    ['a Bluesky', { platform: 'bluesky' as const, identity: 'alice.bsky.social', account_id: 'did:plc:alice', handle: 'alice.bsky.social' }],
-    ['a TikTok', { platform: 'tiktok' as const, identity: 'creator', account_id: 'acct-1' }],
-    ['a Twitter', { platform: 'twitter' as const, identity: 'jack' }],
-  ])('stores %s confirmed record with no expiry, marked as such', async (_label, record) => {
-    const { kv, put, store } = spyKV()
-    await storeOAuthVerification(kv, { ...base, ...record, confirmed: true })
-    expect(put).toHaveBeenCalledTimes(1)
-    expect(put.mock.calls[0][2]?.expirationTtl).toBeUndefined()
-    expect(JSON.parse(store.get(oauthVerificationKey(record.platform, record.identity, 'aabb')) ?? '{}')).toMatchObject({ ...record, confirmed: true, stored_without_expiry: true })
+  // Storage ends a confirmed record at the same 30 days as the age check
+  // (signin-lifetime.ts).
+  it('stores a confirmed record for 30 days, without a marker', async () => {
+    for (const record of [
+      { platform: 'bluesky' as const, identity: 'alice.bsky.social', account_id: 'did:plc:alice', handle: 'alice.bsky.social' },
+      { platform: 'tiktok' as const, identity: 'creator', account_id: 'acct-1' },
+      { platform: 'twitter' as const, identity: 'jack' },
+    ]) {
+      const { kv, put, store } = spyKV()
+      await storeOAuthVerification(kv, { ...base, ...record, confirmed: true })
+      expect(put).toHaveBeenCalledTimes(1)
+      expect(put.mock.calls[0][2]).toEqual({ expirationTtl: 2592000 })
+      const stored = JSON.parse(store.get(oauthVerificationKey(record.platform, record.identity, 'aabb')) ?? '{}')
+      expect(stored).toMatchObject({ ...record, confirmed: true })
+      // Guards against the old stored_without_expiry marker coming back.
+      expect(stored).not.toHaveProperty('stored_without_expiry')
+    }
   })
 
-  it('stores an unconfirmed record for a day, without the marker', async () => {
-    const { kv, put, store } = spyKV()
+  it('stores an unconfirmed record for a day', async () => {
+    const { kv, put } = spyKV()
     await storeOAuthVerification(kv, { ...base, platform: 'bluesky', identity: 'alice.bsky.social', account_id: 'did:plc:alice' })
     expect(put.mock.calls[0][2]).toEqual({ expirationTtl: 86400 })
-    expect(JSON.parse(store.get(oauthVerificationKey('bluesky', 'alice.bsky.social', 'aabb')) ?? '{}').stored_without_expiry).toBeUndefined()
   })
 })

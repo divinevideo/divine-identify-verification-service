@@ -55,7 +55,7 @@ divine-web's `LinkedAccountsSettingsPage` already lets users remove identity cla
 
 ## Problem
 - Users need a direct, non-technical unlink path.
-- OAuth cache entries live for up to 24 hours, so unlinking only profile tags is insufficient for immediate de-verification.
+- OAuth sign-in records last up to 30 days (unconfirmed ones a day), so unlinking only profile tags is insufficient for immediate de-verification.
 
 ## Goals
 1. Users can view linked verifications for the active account.

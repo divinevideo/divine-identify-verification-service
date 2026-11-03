@@ -1,4 +1,5 @@
 import type { OAuthState, OAuthVerification } from '../types'
+import { FIXED_SIGNIN_LIFETIME_DAYS } from './signin-lifetime'
 
 const STATE_TTL = 600 // 10 minutes for OAuth flow
 const OAUTH_VERIFICATION_TTL = 24 * 60 * 60 // 24 hours
@@ -29,16 +30,14 @@ export async function deleteOAuthState(kv: KVNamespace, stateId: string): Promis
   await kv.delete(oauthStateKey(stateId))
 }
 
-// A confirmed sign-in is stored with no expiry, and marked so. How long it
-// counts is decided when it is read (signin-lifetime.ts), so a lifetime can
-// change for records already stored. An unconfirmed sign-in is stored for a day.
+// A confirmed sign-in is stored for 30 days, and an unconfirmed one for a day.
+// Storage and the age check (signin-lifetime.ts) end a record at the same 30
+// days, so a rollback to code without the age check still ends it.
+// TODO(#90): keep Bluesky sign-ins until they are unlinked, once unlinking works for everyone (#76).
 export async function storeOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
   const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
-  if (verification.confirmed === true) {
-    await kv.put(key, JSON.stringify({ ...verification, stored_without_expiry: true }))
-  } else {
-    await kv.put(key, JSON.stringify(verification), { expirationTtl: OAUTH_VERIFICATION_TTL })
-  }
+  const ttl = verification.confirmed === true ? FIXED_SIGNIN_LIFETIME_DAYS * 24 * 60 * 60 : OAUTH_VERIFICATION_TTL
+  await kv.put(key, JSON.stringify(verification), { expirationTtl: ttl })
 }
 
 export async function getOAuthVerification(

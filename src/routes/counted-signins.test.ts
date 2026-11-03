@@ -4,6 +4,9 @@ import type { Bindings } from '../types'
 import { oauthVerificationKey } from '../oauth/state'
 
 const PUBKEY = 'ab'.repeat(32)
+const X = { platform: 'twitter', identity: 'jack' }
+const BLUESKY = { platform: 'bluesky', identity: 'alice.bsky.social' }
+type Account = typeof X
 
 // When a record doesn't count, the check falls through to the proof post,
 // which would fetch from the platform; no network in tests.
@@ -13,7 +16,7 @@ beforeEach(() => {
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-function envWith(vars: Partial<Bindings>, record: Record<string, unknown> | null): Bindings {
+function envWith(vars: Partial<Bindings>, record: Record<string, unknown> | null, { platform, identity }: Account = X): Bindings {
   const store = new Map<string, string>()
   const kv = {
     get: async (key: string) => store.get(key) ?? null,
@@ -22,37 +25,37 @@ function envWith(vars: Partial<Bindings>, record: Record<string, unknown> | null
     list: async () => ({ keys: [], list_complete: true, caches_used: 0 }),
   } as unknown as KVNamespace
   if (record) {
-    store.set(oauthVerificationKey('twitter', 'jack', PUBKEY), JSON.stringify({
-      platform: 'twitter', identity: 'jack', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), ...record,
+    store.set(oauthVerificationKey(platform, identity, PUBKEY), JSON.stringify({
+      platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), ...record,
     }))
   }
   return { CACHE_KV: kv, RATE_LIMIT_KV: kv, ...vars } as Bindings
 }
 
-async function single(env: Bindings) {
+async function single(env: Bindings, { platform, identity }: Account = X) {
   const res = await worker.fetch(new Request('https://verifier.divine.video/verify/single', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY }),
+    body: JSON.stringify({ platform, identity, proof: 'oauth', pubkey: PUBKEY }),
   }), env)
   return (await res.json() as { method?: string }).method === 'oauth'
 }
 
-async function batch(env: Bindings) {
+async function batch(env: Bindings, { platform, identity }: Account = X) {
   const res = await worker.fetch(new Request('https://verifier.divine.video/verify', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ claims: [{ platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY }] }),
+    body: JSON.stringify({ claims: [{ platform, identity, proof: 'oauth', pubkey: PUBKEY }] }),
   }), env)
   return (await res.json() as { results: Array<{ method?: string }> }).results[0].method === 'oauth'
 }
 
-async function status(env: Bindings) {
-  const res = await worker.fetch(new Request(`https://verifier.divine.video/auth/twitter/status?pubkey=${PUBKEY}&identity=jack`), env)
+async function status(env: Bindings, { platform, identity }: Account = X) {
+  const res = await worker.fetch(new Request(`https://verifier.divine.video/auth/${platform}/status?pubkey=${PUBKEY}&identity=${identity}`), env)
   return (await res.json() as { verified: boolean }).verified
 }
 
 // The verification-link route: GET /verify/:platform/<identity>/<proof>?pubkey=
-async function link(env: Bindings) {
-  const res = await worker.fetch(new Request(`https://verifier.divine.video/verify/twitter/jack/oauth?pubkey=${PUBKEY}`, { headers: { Accept: 'application/json' } }), env)
+async function link(env: Bindings, { platform, identity }: Account = X) {
+  const res = await worker.fetch(new Request(`https://verifier.divine.video/verify/${platform}/${identity}/oauth?pubkey=${PUBKEY}`, { headers: { Accept: 'application/json' } }), env)
   return (await res.json() as { method?: string }).method === 'oauth'
 }
 
@@ -72,8 +75,10 @@ describe('sign-in records answer every check the same way', () => {
     expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required' }, { confirmed: true }))).toBe(true)
   })
 
-  it.each(CHECKS)('%s: a confirmed X record past its lifetime does not count', async (_name, check) => {
+  it.each(CHECKS)('%s: a confirmed X or Bluesky record past its lifetime does not count', async (_name, check) => {
     const checkedAt = Math.floor(Date.now() / 1000) - 31 * 24 * 60 * 60
     expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required' }, { confirmed: true, checked_at: checkedAt }))).toBe(false)
+    const blueskyRecord = { confirmed: true, checked_at: checkedAt, account_id: 'did:plc:alice111111111111111111', handle: BLUESKY.identity }
+    expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required' }, blueskyRecord, BLUESKY), BLUESKY)).toBe(false)
   })
 })

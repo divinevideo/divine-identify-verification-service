@@ -5,7 +5,7 @@ import { isTikTokOAuthUsable } from '../oauth/tiktok'
 import { isTwitterOAuthUsable } from '../oauth/twitter'
 import { isBlueskyOAuthUsable } from '../oauth/bluesky'
 import { isYouTubeOAuthUsable } from '../oauth/youtube'
-import { fixedLifetimeDays } from '../oauth/signin-lifetime'
+import { FIXED_SIGNIN_LIFETIME_DAYS } from '../oauth/signin-lifetime'
 
 const platforms = new Hono<{ Bindings: Bindings }>()
 
@@ -25,9 +25,7 @@ platforms.get('/', (c) => {
       youtube: isYouTubeOAuthUsable(c.env),
       tiktok: tiktokOAuthAvailable,
     },
-    signinLifetimeDays: Object.fromEntries(
-      ['twitter', 'bluesky', 'youtube', 'tiktok'].map(name => [name, fixedLifetimeDays(c.env, name)]),
-    ),
+    signinLifetimeDays: FIXED_SIGNIN_LIFETIME_DAYS,
   }) })
 })
 
