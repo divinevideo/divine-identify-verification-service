@@ -9,20 +9,19 @@ import { isYouTubeOAuthUsable } from '../oauth/youtube'
 const platforms = new Hono<{ Bindings: Bindings }>()
 
 platforms.get('/', (c) => {
-  // TikTok's supported flag and its oauth flag use the same check, without the
-  // sandbox-review cookie: /platforms has no request-scoped review session to
-  // read it from, so it reports the state that applies to everyone else.
-  const tiktokOAuthAvailable = isTikTokOAuthUsable(c.env)
   return c.json({ platforms: getPlatformInfo({
     youtubeEnabled: !!c.env.YOUTUBE_API_KEY,
-    // TODO(#39): Enable after production OAuth credentials pass an end-to-end check.
-    tiktokOAuthAvailable,
     discordEnabled: !!c.env.DISCORD_BOT_TOKEN,
     oauthAvailable: {
       twitter: isTwitterOAuthUsable(c.env),
       bluesky: isBlueskyOAuthUsable(c.env),
       youtube: isYouTubeOAuthUsable(c.env),
-      tiktok: tiktokOAuthAvailable,
+      // Checked without the sandbox-review cookie on purpose: the app and the
+      // other clients that call /platforms never hold it, so this is the
+      // state everyone gets. Off until TIKTOK_OAUTH_ENABLED is "true" and the
+      // key, secret and redirect base are set. Production keeps the flag
+      // "false" until its credentials pass an end-to-end check (#39).
+      tiktok: isTikTokOAuthUsable(c.env),
     },
   }) })
 })
