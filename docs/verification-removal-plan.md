@@ -55,7 +55,7 @@ divine-web's `LinkedAccountsSettingsPage` already lets users remove identity cla
 
 ## Problem
 - Users need a direct, non-technical unlink path.
-- OAuth cache entries live for up to 24 hours, so unlinking only profile tags is insufficient for immediate de-verification.
+- Removing profile tags alone does not clear a sign-in record. With the lifetime change in #163, confirmed records have no storage expiry: Bluesky records with a DID have no fixed verification lifetime, while other confirmed records stop counting after 30 days. Unconfirmed records retain their 24-hour expiry. Immediate de-verification requires revoking the stored record; Divine-login users still need the unlink support tracked in #76. See [sign-in retention and rollout limits](signin-lifetime-rollout.md).
 
 ## Goals
 1. Users can view linked verifications for the active account.
