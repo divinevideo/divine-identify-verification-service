@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import worker from './index'
 import { NOSTR_TOOLS_MODULE_PATH } from './generated/vendor'
 
@@ -34,7 +34,7 @@ function scriptBetween(html: string, from: string, to: string): string {
 
 const DEPS = ['document', 'fetch', 'API', 'DIVINE_RELAY', 'PROFILE_RELAYS', 'WebSocket', 'setTimeout', 'clearTimeout', 'loadNostrTools',
   'publishEventToRelay', 'activeSigner', 'getActivePubkey', 'signerPubkeyHex', 'setStatus', 'clearStatus', 'setButtonLoading',
-  'setAccountInputValue', 'updateSignerSummary', 'currentProofContext', 'renderLinkedVerifications', 'buildNip98EventForRevoke',
+  'setAccountInputValue', 'updateSignerSummary', 'currentProofContext', 'renderLinkedVerifications',
   'OAUTH_PLATFORMS_SET']
 
 async function loadPage() {
@@ -43,7 +43,7 @@ async function loadPage() {
     scriptBetween(html, 'function fetchIdentityEvent(relayUrl, pubkey)', '// --- Manage / Remove linked verifications ---'),
     scriptBetween(html, 'async function publishIdentityTagToNostr()', 'const PENDING_SIGN_IN_KEY'),
     scriptBetween(html, 'async function loadLinkedVerifications()', '// Renders manage table'),
-    scriptBetween(html, 'async function executeRemoveVerification()', 'async function buildNip98EventForRevoke('),
+    scriptBetween(html, 'async function executeRemoveVerification()', '// A platform pill links to the card'),
   ].join('\n')
   return (env: Record<string, unknown>) =>
     new Function(...DEPS, `${source}\nreturn { publishIdentityTagToNostr, loadLinkedVerifications, executeRemoveVerification };`)(...DEPS.map(d => env[d]))
@@ -66,8 +66,10 @@ function event(kind: number, createdAt: number, tags: string[][], overrides: Par
 // Lets every pending promise and stand-in relay answer run.
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 
-function harness(relays: Record<string, Relay>, opts: { removing?: { platform: string, identity: string }, noChecker?: boolean } = {}) {
+function harness(relays: Record<string, Relay>, opts: { removing?: { platform: string, identity: string }, noChecker?: boolean, revokeOk?: boolean, publishOk?: boolean, revokeThrows?: boolean } = {}) {
   const published: NostrEvent[] = []
+  const fetches: Array<{ url: string, init: RequestInit }> = []
+  let signs = 0
   const statuses: Array<[string, string, string]> = []
   const listed: string[][][] = []
   // What the page did, in order: sockets opened and relays answering.
@@ -133,14 +135,14 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
       return { pure: { verifyEvent: (e: NostrEvent) => { checked.push(e); return e.sig === GOOD_SIG } } }
     },
     document: { getElementById: (id: string) => id === 'remove-confirm-dialog' ? dialog : element(id) },
-    fetch: async () => ({ ok: true }),
+    fetch: async (url: string, init: RequestInit) => { fetches.push({ url, init }); if (opts.revokeThrows) throw new TypeError('Failed to fetch'); return { ok: opts.revokeOk ?? true } },
     publishEventToRelay: async (_relay: string, signed: NostrEvent) => {
       published.push(signed)
-      return { ok: true }
+      return { ok: opts.publishOk ?? true }
     },
     activeSigner: {
       getPublicKey: async () => PUBKEY,
-      signEvent: async (unsigned: Omit<NostrEvent, 'id' | 'sig'>) => ({ ...unsigned, id: 'ee'.repeat(32), sig: GOOD_SIG }),
+      signEvent: async (unsigned: Omit<NostrEvent, 'id' | 'sig'>) => { signs++; return { ...unsigned, id: 'ee'.repeat(32), sig: GOOD_SIG } },
     },
     getActivePubkey: async () => PUBKEY,
     signerPubkeyHex: null,
@@ -151,7 +153,6 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
     updateSignerSummary: () => {},
     currentProofContext: () => ({ platform: 'github', identity: 'newuser', proof: 'newgist' }),
     renderLinkedVerifications: (iTags: string[][]) => { listed.push(iTags) },
-    buildNip98EventForRevoke: async () => ({}),
     OAUTH_PLATFORMS_SET: new Set(['twitter', 'bluesky', 'youtube', 'tiktok']),
   }
   const errors = () => statuses.filter(([, , type]) => type === 'error')
@@ -163,7 +164,7 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
   const fireTimers = () => {
     for (const [id, timer] of [...timers]) { timers.delete(id); timer.fn() }
   }
-  return { env, published, publishedTags, errors, listed, steps, requests, checked, closed, timers, fireTimers, element }
+  return { env, published, fetches, statuses, signs: () => signs, publishedTags, errors, listed, steps, requests, checked, closed, timers, fireTimers, element }
 }
 
 const GITHUB = iTag('github', 'octocat', 'gist1')
@@ -528,6 +529,9 @@ describe('listing linked accounts to manage', () => {
 
 describe('removing a linked account', () => {
   const removing = { platform: 'mastodon', identity: 'mastodon.social/@alice' }
+  const TWITTER = iTag('twitter', 'alice', 'oauth')
+
+  afterEach(() => { vi.useRealTimers() })
 
   it('builds on the newest identity event, not the first relay\'s copy', async () => {
     const page = await loadPage()
@@ -554,6 +558,88 @@ describe('removing a linked account', () => {
     await page(h.env).executeRemoveVerification()
 
     expect(h.publishedTags()).toEqual([GITHUB, BLUESKY])
+  })
+
+  it('sends the list it published to revoke and asks for no other signature', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(10011, 100, [GITHUB, TWITTER])], 'wss://two.example': [], 'wss://three.example': [] },
+      { removing: { platform: 'twitter', identity: 'alice' } })
+
+    await page(h.env).executeRemoveVerification()
+
+    expect(h.fetches).toHaveLength(1)
+    expect(h.fetches[0].url).toBe(`${API}/auth/oauth/revoke`)
+    expect(h.fetches[0].init.method).toBe('POST')
+    expect(h.fetches[0].init.headers).toEqual({ 'Content-Type': 'application/json' })
+    expect(JSON.parse(h.fetches[0].init.body as string)).toEqual({ platform: 'twitter', identity: 'alice', pubkey: PUBKEY, list: h.published[0] })
+    expect(h.signs()).toBe(1)
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['manage-status', 'Verification removed from your Nostr profile.', 'ok'])
+  })
+
+  it('dates the new list one second past the list it replaces when that is later than now', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const now = 1_800_000_000
+    vi.setSystemTime(now * 1000)
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(10011, now + 120, [GITHUB, TWITTER])], 'wss://two.example': [], 'wss://three.example': [] },
+      { removing: { platform: 'twitter', identity: 'alice' } })
+
+    await page(h.env).executeRemoveVerification()
+
+    expect(h.published[0].created_at).toBe(now + 121)
+  })
+
+  it('dates the new list now when the list it replaces is older', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const now = 1_800_000_000
+    vi.setSystemTime(now * 1000)
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(10011, 100, [GITHUB, TWITTER])], 'wss://two.example': [], 'wss://three.example': [] },
+      { removing: { platform: 'twitter', identity: 'alice' } })
+
+    await page(h.env).executeRemoveVerification()
+
+    expect(h.published[0].created_at).toBe(now)
+  })
+
+  it('says the sign-in record did not clear when revoke is refused', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(10011, 100, [GITHUB, TWITTER])], 'wss://two.example': [], 'wss://three.example': [] },
+      { removing: { platform: 'twitter', identity: 'alice' }, revokeOk: false })
+
+    await page(h.env).executeRemoveVerification()
+
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['manage-status', 'Removed from profile, but OAuth cache revoke did not complete.', 'ok'])
+  })
+
+  it('does not call revoke when no relay accepted the new list', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(10011, 100, [GITHUB, TWITTER])], 'wss://two.example': [], 'wss://three.example': [] },
+      { removing: { platform: 'twitter', identity: 'alice' }, publishOk: false })
+
+    await page(h.env).executeRemoveVerification()
+
+    expect(h.fetches).toEqual([])
+    expect(h.errors()).toEqual([['manage-status', 'No relay accepted the updated event.', 'error']])
+  })
+
+  it('says the sign-in record did not clear when the revoke request fails to send', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(10011, 100, [GITHUB, TWITTER])], 'wss://two.example': [], 'wss://three.example': [] },
+      { removing: { platform: 'twitter', identity: 'alice' }, revokeThrows: true })
+
+    await page(h.env).executeRemoveVerification()
+
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['manage-status', 'Removed from profile, but OAuth cache revoke did not complete.', 'ok'])
+  })
+
+  it('does not call revoke for a platform without sign-in', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(10011, 100, [GITHUB, MASTODON])], 'wss://two.example': [], 'wss://three.example': [] }, { removing })
+
+    await page(h.env).executeRemoveVerification()
+
+    expect(h.fetches).toEqual([])
   })
 
   it('publishes nothing when the current list couldn\'t be read', async () => {

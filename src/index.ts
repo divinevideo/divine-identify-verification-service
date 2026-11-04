@@ -2908,9 +2908,11 @@ Content-Type: application/json
         const claimKey = (platform + ':' + identity).toLowerCase();
         const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey));
 
+        // Dated one second past the list it replaces (as mobile does), so the
+        // verifier can tell this list is newer even if the clocks disagree.
         const unsignedEvent = {
           kind: 10011,
-          created_at: Math.floor(Date.now() / 1000),
+          created_at: Math.max(Math.floor(Date.now() / 1000), event ? event.created_at + 1 : 0),
           tags: nextTags,
           content: '',
           pubkey: signerPubkey,
@@ -2934,11 +2936,10 @@ Content-Type: application/json
         let revokeWarning = '';
         if (OAUTH_PLATFORMS_SET.has(platform)) {
           try {
-            const nip98Event = await buildNip98EventForRevoke(API + '/auth/oauth/revoke', 'POST');
             const revokeResp = await fetch(API + '/auth/oauth/revoke', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ platform: platform, identity: identity, pubkey: signerPubkey, event: nip98Event }),
+              body: JSON.stringify({ platform: platform, identity: identity, pubkey: signerPubkey, list: signedEvent }),
             });
             if (!revokeResp.ok) {
               revokeWarning = ' OAuth cache revoke did not complete.';
@@ -2958,28 +2959,6 @@ Content-Type: application/json
       } catch (e) {
         setStatus('manage-status', e.message || 'Could not remove verification.', 'error');
       }
-    }
-
-    async function buildNip98EventForRevoke(url, method) {
-      const signerPubkey = String(await activeSigner.getPublicKey()).toLowerCase();
-      const event = {
-        kind: 27235,
-        created_at: Math.floor(Date.now() / 1000),
-        tags: [
-          ['u', url],
-          ['method', method],
-        ],
-        content: '',
-        pubkey: signerPubkey,
-      };
-      const signedEvent = await activeSigner.signEvent(event);
-      if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
-        throw new Error('Signer did not return a valid auth event.');
-      }
-      if (String(signedEvent.pubkey || '').toLowerCase() !== signerPubkey) {
-        throw new Error('Signer returned an auth event for a different pubkey.');
-      }
-      return signedEvent;
     }
 
     // A platform pill links to the card where that platform can be linked.
