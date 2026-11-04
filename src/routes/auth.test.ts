@@ -1343,3 +1343,38 @@ describe('POST /auth/oauth/revoke with a signed list', () => {
     }
   })
 })
+
+describe('POST /auth/oauth/revoke finds the record /verify counts, however the identity was typed', () => {
+  const key = () => schnorr.utils.randomSecretKey()
+
+  for (const typed of ['@Alice', '  alice  ', '@alice']) {
+    it(`deletes the record stored under alice when the body form sends ${JSON.stringify(typed)}`, async () => {
+      const env = createTestEnv()
+      const event = await signNip98Event(key())
+      await seedRecord(env, { pubkey: event.pubkey })
+      const res = await revokeRequest(env, { platform: 'twitter', identity: typed, pubkey: event.pubkey, event })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ revoked: true, platform: 'twitter', identity: typed })
+      expect(await env.CACHE_KV.get(aliceKey(event.pubkey))).toBeNull()
+    })
+  }
+
+  it('deletes the record stored under alice when the list form sends @alice, and /verify then answers signin_expired', async () => {
+    const env = { ...createTestEnv(), SIGNIN_CONFIRMATION: 'required' } as Bindings
+    const owner = key()
+    const pubkey = bytesToHex(schnorr.getPublicKey(owner))
+    const now = Math.floor(Date.now() / 1000)
+    await seedRecord(env, { pubkey, checked_at: now, confirm_created_at: now - 10 })
+    forbidUpstreamFetch()
+    const list = await signEvent(owner, 10011, [['i', 'github:alice', 'gist1']], now - 9)
+    const res = await revokeRequest(env, { platform: 'twitter', identity: '@alice', pubkey, list })
+    expect(res.status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+    const verify = await worker.fetch(new Request('http://localhost/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ claims: [{ platform: 'twitter', identity: '@alice', proof: 'oauth', pubkey }] }),
+    }), env)
+    const result = ((await verify.json()) as { results: Array<{ verified: boolean; code?: string }> }).results[0]
+    expect(result).toMatchObject({ verified: false, code: 'signin_expired' })
+  })
+})

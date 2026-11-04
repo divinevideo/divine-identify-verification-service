@@ -8,6 +8,7 @@ import { readJsonBody } from '../utils/json-body'
 import { verifyEventSignature, asLinkedAccountsList, type SignedNostrEvent } from '../utils/nostr-event'
 import { deleteOAuthVerification, getOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
 import { listHoldsClaim, listIsNewerThanLink, readNostrAuthorization, sha256Hex } from '../oauth/unlink-proof'
+import { tidyClaim } from '../utils/tidy-claim'
 import { getCountedSignIn } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { signInConfirmationMode, confirmCodePlacement, isSignInToken, type ConfirmCodePlacement } from '../oauth/confirm'
@@ -648,6 +649,7 @@ auth.post('/oauth/revoke', async (c) => {
       if (authorization.kind !== 'event') {
         return refuse(400, 'unlink_proof_invalid', 'Invalid Authorization header: expected Nostr and a base64 NIP-98 event')
       }
+      // The bytes are hashed exactly as sent (a leading BOM included).
       verification = await verifyNip98Event(authorization.event, revokeUrl, 'POST', await sha256Hex(read.bytes))
     } else {
       // TODO(#76): retire the body form once logged proof counts show mobile 1.0.24-1.0.27 are gone.
@@ -662,8 +664,11 @@ auth.post('/oauth/revoke', async (c) => {
     signed = verification.event
   }
 
+  // The record is looked up and deleted under the tidy identity /verify counts
+  // it by (no leading @, no stray spaces), whatever form was typed.
+  const storedIdentity = tidyClaim(platform, identity, '').identity
   // Only the signer's own records are read or deleted.
-  const record = await getOAuthVerification(c.env.CACHE_KV, platform, identity, signed.pubkey)
+  const record = await getOAuthVerification(c.env.CACHE_KV, platform, storedIdentity, signed.pubkey)
   if (!record) {
     log('nothing stored')
     return c.json({ revoked: true, platform, identity })
@@ -681,7 +686,7 @@ auth.post('/oauth/revoke', async (c) => {
     return refuse(401, 'unlink_proof_invalid', 'NIP-98 event predates this sign-in link')
   }
 
-  await deleteOAuthVerification(c.env.CACHE_KV, platform, identity, signed.pubkey)
+  await deleteOAuthVerification(c.env.CACHE_KV, platform, storedIdentity, signed.pubkey)
   log('revoked')
   return c.json({ revoked: true, platform, identity })
 })
