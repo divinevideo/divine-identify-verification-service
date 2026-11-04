@@ -48,8 +48,10 @@ async function loadPage() {
   ].join('\n')
   return (env: Record<string, unknown>) => {
     const actualSetStatus = new Function('document', `${scriptBetween(html, 'function setStatus(elId, msg, type)', 'function clearStatus(elId)')}\nreturn setStatus;`)(env.document)
+    // The page's own clearStatus too, so a test sees whether a status survives the list reload.
+    const actualClearStatus = new Function('document', `${scriptBetween(html, 'function clearStatus(elId)', 'function signerSourceLabel(')}\nreturn clearStatus;`)(env.document)
     const recordStatus = env.setStatus as (...args: unknown[]) => void
-    const deps = { ...env, setStatus: (...args: unknown[]) => { actualSetStatus(...args); recordStatus(...args) } }
+    const deps = { ...env, clearStatus: actualClearStatus, setStatus: (...args: unknown[]) => { actualSetStatus(...args); recordStatus(...args) } }
     return new Function(...DEPS, `${source}\nreturn { publishIdentityTagToNostr, loadLinkedVerifications, executeRemoveVerification };`)(...DEPS.map(d => deps[d as keyof typeof deps]))
   }
 }
@@ -743,6 +745,49 @@ describe('removing a linked account', () => {
     expect(h.signs()).toBe(3)
     expect(h.fetches).toHaveLength(3)
     expect(h.element('retry-revoke-btn').hidden).toBe(true)
+  })
+
+  it('keeps the refusal visible after the list reloads', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(10011, 100, [TWITTER])] },
+      { removing: { platform: 'twitter', identity: 'alice' }, revokeOk: false, revokeError: 'This list is older than the sign-in link.' })
+    await page(h.env).executeRemoveVerification()
+
+    const status = h.element('manage-status')
+    expect(status.style.display).not.toBe('none')
+    expect(status.textContent).toContain('This list is older than the sign-in link.')
+  })
+
+  it('disables the retry button while a retry runs', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(10011, 100, [TWITTER])] },
+      { removing: { platform: 'twitter', identity: 'alice' }, revokeOk: false })
+    const button = h.element('retry-revoke-btn')
+    let duringRetry: boolean | undefined
+    const fetchOnce = h.env.fetch as (...args: unknown[]) => Promise<unknown>
+    h.env.fetch = async (...args: unknown[]) => { duringRetry = button.disabled; return fetchOnce(...args) }
+    page(h.env)
+    await h.element('remove-confirm-btn').click()
+    expect(button.disabled).toBe(false)
+    duringRetry = undefined
+    await button.click()
+
+    expect(duringRetry).toBe(true)
+    expect(button.disabled).toBe(false)
+  })
+
+  it('retries the original claim after the dialog was reopened for another row', async () => {
+    const page = await loadPage()
+    const removing = { platform: 'twitter', identity: 'alice' }
+    const h = harness({ [DIVINE]: [event(10011, 100, [TWITTER])] }, { removing, revokeOk: false })
+    page(h.env)
+    await h.element('remove-confirm-btn').click()
+    removing.platform = 'youtube'
+    removing.identity = 'someone-else'
+    await h.element('retry-revoke-btn').click()
+
+    expect(h.fetches).toHaveLength(2)
+    expect(JSON.parse(h.fetches[1].init.body as string)).toMatchObject({ platform: 'twitter', identity: 'alice' })
   })
 
   it('keeps retry owned by the original signer across an account switch', async () => {
