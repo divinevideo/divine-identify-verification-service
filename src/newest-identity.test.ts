@@ -43,10 +43,15 @@ async function loadPage() {
     scriptBetween(html, 'function fetchIdentityEvent(relayUrl, pubkey)', '// --- Manage / Remove linked verifications ---'),
     scriptBetween(html, 'async function publishIdentityTagToNostr()', 'const PENDING_SIGN_IN_KEY'),
     scriptBetween(html, 'async function loadLinkedVerifications()', '// Renders manage table'),
-    scriptBetween(html, 'async function executeRemoveVerification()', '// A platform pill links to the card'),
+    scriptBetween(html, 'let pendingRemovalRetry = null;', '// A platform pill links to the card'),
+    scriptBetween(html, "document.getElementById('remove-confirm-btn').addEventListener", "document.getElementById('lookup-btn').addEventListener"),
   ].join('\n')
-  return (env: Record<string, unknown>) =>
-    new Function(...DEPS, `${source}\nreturn { publishIdentityTagToNostr, loadLinkedVerifications, executeRemoveVerification };`)(...DEPS.map(d => env[d]))
+  return (env: Record<string, unknown>) => {
+    const actualSetStatus = new Function('document', `${scriptBetween(html, 'function setStatus(elId, msg, type)', 'function clearStatus(elId)')}\nreturn setStatus;`)(env.document)
+    const recordStatus = env.setStatus as (...args: unknown[]) => void
+    const deps = { ...env, setStatus: (...args: unknown[]) => { actualSetStatus(...args); recordStatus(...args) } }
+    return new Function(...DEPS, `${source}\nreturn { publishIdentityTagToNostr, loadLinkedVerifications, executeRemoveVerification };`)(...DEPS.map(d => deps[d as keyof typeof deps]))
+  }
 }
 
 type NostrEvent = { id: string, pubkey: string, kind: number, created_at: number, tags: string[][], content: string, sig: string }
@@ -66,7 +71,7 @@ function event(kind: number, createdAt: number, tags: string[][], overrides: Par
 // Lets every pending promise and stand-in relay answer run.
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 
-function harness(relays: Record<string, Relay>, opts: { removing?: { platform: string, identity: string }, noChecker?: boolean, revokeOk?: boolean, publishOk?: boolean, revokeThrows?: boolean } = {}) {
+function harness(relays: Record<string, Relay>, opts: { removing?: { platform: string, identity: string }, noChecker?: boolean, revokeOk?: boolean, revokeError?: string, publishOk?: boolean, revokeThrows?: boolean } = {}) {
   const published: NostrEvent[] = []
   const fetches: Array<{ url: string, init: RequestInit }> = []
   let signs = 0
@@ -82,9 +87,13 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
   const timers = new Map<number, { fn: () => void, ms: number }>()
   let nextTimer = 1
   const dialog = { style: { display: '' }, dataset: opts.removing ?? {} }
-  const elements = new Map<string, { textContent: string, innerHTML: string }>()
+  const elements = new Map<string, { textContent: string, innerHTML: string, style: Record<string, string>, hidden: boolean, disabled: boolean, addEventListener: (type: string, fn: () => Promise<void>) => void, click: () => Promise<void> }>()
   const element = (id: string) => {
-    if (!elements.has(id)) elements.set(id, { textContent: '', innerHTML: '' })
+    if (!elements.has(id)) {
+      const listeners = new Map<string, () => Promise<void>>()
+      elements.set(id, { textContent: '', innerHTML: '', style: {}, hidden: id === 'retry-revoke-btn', disabled: false,
+        addEventListener: (type, fn) => { listeners.set(type, fn) }, click: async () => { await listeners.get('click')?.() } })
+    }
     return elements.get(id)!
   }
 
@@ -135,7 +144,7 @@ function harness(relays: Record<string, Relay>, opts: { removing?: { platform: s
       return { pure: { verifyEvent: (e: NostrEvent) => { checked.push(e); return e.sig === GOOD_SIG } } }
     },
     document: { getElementById: (id: string) => id === 'remove-confirm-dialog' ? dialog : element(id) },
-    fetch: async (url: string, init: RequestInit) => { fetches.push({ url, init }); if (opts.revokeThrows) throw new TypeError('Failed to fetch'); return { ok: opts.revokeOk ?? true } },
+    fetch: async (url: string, init: RequestInit) => { fetches.push({ url, init }); if (opts.revokeThrows) throw new TypeError('Failed to fetch'); return { ok: opts.revokeOk ?? true, json: async () => ({ error: opts.revokeError }) } },
     publishEventToRelay: async (_relay: string, signed: NostrEvent) => {
       published.push(signed)
       return { ok: opts.publishOk ?? true }
@@ -493,6 +502,19 @@ describe('publishing a linked account', () => {
 
       expect(h.published[0].created_at).toBe(now)
     })
+
+    it('does not inherit a future profile date when creating the first identity list', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      const now = 1_800_000_000
+      vi.setSystemTime(now * 1000)
+      const page = await loadPage()
+      const h = harness({ [DIVINE]: [event(0, now + 120, [GITHUB])] })
+
+      await page(h.env).publishIdentityTagToNostr()
+
+      expect(h.publishedTags()).toEqual([GITHUB, NEW_CLAIM])
+      expect(h.published[0].created_at).toBe(now)
+    })
   })
 })
 
@@ -631,6 +653,33 @@ describe('removing a linked account', () => {
     expect(h.published[0].created_at).toBe(now)
   })
 
+  it('does not inherit a future profile date when removing from a legacy profile', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const now = 1_800_000_000
+    vi.setSystemTime(now * 1000)
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(0, now + 120, [GITHUB, TWITTER])] },
+      { removing: { platform: 'twitter', identity: 'alice' } })
+
+    await page(h.env).executeRemoveVerification()
+
+    expect(h.publishedTags()).toEqual([GITHUB])
+    expect(h.published[0].created_at).toBe(now)
+  })
+
+  it.each([' Twitter ', 'X', ' x ', ' Bluesky ', ' YOUTUBE ', ' TikTok '])('canonicalizes %s for revoke but filters the raw claim', async platform => {
+    const page = await loadPage()
+    const canonical = platform.trim().toLowerCase().replace(/^x$/, 'twitter')
+    const otherClaim = iTag(canonical, 'someone-else', 'oauth')
+    const h = harness({ [DIVINE]: [event(10011, 100, [GITHUB, iTag(platform, 'alice', 'oauth'), otherClaim])] },
+      { removing: { platform, identity: 'alice' } })
+
+    await page(h.env).executeRemoveVerification()
+
+    expect(h.publishedTags()).toEqual([GITHUB, otherClaim])
+    expect(JSON.parse(h.fetches[0].init.body as string).platform).toBe(canonical)
+  })
+
   it('says the sign-in record did not clear when revoke is refused', async () => {
     const page = await loadPage()
     const h = harness({ [DIVINE]: [event(10011, 100, [GITHUB, TWITTER])], 'wss://two.example': [], 'wss://three.example': [] },
@@ -638,7 +687,8 @@ describe('removing a linked account', () => {
 
     await page(h.env).executeRemoveVerification()
 
-    expect(h.statuses[h.statuses.length - 1]).toEqual(['manage-status', 'Removed from profile, but OAuth cache revoke did not complete.', 'ok'])
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['manage-status', 'Removed from profile, but sign-in record removal failed: OAuth cache revoke did not complete.', 'error'])
+    expect(h.element('retry-revoke-btn').hidden).toBe(false)
   })
 
   it('does not call revoke when no relay accepted the new list', async () => {
@@ -659,7 +709,63 @@ describe('removing a linked account', () => {
 
     await page(h.env).executeRemoveVerification()
 
-    expect(h.statuses[h.statuses.length - 1]).toEqual(['manage-status', 'Removed from profile, but OAuth cache revoke did not complete.', 'ok'])
+    expect(h.statuses[h.statuses.length - 1]).toEqual(['manage-status', 'Removed from profile, but sign-in record removal failed: OAuth cache revoke did not complete.', 'error'])
+    expect(h.element('retry-revoke-btn').hidden).toBe(false)
+  })
+
+  it('shows the server refusal as text and retries from the newest list after the row disappears', async () => {
+    const page = await loadPage()
+    const relays: Record<string, Relay> = { [DIVINE]: [event(10011, 100, [iTag(' X ', 'alice', 'oauth')])] }
+    const opts = { removing: { platform: ' X ', identity: 'alice' }, revokeOk: false, revokeError: '<img src=x onerror=alert(1)>' }
+    const h = harness(relays, opts)
+    const instance = page(h.env)
+    await instance.executeRemoveVerification()
+
+    expect(h.published[0].tags).toEqual([])
+    expect(h.element('manage-status').textContent).toContain(opts.revokeError)
+    expect(h.element('manage-status').innerHTML).toBe('')
+    expect(h.element('retry-revoke-btn').hidden).toBe(false)
+    relays[DIVINE] = [event(10011, h.published[0].created_at, [])]
+    await instance.loadLinkedVerifications()
+    expect(h.element('manage-links-container').textContent).toBe('No linked verifications found.')
+    expect(h.element('retry-revoke-btn').hidden).toBe(false)
+
+    relays[DIVINE] = [event(10011, h.published[0].created_at + 10, [GITHUB, BLUESKY])]
+    await h.element('retry-revoke-btn').click()
+    expect(h.signs()).toBe(2)
+    expect(h.published[1].tags).toEqual([GITHUB, BLUESKY])
+    expect(h.published[1].created_at).toBe(h.published[0].created_at + 11)
+    expect(JSON.parse(h.fetches[1].init.body as string)).toEqual({ platform: 'twitter', identity: 'alice', pubkey: PUBKEY, list: h.published[1] })
+    expect(h.element('retry-revoke-btn').hidden).toBe(false)
+
+    opts.revokeOk = true
+    await h.element('retry-revoke-btn').click()
+    expect(h.signs()).toBe(3)
+    expect(h.fetches).toHaveLength(3)
+    expect(h.element('retry-revoke-btn').hidden).toBe(true)
+  })
+
+  it('keeps retry owned by the original signer across an account switch', async () => {
+    const page = await loadPage()
+    const h = harness({ [DIVINE]: [event(10011, 100, [TWITTER])] },
+      { removing: { platform: 'twitter', identity: 'alice' }, revokeOk: false })
+    let pubkey = PUBKEY
+    h.env.getActivePubkey = async () => pubkey
+    ;(h.env.activeSigner as { getPublicKey: () => Promise<string> }).getPublicKey = async () => pubkey
+    page(h.env)
+    await h.element('remove-confirm-btn').click()
+    const requests = h.requests.length
+    pubkey = OTHER_PUBKEY
+    await h.element('retry-revoke-btn').click()
+
+    expect(h.element('manage-status').textContent).toBe('Sign in with the original account to retry this removal.')
+    expect(h.signs()).toBe(1)
+    expect(h.fetches).toHaveLength(1)
+    expect(h.requests).toHaveLength(requests)
+    expect(h.element('retry-revoke-btn').hidden).toBe(false)
+    pubkey = PUBKEY
+    await h.element('retry-revoke-btn').click()
+    expect(h.signs()).toBe(2)
   })
 
   it('does not call revoke for a platform without sign-in', async () => {

@@ -732,6 +732,7 @@ app.get('/', (c) => {
       <button id="load-links-btn" class="verify-btn verify-btn-primary" type="button">Load my links</button>
       <div id="manage-links-container" style="margin-top:1rem;"></div>
       <div id="manage-status" class="status-row"></div>
+      <button id="retry-revoke-btn" class="verify-btn" type="button" hidden>Retry sign-in record removal</button>
       <div id="remove-confirm-dialog" style="display:none;margin-top:1rem;padding:16px;background:rgba(255,127,175,0.18);border:2px solid var(--dark);border-radius:16px;">
         <h4 style="margin-bottom:0.5rem;color:var(--dark);">Remove this verification?</h4>
         <p>This unlinks <strong id="remove-confirm-claim"></strong> from your Nostr profile.</p>
@@ -2085,7 +2086,7 @@ Content-Type: application/json
         // the clock, so relays keep this one over it.
         const unsignedEvent = {
           kind: 10011,
-          created_at: Math.max(Math.floor(Date.now() / 1000), identityEvent ? identityEvent.created_at + 1 : 0),
+          created_at: Math.max(Math.floor(Date.now() / 1000), identityEvent && identityEvent.kind === 10011 ? identityEvent.created_at + 1 : 0),
           tags: nextTags,
           content: '',
           pubkey: signerPubkey,
@@ -2881,11 +2882,21 @@ Content-Type: application/json
       document.getElementById('remove-confirm-dialog').style.display = 'none';
     }
 
-    async function executeRemoveVerification() {
+    let pendingRemovalRetry = null;
+
+    async function retryRemoveVerification() {
+      if (pendingRemovalRetry) await executeRemoveVerification(pendingRemovalRetry);
+    }
+
+    async function executeRemoveVerification(retry = null) {
       const dialog = document.getElementById('remove-confirm-dialog');
-      const platform = dialog.dataset.platform;
-      const identity = dialog.dataset.identity;
+      const platform = retry ? retry.platform : dialog.dataset.platform;
+      const identity = retry ? retry.identity : dialog.dataset.identity;
+      const normalizedPlatform = platform.trim().toLowerCase();
+      const oauthPlatform = normalizedPlatform === 'x' ? 'twitter' : normalizedPlatform;
       dialog.style.display = 'none';
+      const retryButton = document.getElementById('retry-revoke-btn');
+      retryButton.disabled = true;
 
       setStatus('manage-status', 'Removing verification...', 'loading');
 
@@ -2898,6 +2909,9 @@ Content-Type: application/json
         const signerPubkey = String(await activeSigner.getPublicKey()).toLowerCase();
         if (pubkey !== signerPubkey) {
           throw new Error('Signed-in key and selected account do not match.');
+        }
+        if (retry && retry.pubkey !== signerPubkey) {
+          throw new Error('Sign in with the original account to retry this removal.');
         }
 
         // Fetch current identity event (kind 10011, fall back to kind 0)
@@ -2914,7 +2928,7 @@ Content-Type: application/json
         // verifier can tell this list is newer even if the clocks disagree.
         const unsignedEvent = {
           kind: 10011,
-          created_at: Math.max(Math.floor(Date.now() / 1000), event ? event.created_at + 1 : 0),
+          created_at: Math.max(Math.floor(Date.now() / 1000), event && event.kind === 10011 ? event.created_at + 1 : 0),
           tags: nextTags,
           content: '',
           pubkey: signerPubkey,
@@ -2936,30 +2950,40 @@ Content-Type: application/json
 
         // Attempt OAuth cache revoke for OAuth platforms
         let revokeWarning = '';
-        if (OAUTH_PLATFORMS_SET.has(platform)) {
+        if (OAUTH_PLATFORMS_SET.has(oauthPlatform)) {
           try {
             const revokeResp = await fetch(API + '/auth/oauth/revoke', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ platform: platform, identity: identity, pubkey: signerPubkey, list: signedEvent }),
+              body: JSON.stringify({ platform: oauthPlatform, identity: identity, pubkey: signerPubkey, list: signedEvent }),
             });
             if (!revokeResp.ok) {
-              revokeWarning = ' OAuth cache revoke did not complete.';
+              const refusal = await revokeResp.json().catch(() => null);
+              revokeWarning = refusal && typeof refusal.error === 'string' && refusal.error.trim() ? refusal.error : 'OAuth cache revoke did not complete.';
             }
           } catch {
-            revokeWarning = ' OAuth cache revoke did not complete.';
+            revokeWarning = 'OAuth cache revoke did not complete.';
           }
         }
 
+        // Refresh first: loading the list clears its status, but must not erase
+        // the refusal or the retry when the removed claim is no longer a row.
+        await loadLinkedVerifications();
         if (revokeWarning) {
-          setStatus('manage-status', 'Removed from profile, but' + revokeWarning, 'ok');
+          pendingRemovalRetry = { platform, identity, pubkey: signerPubkey };
+          retryButton.hidden = false;
+          setStatus('manage-status', 'Removed from profile, but sign-in record removal failed: ' + revokeWarning, 'error');
         } else {
+          if (pendingRemovalRetry && pendingRemovalRetry.platform === platform && pendingRemovalRetry.identity === identity && pendingRemovalRetry.pubkey === signerPubkey) {
+            pendingRemovalRetry = null;
+            retryButton.hidden = true;
+          }
           setStatus('manage-status', 'Verification removed from your Nostr profile.', 'ok');
         }
-
-        await loadLinkedVerifications();
       } catch (e) {
         setStatus('manage-status', e.message || 'Could not remove verification.', 'error');
+      } finally {
+        retryButton.disabled = false;
       }
     }
 
@@ -3022,7 +3046,8 @@ Content-Type: application/json
     // start-up code below so an error there cannot leave them dead.
     document.getElementById('load-links-btn').addEventListener('click', loadLinkedVerifications);
     document.getElementById('remove-cancel-btn').addEventListener('click', cancelRemove);
-    document.getElementById('remove-confirm-btn').addEventListener('click', executeRemoveVerification);
+    document.getElementById('remove-confirm-btn').addEventListener('click', () => executeRemoveVerification());
+    document.getElementById('retry-revoke-btn').addEventListener('click', retryRemoveVerification);
     document.getElementById('lookup-btn').addEventListener('click', doLookup);
 
     // Start-up: a returning sign-in is handled first, before any signer is
