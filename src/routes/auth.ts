@@ -5,9 +5,9 @@ import type { Bindings, OAuthPlatform, SignInCallbackResult } from '../types'
 import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { readJsonBody } from '../utils/json-body'
-import { verifyEventSignature, asLinkedAccountsList, type SignedNostrEvent } from '../utils/nostr-event'
+import { verifyEventSignature, asLinkedAccountsList, LINKED_ACCOUNTS_MAX_SECONDS_AHEAD, type SignedNostrEvent } from '../utils/nostr-event'
 import { deleteOAuthVerification, getOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
-import { listHoldsClaim, listIsNewerThanLink, readNostrAuthorization, sha256Hex } from '../oauth/unlink-proof'
+import { listHoldsClaim, listIsNewerThanLink, readNostrAuthorization, sha256Hex, UNLINK_MAX_SECONDS_BEHIND } from '../oauth/unlink-proof'
 import { tidyClaim } from '../utils/tidy-claim'
 import { getCountedSignIn } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
@@ -568,15 +568,14 @@ auth.get('/:platform/status', async (c) => {
 })
 
 const REVOKE_BODY_LIMIT = 65536
-// As at confirmation (signin-confirm.ts): a list dated further ahead is refused.
-const LIST_MAX_SECONDS_AHEAD = 600
 
 type UnlinkProof = 'header' | 'body' | 'list'
 type UnlinkRefusal = 'unlink_proof_invalid' | 'unlink_list_older' | 'unlink_claim_listed'
 
 // Revoke an OAuth sign-in record (a Bluesky one under both its handle and DID) (#76)
 // POST /auth/oauth/revoke { platform, identity, pubkey, event?, list? }
-// The owner proves the unlink one of three ways, tried in this order: a NIP-98
+// The owner proves the unlink one of three ways, selected in this order with
+// no fallback: a NIP-98
 // event in an `Authorization: Nostr` header whose payload tag is the SHA-256
 // of the body, a NIP-98 event in the body, or a newly signed linked-accounts
 // list (kind 10011) that no longer holds the claim.
@@ -626,8 +625,12 @@ auth.post('/oauth/revoke', async (c) => {
     if (!listEvent) {
       return refuse(400, 'unlink_proof_invalid', 'The list must be a signed linked-accounts list (kind 10011)')
     }
-    if (listEvent.created_at > Math.floor(Date.now() / 1000) + LIST_MAX_SECONDS_AHEAD) {
+    const now = Math.floor(Date.now() / 1000)
+    if (listEvent.created_at > now + LINKED_ACCOUNTS_MAX_SECONDS_AHEAD) {
       return refuse(400, 'unlink_proof_invalid', 'The list is dated too far ahead')
+    }
+    if (listEvent.created_at < now - UNLINK_MAX_SECONDS_BEHIND) {
+      return refuse(401, 'unlink_proof_invalid', 'The list is too old. Sign and publish a fresh list and try again.')
     }
     // Before any ordering: on the same second, NIP-01 orders lists by id, which
     // means something only once the id is known to be the event's own.
@@ -669,24 +672,21 @@ auth.post('/oauth/revoke', async (c) => {
   const storedIdentity = tidyClaim(platform, identity, '').identity
   // Only the signer's own records are read or deleted.
   const record = await getOAuthVerification(c.env.CACHE_KV, platform, storedIdentity, signed.pubkey)
-  if (!record) {
-    log('nothing stored')
-    return c.json({ revoked: true, platform, identity })
-  }
-
   if (proof === 'list') {
-    if (!listIsNewerThanLink(signed, record)) {
+    if (record && !listIsNewerThanLink(signed, record)) {
       return refuse(409, 'unlink_list_older', 'This list is older than the sign-in link. Publish your current list and try again.')
     }
-    if (listHoldsClaim(signed, platform as OAuthPlatform, identity, record)) {
+    if (listHoldsClaim(signed, platform as OAuthPlatform, identity, record ?? { identity: storedIdentity })) {
       return refuse(409, 'unlink_claim_listed', 'This list still holds the linked account.')
     }
-  } else if (typeof record.confirm_created_at === 'number' && signed.created_at < record.confirm_created_at) {
-    // A link confirmed after the event was signed is a newer link than the one it unlinks.
+  } else if (record && signed.created_at < record.checked_at) {
+    // NIP-98 is checked against the server clock, as is checked_at; the
+    // confirming list's date may be up to 600 seconds ahead of that clock.
     return refuse(401, 'unlink_proof_invalid', 'NIP-98 event predates this sign-in link')
   }
 
-  await deleteOAuthVerification(c.env.CACHE_KV, platform, storedIdentity, signed.pubkey)
+  // A missing KV read can be a cached miss; still delete the owner's key.
+  await deleteOAuthVerification(c.env.CACHE_KV, platform, storedIdentity, signed.pubkey, record)
   log('revoked')
   return c.json({ revoked: true, platform, identity })
 })

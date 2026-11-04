@@ -1048,7 +1048,7 @@ describe('POST /auth/oauth/revoke body and NIP-98 proofs', () => {
     expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
   })
 
-  it('refuses a NIP-98 event dated before the link was confirmed, and accepts one dated the same second', async () => {
+  it('refuses a NIP-98 event dated before the server saved the link, and accepts the same second', async () => {
     const T = 1_790_000_000
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(T * 1000)
@@ -1090,6 +1090,37 @@ describe('POST /auth/oauth/revoke body and NIP-98 proofs', () => {
     expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
   })
 
+  it('unlinks immediately with either NIP-98 form when the confirming list was dated ahead', async () => {
+    const T = 1_790_000_000
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T * 1000)
+    const env = createTestEnv()
+    const key = schnorr.utils.randomSecretKey()
+    const pubkey = bytesToHex(schnorr.getPublicKey(key))
+    const body = { platform: 'twitter', identity: 'alice', pubkey }
+    for (const form of ['body', 'header']) {
+      await seedRecord(env, { pubkey, checked_at: T, confirm_created_at: T + 120 })
+      const res = form === 'body'
+        ? await revokeRequest(env, { ...body, event: await signNip98Event(key) })
+        : await revokeRequest(env, body, { Authorization: nostrHeader(await headerEvent(key, await bodySha(body))) })
+      expect(res.status, form).toBe(200)
+      expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+    }
+  })
+
+  it('deletes the requested key even when its initial KV read is a cached miss', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    await seedRecord(env, { pubkey: event.pubkey })
+    const get = env.CACHE_KV.get.bind(env.CACHE_KV)
+    const read = vi.spyOn(env.CACHE_KV, 'get').mockImplementation((async () => null) as KVNamespace['get'])
+    const del = vi.spyOn(env.CACHE_KV, 'delete')
+    expect((await revokeRequest(env, { platform: 'twitter', identity: '@alice', pubkey: event.pubkey, event })).status).toBe(200)
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(del).toHaveBeenCalledWith(aliceKey(event.pubkey))
+    expect(await get(aliceKey(event.pubkey))).toBeNull()
+  })
+
   it('marks every refused NIP-98 proof unlink_proof_invalid', async () => {
     const env = createTestEnv()
     const key = schnorr.utils.randomSecretKey()
@@ -1115,6 +1146,10 @@ describe('POST /auth/oauth/revoke body and NIP-98 proofs', () => {
 
 describe('POST /auth/oauth/revoke with a signed list', () => {
   const DID = 'did:plc:alice111111111111111111'
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(2005 * 1000)
+  })
   afterEach(() => { vi.useRealTimers() })
 
   function owner() {
@@ -1267,6 +1302,44 @@ describe('POST /auth/oauth/revoke with a signed list', () => {
     expect(ahead.status).toBe(400)
     expect(await errorCode(ahead)).toBe('unlink_proof_invalid')
     expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+  })
+
+  it('accepts a list 60 seconds old but refuses a 61-second-old list even when newer than the link', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    vi.setSystemTime(2100 * 1000)
+    await seedRecord(env, { pubkey })
+    const old = await listRevoke(env, pubkey, await signEvent(key, 10011, [], 2039))
+    expect(old.status).toBe(401)
+    expect(await errorCode(old)).toBe('unlink_proof_invalid')
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+    expect((await listRevoke(env, pubkey, await signEvent(key, 10011, [], 2040))).status).toBe(200)
+  })
+
+  it('allows a slow signer to unlink a transitional unconfirmed record within the freshness window', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await storeOAuthVerification(env.CACHE_KV, {
+      platform: 'twitter', identity: 'alice', pubkey, verified: true, method: 'oauth', checked_at: 2005,
+    })
+    expect((await listRevoke(env, pubkey, await signEvent(key, 10011, [], 1945))).status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+  })
+
+  it('still deletes a cached-miss key, but never when the submitted list holds the claim', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await seedRecord(env, { pubkey })
+    const get = env.CACHE_KV.get.bind(env.CACHE_KV)
+    const read = vi.spyOn(env.CACHE_KV, 'get').mockImplementation((async () => null) as KVNamespace['get'])
+    const del = vi.spyOn(env.CACHE_KV, 'delete')
+    const listed = await listRevoke(env, pubkey, await signEvent(key, 10011, [['i', 'twitter:alice', 'oauth']], 2005))
+    expect(listed.status).toBe(409)
+    expect(del).not.toHaveBeenCalled()
+    expect((await listRevoke(env, pubkey, await signEvent(key, 10011, [], 2005))).status).toBe(200)
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(del).toHaveBeenCalledWith(aliceKey(pubkey))
+    expect(await get(aliceKey(pubkey))).toBeNull()
   })
 
   it('after unlinking and linking again, the earlier list is refused', async () => {

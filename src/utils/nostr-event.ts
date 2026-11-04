@@ -11,6 +11,8 @@ export interface SignedNostrEvent {
   content: string
 }
 
+export const LINKED_ACCOUNTS_MAX_SECONDS_AHEAD = 600
+
 // A kind 10011 with the shape NIP-01 requires, or null.
 export function asLinkedAccountsList(raw: unknown): SignedNostrEvent | null {
   if (!raw || typeof raw !== 'object') return null

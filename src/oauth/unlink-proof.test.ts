@@ -41,8 +41,10 @@ describe('listIsNewerThanLink', () => {
     expect(listIsNewerThanLink({ id: '5'.repeat(64), created_at: 2000 }, rec())).toBe(false)
   })
 
-  it('uses checked_at for a record never confirmed', () => {
-    expect(listIsNewerThanLink({ id: '0'.repeat(64), created_at: 1000 }, unconfirmed())).toBe(false)
+  it('allows only bounded clock skew for a record never confirmed', () => {
+    expect(listIsNewerThanLink({ id: '0'.repeat(64), created_at: 939 }, unconfirmed())).toBe(false)
+    expect(listIsNewerThanLink({ id: '0'.repeat(64), created_at: 940 }, unconfirmed())).toBe(true)
+    expect(listIsNewerThanLink({ id: '0'.repeat(64), created_at: 1000 }, unconfirmed())).toBe(true)
     expect(listIsNewerThanLink({ id: '9'.repeat(64), created_at: 1001 }, unconfirmed())).toBe(true)
   })
 })

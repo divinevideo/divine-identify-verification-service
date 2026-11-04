@@ -6,18 +6,21 @@ import type { OAuthPlatform, OAuthVerification } from '../types'
 import type { SignedNostrEvent } from '../utils/nostr-event'
 import { tidyClaim } from '../utils/tidy-claim'
 
+export const UNLINK_MAX_SECONDS_BEHIND = 60
+
 /**
  * Whether a list comes after the link, in NIP-01's order for replaceable
  * events: the later created_at wins, and on the same second the lower id. A
- * record never confirmed has no confirming event, so the list must be dated
- * after the record was saved.
+ * record never confirmed has no confirming event: allow the same bounded clock
+ * skew as NIP-98. The caller also checks freshness against the server clock.
  */
 export function listIsNewerThanLink(list: Pick<SignedNostrEvent, 'id' | 'created_at'>, record: OAuthVerification): boolean {
   if (typeof record.confirm_created_at === 'number' && typeof record.confirm_event_id === 'string') {
     return list.created_at > record.confirm_created_at
       || (list.created_at === record.confirm_created_at && list.id < record.confirm_event_id)
   }
-  return list.created_at > record.checked_at
+  // TODO(#113): remove this transitional clock-skew allowance once all links are confirmed.
+  return list.created_at >= record.checked_at - UNLINK_MAX_SECONDS_BEHIND
 }
 
 function sameForm(platform: OAuthPlatform, identity: string): string {
@@ -37,7 +40,7 @@ function tagPlatform(raw: string): string {
  * it. Both sides are compared tidied and lowercased, so a listed variant of the
  * same account (a leading @, a channel link) still holds the claim.
  */
-export function listHoldsClaim(list: SignedNostrEvent, platform: OAuthPlatform, identity: string, record: OAuthVerification): boolean {
+export function listHoldsClaim(list: SignedNostrEvent, platform: OAuthPlatform, identity: string, record: Pick<OAuthVerification, 'identity' | 'handle' | 'account_id'>): boolean {
   const saved = [identity, record.identity]
   if (platform === 'bluesky') {
     if (record.handle) saved.push(record.handle)

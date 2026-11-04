@@ -4,7 +4,7 @@ import { Hono } from 'hono'
 import type { Bindings, OAuthPlatform } from '../types'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { readJsonBody } from '../utils/json-body'
-import { verifyEventSignature, asLinkedAccountsList } from '../utils/nostr-event'
+import { verifyEventSignature, asLinkedAccountsList, LINKED_ACCOUNTS_MAX_SECONDS_AHEAD } from '../utils/nostr-event'
 import {
   getUsedCode, storeUsedCode, getPendingSignIn, deletePendingSignIn,
   startCheckFor, confirmBindingFor, isSignInToken, sameToken,
@@ -14,8 +14,6 @@ import { saveSignIn, savedIdentities } from '../oauth/signin-records'
 const confirm = new Hono<{ Bindings: Bindings }>()
 
 const CONFIRM_BODY_LIMIT = 65536
-// Only so a far-future date isn't stored for ordering later unlinks (#76).
-const MAX_SECONDS_AHEAD = 600
 
 const REFUSALS = {
   not_found: { status: 404, code: 'signin_not_found', error: 'This sign-in couldn\'t be confirmed. Sign in again.' },
@@ -49,7 +47,7 @@ confirm.post('/confirm', async (c) => {
   }
 
   const event = asLinkedAccountsList(body.event)
-  if (!event || event.created_at > Math.floor(Date.now() / 1000) + MAX_SECONDS_AHEAD) return refuse('invalid_event', null)
+  if (!event || event.created_at > Math.floor(Date.now() / 1000) + LINKED_ACCOUNTS_MAX_SECONDS_AHEAD) return refuse('invalid_event', null)
   if (!(await verifyEventSignature(event)).ok) return refuse('invalid_event', null)
 
   // The same event sent again (its first answer was lost) gets the same answer.
