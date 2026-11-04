@@ -12,6 +12,9 @@ the clients ignore. Any successor to this worker must pass the whole suite befor
 | divine-mobile | 1.0.26 | as 1.0.25, and `/platforms` `oauth` hides the sign-in button |
 | divine-mobile | 1.0.27 | reads this service as 1.0.26 does |
 | divine-web | main | `POST /api/verify`, links to `GET /verify/:platform/:identity/:proof` |
+| verifier page | this repo | revoke with the signed list (T4.4) |
+
+Any client may also revoke with the NIP-98 event in the `Authorization` header (T4.5).
 
 ## Running it against another implementation
 
