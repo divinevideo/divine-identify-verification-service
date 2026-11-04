@@ -8,7 +8,7 @@ import platforms from './platforms'
 const app = new Hono<{ Bindings: Bindings }>()
 app.route('/platforms', platforms)
 
-type PlatformsBody = { platforms: Record<string, { label: string; supported: boolean; oauth?: boolean }> }
+type PlatformsBody = { platforms: Record<string, { label: string; supported: boolean; oauth?: boolean; signin_expires_after_days?: number }> }
 
 async function fetchPlatforms(env: Partial<Bindings>): Promise<PlatformsBody> {
   const response = await app.request('/platforms', {}, env as Bindings)
@@ -69,7 +69,8 @@ describe('GET /platforms', () => {
     ['with sign-in off when credentials are present but TIKTOK_OAUTH_ENABLED is "false", as wrangler.toml deploys it', { ...tiktokSignIn, TIKTOK_OAUTH_ENABLED: 'false' }, false],
   ])('reports TikTok supported %s', async (_label, env, oauth) => {
     const body = await fetchPlatforms(env)
-    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth })
+    // With sign-in on, the entry also says how long its links last.
+    expect(body.platforms.tiktok).toEqual({ label: 'TikTok', supported: true, oauth, ...(oauth ? { signin_expires_after_days: 30 } : {}) })
   })
 
   it('keeps the unauthenticated proof-post platforms supported with no configuration', async () => {
@@ -139,6 +140,41 @@ describe('GET /platforms', () => {
         TWITTER_CLIENT_SECRET: 'twitter-secret',
       })
       expect(body.platforms.bluesky).toMatchObject({ oauth: false })
+    })
+  })
+
+  describe('signin_expires_after_days', () => {
+    it('is 30 for Bluesky and TikTok with sign-in on', async () => {
+      const body = await fetchPlatforms(ALL_OAUTH_CONFIGURED)
+      for (const platform of ['bluesky', 'tiktok']) {
+        expect(body.platforms[platform].oauth).toBe(true)
+        expect(body.platforms[platform].signin_expires_after_days).toBe(30)
+      }
+    })
+
+    it('is absent for Bluesky and TikTok with sign-in off', async () => {
+      const body = await fetchPlatforms({})
+      for (const platform of ['bluesky', 'tiktok']) {
+        expect(body.platforms[platform].oauth).toBe(false)
+        expect(body.platforms[platform]).not.toHaveProperty('signin_expires_after_days')
+      }
+    })
+
+    it.each(['twitter', 'youtube'])('is 30 for %s with sign-in on', async platform => {
+      const body = await fetchPlatforms(ALL_OAUTH_CONFIGURED)
+      expect(body.platforms[platform].oauth).toBe(true)
+      expect(body.platforms[platform].signin_expires_after_days).toBe(30)
+    })
+
+    it.each(['twitter', 'youtube'])('is absent for %s with sign-in off', async platform => {
+      const body = await fetchPlatforms({ YOUTUBE_API_KEY: 'yt-key' }) // keep youtube listed so its oauth:false is observable
+      expect(body.platforms[platform].oauth).toBe(false)
+      expect(body.platforms[platform]).not.toHaveProperty('signin_expires_after_days')
+    })
+
+    it('is absent on platforms without sign-in', async () => {
+      const body = await fetchPlatforms(ALL_OAUTH_CONFIGURED)
+      expect(body.platforms.github).not.toHaveProperty('signin_expires_after_days')
     })
   })
 })

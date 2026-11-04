@@ -65,9 +65,10 @@ async function link(env: Bindings, platform: string, identity: string, proof: st
 const ROUTES = [['single', single], ['batch', batch], ['link', link]] as const
 const ACCOUNTS = [['twitter', 'jack'], ['youtube', 'somechannel'], ['tiktok', 'someone']] as const
 
-function confirmedRecord(store: Map<string, string>, platform: string, identity: string) {
+function confirmedRecord(store: Map<string, string>, platform: string, identity: string, ageDays = 0) {
   store.set(oauthVerificationKey(platform as 'twitter', identity, PUBKEY), JSON.stringify({
-    platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1, confirmed: true,
+    platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth',
+    checked_at: Math.floor(Date.now() / 1000) - ageDays * 24 * 60 * 60, confirmed: true,
   }))
 }
 
@@ -84,8 +85,10 @@ describe('a sign-in link with no counted sign-in answers signin_expired and the 
 
     it.each(ACCOUNTS)('%s: a record that does not count (unconfirmed, once required) gives signin_expired', async (platform, identity) => {
       const { env, store } = makeEnv()
+      // Saved just now, so only the unconfirmed rule can end it: a stale checked_at
+      // would let the age check pass this test without the rule.
       store.set(oauthVerificationKey(platform as 'twitter', identity, PUBKEY), JSON.stringify({
-        platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1,
+        platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000),
       }))
       const answer = await check(env, platform, identity, 'oauth')
       expect(answer.code).toBe('signin_expired')
@@ -98,6 +101,15 @@ describe('a sign-in link with no counted sign-in answers signin_expired and the 
       expect(answer.verified).toBe(true)
       expect(answer.method).toBe('oauth')
       expect(answer.code).toBeUndefined()
+    })
+
+    it.each(ACCOUNTS)('%s: a confirmed record past its lifetime gives signin_expired without asking the platform', async (platform, identity) => {
+      const { env, store } = makeEnv()
+      confirmedRecord(store, platform, identity, 31)
+      const answer = await check(env, platform, identity, 'oauth')
+      expect(answer.verified).toBe(false)
+      expect(answer.code).toBe('signin_expired')
+      expect(fetchMock).not.toHaveBeenCalled()
     })
   })
 
@@ -216,7 +228,7 @@ describe('Bluesky sign-in links', () => {
     const { env, store } = makeEnv()
     store.set(oauthVerificationKey('bluesky', 'alice.bsky.social', PUBKEY), JSON.stringify({
       platform: 'bluesky', identity: 'alice.bsky.social', pubkey: PUBKEY, verified: true, method: 'oauth',
-      checked_at: 1, confirmed: true, account_id: 'did:plc:old',
+      checked_at: Math.floor(Date.now() / 1000), confirmed: true, account_id: 'did:plc:old',
     }))
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       if (String(input).includes('com.atproto.identity.resolveHandle')) return json({ did: 'did:plc:new' })
@@ -232,7 +244,7 @@ describe('Bluesky sign-in links', () => {
     const { env, store } = makeEnv()
     store.set(oauthVerificationKey('bluesky', 'alice.bsky.social', PUBKEY), JSON.stringify({
       platform: 'bluesky', identity: 'alice.bsky.social', pubkey: PUBKEY, verified: true, method: 'oauth',
-      checked_at: 1, confirmed: true, account_id: 'did:plc:old',
+      checked_at: Math.floor(Date.now() / 1000), confirmed: true, account_id: 'did:plc:old',
     }))
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       if (String(input).includes('com.atproto.identity.resolveHandle')) return json({ error: 'InvalidRequest', message: 'Unable to resolve handle' }, 400)

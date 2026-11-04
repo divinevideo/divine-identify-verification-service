@@ -11,6 +11,7 @@ import { EMBED_BRIDGE_SCRIPT } from './embed-bridge'
 import { setPagePolicy } from './content-security-policy'
 import { NOSTR_TOOLS_MODULE_PATH } from './generated/vendor'
 import { isTikTokOAuthUsable } from './oauth/tiktok'
+import { FIXED_SIGNIN_LIFETIME_DAYS } from './oauth/signin-lifetime'
 import { isTwitterOAuthUsable } from './oauth/twitter'
 import { isYouTubeOAuthUsable } from './oauth/youtube'
 
@@ -151,6 +152,9 @@ app.get('/', (c) => {
     ? `<a class="platform-pill" href="#quick-connect" data-platform="${platform.value}" aria-label="Link ${platform.label} by signing in">${platform.icon} ${platform.label}</a>`
     : `<a class="platform-pill" href="#link-with-post" data-platform="${platform.value}" aria-label="Link ${platform.label} with a post">${platform.icon} ${platform.label}</a>`,
   ).join('\n      ')
+  // Every confirmed sign-in link lasts the same time, so the sign-in card says
+  // it once, before the person starts.
+  const signInLifetimeCardNote = `<p class="field-help">Links made by signing in last ${FIXED_SIGNIN_LIFETIME_DAYS} days. After that, sign in again to keep them verified.</p>`
   const tiktokOAuthHistoryNote = hasTikTok && !tiktokOAuthEnabled
     ? ' Existing TikTok OAuth verifications remain recognized.'
     : ''
@@ -694,6 +698,7 @@ app.get('/', (c) => {
           <span class="step-pill">Quick Connect</span>
           <h4>Sign in, no posting</h4>
           <p>Works for ${quickConnectPlatformList}. Sign in to the account you want to link.</p>
+          ${signInLifetimeCardNote}
           <p id="oauth-platform-help" class="field-help">For ${proofPostOnlyPlatformList}, <a href="#link-with-post">link with a post instead</a>.</p>
           <label for="oauth-platform-select" class="field-label">Platform</label>
           <select id="oauth-platform-select" class="field-select" aria-describedby="oauth-platform-help">
@@ -943,14 +948,14 @@ Content-Type: application/json
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
 
-      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A sign-in counts only after you confirm it by publishing; a confirmed Bluesky sign-in stays verified for 30 days or until it is unlinked, as long as the handle still points to the same account.${tiktokOAuthHistoryNote}</div>
+      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A sign-in counts only after you confirm it by publishing, and for ${FIXED_SIGNIN_LIFETIME_DAYS} days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting. A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">
       <h2>Other Endpoints</h2>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/platforms</code></h3>
-        <p>List platforms currently available to clients. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field: <code>true</code> when sign-in is set up for that platform, <code>false</code> when only a proof post works. Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token.</p>
+        <p>List platforms currently available to clients. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field: <code>true</code> when sign-in is set up for that platform, <code>false</code> when only a proof post works. Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token. Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts.</p>
       </div>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/health</code></h3>

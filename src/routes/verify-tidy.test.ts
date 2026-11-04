@@ -120,7 +120,7 @@ describe('claims pasted in other shapes', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     await env.CACHE_KV.put(`oauth_verified:twitter:alice:${PUBKEY}`, JSON.stringify({
-      platform: 'twitter', identity: 'alice', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1700000000,
+      platform: 'twitter', identity: 'alice', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000),
     }))
     const body = await single(env, '@alice', TWEET)
     expect(body).toMatchObject({ identity: '@alice', verified: true, method: 'oauth', canonical_identity: 'alice' })
@@ -132,7 +132,7 @@ describe('claims pasted in other shapes', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     await env.CACHE_KV.put(`oauth_verified:twitter:alice:${PUBKEY}`, JSON.stringify({
-      platform: 'twitter', identity: 'alice', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1700000000,
+      platform: 'twitter', identity: 'alice', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000),
     }))
     const body = await single(env, '@alice', `https://x.com/alice/status/${TWEET}`)
     expect(body).toMatchObject({
@@ -153,7 +153,7 @@ describe('claims pasted in other shapes', () => {
     }))
     await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${PUBKEY}`, JSON.stringify({
       platform: 'bluesky', identity: 'alice.bsky.social', pubkey: PUBKEY, verified: true, method: 'oauth',
-      checked_at: 1700000000, account_id: did, handle: 'alice.bsky.social',
+      checked_at: Math.floor(Date.now() / 1000), account_id: did, handle: 'alice.bsky.social',
     }))
     const body = await single(env, '@alice.bsky.social', '', 'bluesky')
     expect(body).toMatchObject({

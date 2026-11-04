@@ -43,7 +43,7 @@ function handleLookup(answer: string | 'not-found' | 'unreachable') {
 }
 
 function signInRecord(identity: string, accountId?: string) {
-  return JSON.stringify({ platform: 'bluesky', identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1_700_000_000, ...(accountId ? { account_id: accountId } : {}) })
+  return JSON.stringify({ platform: 'bluesky', identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), ...(accountId ? { account_id: accountId } : {}) })
 }
 
 async function check(env: Bindings, identity = HANDLE) {
@@ -60,7 +60,7 @@ describe('how long a sign-in record lasts', () => {
   it('keeps a confirmed Bluesky sign-in for 30 days', async () => {
     const { kv } = createEnv()
     await storeOAuthVerification(kv as unknown as KVNamespace, { platform: 'bluesky', identity: HANDLE, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1, account_id: DID, confirmed: true })
-    expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 30 * 86400 })
+    expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 2592000 })
   })
 
   it('keeps an unconfirmed Bluesky sign-in for a day', async () => {
@@ -69,13 +69,13 @@ describe('how long a sign-in record lasts', () => {
     expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 86400 })
   })
 
-  it('still expires a Bluesky sign-in saved without its account', async () => {
+  it('keeps an unconfirmed Bluesky sign-in saved without its account for a day', async () => {
     const { kv } = createEnv()
     await storeOAuthVerification(kv as unknown as KVNamespace, { platform: 'bluesky', identity: HANDLE, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1 })
     expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 86400 })
   })
 
-  it.each(['twitter', 'youtube', 'tiktok'] as const)('still expires %s sign-ins after a day, even with an account ID', async platform => {
+  it.each(['twitter', 'youtube', 'tiktok'] as const)('keeps an unconfirmed %s sign-in for a day, even with an account ID', async platform => {
     const { kv } = createEnv()
     await storeOAuthVerification(kv as unknown as KVNamespace, { platform, identity: 'alice', pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1, account_id: 'acct-1' })
     expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 86400 })

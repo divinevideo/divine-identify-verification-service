@@ -4,6 +4,7 @@ import type { Bindings, OAuthState, OAuthVerification, SignInCallbackResult } fr
 import { getOAuthVerification, storeOAuthVerification, oauthVerificationKey } from './state'
 import { forgetHandleLookup } from './signin-account'
 import { signInConfirmationMode, newConfirmCode, storePendingSignIn, type SignedInAccount } from './confirm'
+import { signInIsCurrent } from './signin-lifetime'
 
 /** The event that confirmed a sign-in. */
 export interface Confirmation {
@@ -47,7 +48,7 @@ const sameHandle = (a: string | undefined, b: string | undefined) => (a ?? '').t
 /**
  * Saves a sign-in record. With a confirmation it is a confirmed record; without
  * one (an app that can't confirm, before the switch) it never replaces a
- * confirmed record for the same account and handle.
+ * confirmed record for the same account and handle that still counts.
  */
 export async function saveSignIn(env: Bindings, pubkey: string, account: SignedInAccount, confirmation: Confirmation | null): Promise<void> {
   if (account.platform === 'bluesky' && account.account_id && account.handle) {
@@ -59,7 +60,8 @@ export async function saveSignIn(env: Bindings, pubkey: string, account: SignedI
       // Best effort: KV reads are eventually consistent, so a confirmed record
       // saved moments ago in another location may not be seen yet.
       const existing = await getOAuthVerification(env.CACHE_KV, account.platform, identity, pubkey)
-      if (existing?.confirmed === true && existing.account_id === account.account_id && sameHandle(existing.handle, account.handle)) continue
+      if (existing?.confirmed === true && existing.account_id === account.account_id && sameHandle(existing.handle, account.handle) &&
+        signInIsCurrent(existing, checkedAt)) continue
     }
     await storeOAuthVerification(env.CACHE_KV, {
       platform: account.platform,
@@ -77,12 +79,14 @@ export async function saveSignIn(env: Bindings, pubkey: string, account: SignedI
 
 /**
  * The sign-in record for a claim, if it counts. Every reader goes through
- * here: once confirmation is required, only confirmed records count.
+ * here: once confirmation is required, only confirmed records count, and a
+ * record counts only while its lifetime (signin-lifetime.ts) lasts.
  */
 export async function getCountedSignIn(env: Bindings, platform: string, identity: string, pubkey: string): Promise<OAuthVerification | null> {
   const record = await getOAuthVerification(env.CACHE_KV, platform, identity, pubkey)
   if (!record) return null
   if (signInConfirmationMode(env) === 'required' && record.confirmed !== true) return null
+  if (!signInIsCurrent(record, Math.floor(Date.now() / 1000))) return null
   return record
 }
 

@@ -36,6 +36,9 @@ export function getPlatformInfo(opts?: {
   // what /auth/:platform/start would do. Only read for twitter, bluesky,
   // youtube and tiktok; other platforms have no sign-in path.
   oauthAvailable?: { twitter?: boolean; bluesky?: boolean; youtube?: boolean; tiktok?: boolean }
+  // Days a confirmed sign-in link lasts. Reported on every platform where
+  // sign-in is set up (oauth is true).
+  signinLifetimeDays?: number
 }): Record<string, PlatformInfo> {
   const platforms: Record<string, PlatformInfo> = {
     github: { label: 'GitHub', supported: true },
@@ -53,5 +56,11 @@ export function getPlatformInfo(opts?: {
   // TikTok proof posts use TikTok's public oEmbed and need no credentials, so
   // TikTok is always supported; only its sign-in waits for approval (#39).
   platforms.tiktok = { label: 'TikTok', supported: true, oauth: !!opts?.oauthAvailable?.tiktok }
+  const days = opts?.signinLifetimeDays
+  if (typeof days === 'number') {
+    for (const info of Object.values(platforms)) {
+      if (info.oauth) info.signin_expires_after_days = days
+    }
+  }
   return platforms
 }

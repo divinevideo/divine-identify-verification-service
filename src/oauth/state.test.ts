@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { oauthVerificationKey, deleteOAuthVerification, storeOAuthVerification, getOAuthVerification } from './state'
 
 // Minimal KV mock for Workers pool
@@ -63,5 +63,37 @@ describe('deleteOAuthVerification', () => {
 
     const after = await getOAuthVerification(kv, 'bluesky', 'Alice.Bsky.Social', 'eeff')
     expect(after).toBeNull()
+  })
+})
+
+describe('storing a sign-in record', () => {
+  function spyKV() {
+    const store = new Map<string, string>()
+    const put = vi.fn(async (key: string, value: string, _opts?: { expirationTtl?: number }) => { store.set(key, value) })
+    return { kv: { get: async (key: string) => store.get(key) ?? null, put, delete: async () => {} } as unknown as KVNamespace, put, store }
+  }
+  const base = { pubkey: 'aabb', verified: true as const, method: 'oauth' as const, checked_at: 1 }
+
+  // Storage ends a confirmed record at the same 30 days as the age check
+  // (signin-lifetime.ts).
+  it('stores a confirmed record for 30 days, without a marker', async () => {
+    for (const record of [
+      { platform: 'bluesky' as const, identity: 'alice.bsky.social', account_id: 'did:plc:alice', handle: 'alice.bsky.social' },
+      { platform: 'tiktok' as const, identity: 'creator', account_id: 'acct-1' },
+      { platform: 'twitter' as const, identity: 'jack' },
+    ]) {
+      const { kv, put, store } = spyKV()
+      await storeOAuthVerification(kv, { ...base, ...record, confirmed: true })
+      expect(put).toHaveBeenCalledTimes(1)
+      expect(put.mock.calls[0][2]).toEqual({ expirationTtl: 2592000 })
+      const stored = JSON.parse(store.get(oauthVerificationKey(record.platform, record.identity, 'aabb')) ?? '{}')
+      expect(stored).toMatchObject({ ...record, confirmed: true })
+    }
+  })
+
+  it('stores an unconfirmed record for a day', async () => {
+    const { kv, put } = spyKV()
+    await storeOAuthVerification(kv, { ...base, platform: 'bluesky', identity: 'alice.bsky.social', account_id: 'did:plc:alice' })
+    expect(put.mock.calls[0][2]).toEqual({ expirationTtl: 86400 })
   })
 })
