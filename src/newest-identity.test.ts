@@ -465,6 +465,35 @@ describe('publishing a linked account', () => {
     expect(h.timers.size).toBe(0)
     expect(h.publishedTags()).toEqual([NEW_CLAIM])
   })
+
+  describe('dating the new list', () => {
+    afterEach(() => { vi.useRealTimers() })
+
+    it('dates it one second past the list it replaces when that is later than now', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      const now = 1_800_000_000
+      vi.setSystemTime(now * 1000)
+      const page = await loadPage()
+      const h = harness({ [DIVINE]: [event(10011, now + 120, [GITHUB])], 'wss://two.example': [], 'wss://three.example': [] })
+
+      await page(h.env).publishIdentityTagToNostr()
+
+      expect(h.errors()).toEqual([])
+      expect(h.published[0].created_at).toBe(now + 121)
+    })
+
+    it('dates it now when the list it replaces is older', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      const now = 1_800_000_000
+      vi.setSystemTime(now * 1000)
+      const page = await loadPage()
+      const h = harness({ [DIVINE]: [event(10011, 100, [GITHUB])], 'wss://two.example': [], 'wss://three.example': [] })
+
+      await page(h.env).publishIdentityTagToNostr()
+
+      expect(h.published[0].created_at).toBe(now)
+    })
+  })
 })
 
 describe('listing linked accounts to manage', () => {

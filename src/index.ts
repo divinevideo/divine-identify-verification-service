@@ -2081,9 +2081,11 @@ Content-Type: application/json
           ? ['i', claimKey, link.proof, await confirmBindingFor(waiting.code, waiting.startCheck)]
           : ['i', claimKey, link.proof]);
 
+        // Dated one second past the list it replaces when that list is ahead of
+        // the clock, so relays keep this one over it.
         const unsignedEvent = {
           kind: 10011,
-          created_at: Math.floor(Date.now() / 1000),
+          created_at: Math.max(Math.floor(Date.now() / 1000), identityEvent ? identityEvent.created_at + 1 : 0),
           tags: nextTags,
           content: '',
           pubkey: signerPubkey,
