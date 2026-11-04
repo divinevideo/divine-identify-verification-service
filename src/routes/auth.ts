@@ -5,8 +5,9 @@ import type { Bindings, OAuthPlatform, SignInCallbackResult } from '../types'
 import { isValidHexPubkey, isValidIdentity, normalizePubkey } from '../utils/validation'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { readJsonBody } from '../utils/json-body'
-import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
-import { deleteOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
+import { verifyEventSignature, asLinkedAccountsList, type SignedNostrEvent } from '../utils/nostr-event'
+import { deleteOAuthVerification, getOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
+import { listHoldsClaim, listIsNewerThanLink, readNostrAuthorization, sha256Hex } from '../oauth/unlink-proof'
 import { getCountedSignIn } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { signInConfirmationMode, confirmCodePlacement, isSignInToken, type ConfirmCodePlacement } from '../oauth/confirm'
@@ -37,6 +38,7 @@ function parseAndValidateNip98Event(
   rawEvent: unknown,
   expectedUrl: string,
   expectedMethod: string,
+  expectedPayload: string | null,
 ): { event: Nip98Event } | { error: string; status: 400 | 401 } {
   const event = rawEvent as
     | { id?: unknown; pubkey?: unknown; sig?: unknown; kind?: unknown; tags?: unknown; created_at?: unknown; content?: unknown }
@@ -76,6 +78,10 @@ function parseAndValidateNip98Event(
     return { error: 'NIP-98 event method does not match this action', status: 401 }
   }
 
+  if (expectedPayload !== null && getFirstTagValue(event.tags as string[][], 'payload')?.toLowerCase() !== expectedPayload) {
+    return { error: 'NIP-98 event payload does not match the request body', status: 401 }
+  }
+
   return {
     event: {
       id: event.id,
@@ -91,13 +97,15 @@ function parseAndValidateNip98Event(
 
 // Verifies a NIP-98 event in full, here. NIP-98 binds an event to the exact URL
 // it is sent to, so it cannot be checked by forwarding it to another service:
-// that service sees its own URL, not this one.
+// that service sees its own URL, not this one. With an expected payload (the
+// SHA-256 hex of the request body), the event must carry it in a payload tag.
 async function verifyNip98Event(
   rawEvent: unknown,
   expectedUrl: string,
   expectedMethod: string,
+  expectedPayload: string | null = null,
 ): Promise<{ ok: true; event: Nip98Event } | { ok: false; error: string; status: 400 | 401 }> {
-  const parsed = parseAndValidateNip98Event(rawEvent, expectedUrl, expectedMethod)
+  const parsed = parseAndValidateNip98Event(rawEvent, expectedUrl, expectedMethod, expectedPayload)
   if ('error' in parsed) {
     return { ok: false, error: parsed.error, status: parsed.status }
   }
@@ -558,8 +566,19 @@ auth.get('/:platform/status', async (c) => {
   })
 })
 
-// Revoke an OAuth sign-in record (a Bluesky one under both its handle and DID)
-// POST /auth/oauth/revoke { platform, identity, pubkey, event }
+const REVOKE_BODY_LIMIT = 65536
+// As at confirmation (signin-confirm.ts): a list dated further ahead is refused.
+const LIST_MAX_SECONDS_AHEAD = 600
+
+type UnlinkProof = 'header' | 'body' | 'list'
+type UnlinkRefusal = 'unlink_proof_invalid' | 'unlink_list_older' | 'unlink_claim_listed'
+
+// Revoke an OAuth sign-in record (a Bluesky one under both its handle and DID) (#76)
+// POST /auth/oauth/revoke { platform, identity, pubkey, event?, list? }
+// The owner proves the unlink one of three ways, tried in this order: a NIP-98
+// event in an `Authorization: Nostr` header whose payload tag is the SHA-256
+// of the body, a NIP-98 event in the body, or a newly signed linked-accounts
+// list (kind 10011) that no longer holds the claim.
 auth.post('/oauth/revoke', async (c) => {
   const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
   const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
@@ -567,20 +586,19 @@ auth.post('/oauth/revoke', async (c) => {
     return c.json({ error: 'Rate limit exceeded' }, 429)
   }
 
-  let body: { platform?: string; identity?: string; pubkey?: string; event?: Record<string, unknown> }
-  try {
-    body = await c.req.json()
-  } catch {
+  const read = await readJsonBody(c, REVOKE_BODY_LIMIT)
+  if (!read.ok) return read.response
+  if (!read.body || typeof read.body !== 'object') {
     return c.json({ error: 'Invalid JSON body' }, 400)
   }
+  const body = read.body as { platform?: string; identity?: string; pubkey?: string; event?: unknown; list?: unknown }
 
-  if (!body || typeof body !== 'object') {
-    return c.json({ error: 'Invalid JSON body' }, 400)
-  }
-
-  const { platform, identity, pubkey, event } = body
-  if (!platform || !identity || !pubkey || !event) {
-    return c.json({ error: 'Missing required fields: platform, identity, pubkey, event' }, 400)
+  const { platform, identity, pubkey, event, list } = body
+  const authorization = readNostrAuthorization(c.req.header('authorization'))
+  const hasEvent = event !== null && event !== undefined
+  const hasList = list !== null && list !== undefined
+  if (!platform || !identity || !pubkey || (authorization.kind === 'absent' && !hasEvent && !hasList)) {
+    return c.json({ error: 'Missing required fields: platform, identity, pubkey, and a proof (event, list or Authorization header)' }, 400)
   }
   // Checked before any signature work: deleting the record lowercases identity.
   if (!isValidIdentity(identity)) {
@@ -593,20 +611,78 @@ auth.post('/oauth/revoke', async (c) => {
     return c.json({ error: 'Invalid pubkey (64-char hex required)' }, 400)
   }
   const normalizedBodyPubkey = normalizePubkey(pubkey)
-  const revokeUrl = new URL(c.req.url).toString()
-  const verification = await verifyNip98Event(event, revokeUrl, 'POST')
-  if (!verification.ok) {
-    return c.json({ error: verification.error }, verification.status)
+  const proof: UnlinkProof = authorization.kind !== 'absent' ? 'header' : hasEvent ? 'body' : 'list'
+  // Counted by proof so the body form can be retired once it goes unused.
+  const log = (outcome: string) => console.info(`${platform} unlink: ${proof} proof, ${outcome}`)
+  const refuse = (status: 400 | 401 | 409, code: UnlinkRefusal, error: string) => {
+    log(code)
+    return c.json({ error, code }, status)
   }
 
-  const signerPubkey = verification.event.pubkey
-  if (normalizedBodyPubkey !== signerPubkey) {
-    return c.json({ error: 'Pubkey mismatch: body pubkey does not match event pubkey' }, 401)
+  let signed: SignedNostrEvent
+  if (proof === 'list') {
+    const listEvent = asLinkedAccountsList(list)
+    if (!listEvent) {
+      return refuse(400, 'unlink_proof_invalid', 'The list must be a signed linked-accounts list (kind 10011)')
+    }
+    if (listEvent.created_at > Math.floor(Date.now() / 1000) + LIST_MAX_SECONDS_AHEAD) {
+      return refuse(400, 'unlink_proof_invalid', 'The list is dated too far ahead')
+    }
+    // Before any ordering: on the same second, NIP-01 orders lists by id, which
+    // means something only once the id is known to be the event's own.
+    const signature = await verifyEventSignature(listEvent)
+    if (!signature.ok) {
+      return signature.reason === 'format'
+        ? refuse(400, 'unlink_proof_invalid', 'Invalid list: id, pubkey and sig must be lowercase hex')
+        : refuse(401, 'unlink_proof_invalid', signature.reason === 'id' ? 'List id does not match its contents' : 'List signature is invalid')
+    }
+    if (listEvent.pubkey !== normalizedBodyPubkey) {
+      return refuse(401, 'unlink_proof_invalid', 'Pubkey mismatch: body pubkey does not match list pubkey')
+    }
+    signed = listEvent
+  } else {
+    const revokeUrl = new URL(c.req.url).toString()
+    let verification: Awaited<ReturnType<typeof verifyNip98Event>>
+    if (proof === 'header') {
+      // A Nostr header that can't be read is refused, not passed over for the body.
+      if (authorization.kind !== 'event') {
+        return refuse(400, 'unlink_proof_invalid', 'Invalid Authorization header: expected Nostr and a base64 NIP-98 event')
+      }
+      verification = await verifyNip98Event(authorization.event, revokeUrl, 'POST', await sha256Hex(read.bytes))
+    } else {
+      // TODO(#76): retire the body form once logged proof counts show mobile 1.0.24-1.0.27 are gone.
+      verification = await verifyNip98Event(event, revokeUrl, 'POST')
+    }
+    if (!verification.ok) {
+      return refuse(verification.status, 'unlink_proof_invalid', verification.error)
+    }
+    if (verification.event.pubkey !== normalizedBodyPubkey) {
+      return refuse(401, 'unlink_proof_invalid', 'Pubkey mismatch: body pubkey does not match event pubkey')
+    }
+    signed = verification.event
   }
 
-  // Delete only the signer's own OAuth verification.
-  await deleteOAuthVerification(c.env.CACHE_KV, platform, identity, signerPubkey)
+  // Only the signer's own records are read or deleted.
+  const record = await getOAuthVerification(c.env.CACHE_KV, platform, identity, signed.pubkey)
+  if (!record) {
+    log('nothing stored')
+    return c.json({ revoked: true, platform, identity })
+  }
 
+  if (proof === 'list') {
+    if (!listIsNewerThanLink(signed, record)) {
+      return refuse(409, 'unlink_list_older', 'This list is older than the sign-in link. Publish your current list and try again.')
+    }
+    if (listHoldsClaim(signed, platform as OAuthPlatform, identity, record)) {
+      return refuse(409, 'unlink_claim_listed', 'This list still holds the linked account.')
+    }
+  } else if (typeof record.confirm_created_at === 'number' && signed.created_at < record.confirm_created_at) {
+    // A link confirmed after the event was signed is a newer link than the one it unlinks.
+    return refuse(401, 'unlink_proof_invalid', 'NIP-98 event predates this sign-in link')
+  }
+
+  await deleteOAuthVerification(c.env.CACHE_KV, platform, identity, signed.pubkey)
+  log('revoked')
   return c.json({ revoked: true, platform, identity })
 })
 
