@@ -2,7 +2,7 @@
 // ABOUTME: cap, and a parse that answers 400 rather than throwing.
 import type { Context } from 'hono'
 
-export async function readJsonBody(c: Context, limit: number): Promise<{ ok: true; body: unknown } | { ok: false; response: Response }> {
+export async function readJsonBody(c: Context, limit: number): Promise<{ ok: true; body: unknown; bytes: Uint8Array } | { ok: false; response: Response }> {
   // JSON only: a cross-site page can't send this as a plain form; it needs a
   // CORS request, which carries no cookies here.
   if (!/^application\/json\s*(;|$)/i.test(c.req.header('content-type') ?? '')) {
@@ -39,7 +39,7 @@ export async function readJsonBody(c: Context, limit: number): Promise<{ ok: tru
     offset += chunk.byteLength
   }
   try {
-    return { ok: true, body: JSON.parse(new TextDecoder().decode(bytes)) }
+    return { ok: true, body: JSON.parse(new TextDecoder().decode(bytes)), bytes }
   } catch {
     return { ok: false, response: c.json({ error: 'Invalid JSON body' }, 400) }
   }
