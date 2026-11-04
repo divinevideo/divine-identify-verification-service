@@ -1182,6 +1182,27 @@ describe('POST /auth/oauth/revoke with a signed list', () => {
     expect(await verify()).toMatchObject({ verified: false, code: 'signin_expired' })
   })
 
+  it('treats an empty event field as absent and unlinks through the list', async () => {
+    const env = { ...createTestEnv(), SIGNIN_CONFIRMATION: 'required' } as Bindings
+    const { key, pubkey } = owner()
+    const now = Math.floor(Date.now() / 1000)
+    await seedRecord(env, { pubkey, checked_at: now, confirm_created_at: now - 10 })
+    const list = await signEvent(key, 10011, [['i', 'github:alice', 'gist1']], now - 9)
+    const res = await revokeRequest(env, { platform: 'twitter', identity: 'alice', pubkey, event: '', list })
+    expect(res.status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+  })
+
+  it('treats an empty list field as absent, so a request with no other proof is a missing-field error', async () => {
+    const env = { ...createTestEnv(), SIGNIN_CONFIRMATION: 'required' } as Bindings
+    const { pubkey } = owner()
+    await seedRecord(env, { pubkey })
+    const res = await revokeRequest(env, { platform: 'twitter', identity: 'alice', pubkey, list: '' })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toMatch(/^Missing required fields/)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+  })
+
   it('refuses a list dated before the confirmation', async () => {
     const env = createTestEnv()
     const { key, pubkey } = owner()

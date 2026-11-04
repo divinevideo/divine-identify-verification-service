@@ -574,11 +574,12 @@ type UnlinkRefusal = 'unlink_proof_invalid' | 'unlink_list_older' | 'unlink_clai
 
 // Revoke an OAuth sign-in record (a Bluesky one under both its handle and DID) (#76)
 // POST /auth/oauth/revoke { platform, identity, pubkey, event?, list? }
-// The owner proves the unlink one of three ways, selected in this order with
-// no fallback: a NIP-98
+// The owner proves the unlink one of three ways. The proof is chosen in this
+// order, and once chosen it is the only one tried (no fallback): a NIP-98
 // event in an `Authorization: Nostr` header whose payload tag is the SHA-256
 // of the body, a NIP-98 event in the body, or a newly signed linked-accounts
-// list (kind 10011) that no longer holds the claim.
+// list (kind 10011) that no longer holds the claim. An empty `event` or
+// `list` counts as absent.
 auth.post('/oauth/revoke', async (c) => {
   const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
   const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
@@ -595,8 +596,10 @@ auth.post('/oauth/revoke', async (c) => {
 
   const { platform, identity, pubkey, event, list } = body
   const authorization = readNostrAuthorization(c.req.header('authorization'))
-  const hasEvent = event !== null && event !== undefined
-  const hasList = list !== null && list !== undefined
+  // An empty field counts as absent, so a client that sends '' for the form
+  // it is not using still reaches the proof it did send.
+  const hasEvent = !!event
+  const hasList = !!list
   if (!platform || !identity || !pubkey || (authorization.kind === 'absent' && !hasEvent && !hasList)) {
     return c.json({ error: 'Missing required fields: platform, identity, pubkey, and a proof (event, list or Authorization header)' }, 400)
   }
