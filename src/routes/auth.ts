@@ -680,7 +680,7 @@ auth.post('/oauth/revoke', async (c) => {
       return refuse(409, 'unlink_list_older', 'This list is older than the sign-in link. Publish your current list and try again.')
     }
     if (listHoldsClaim(signed, platform as OAuthPlatform, identity, record ?? { identity: storedIdentity })) {
-      return refuse(409, 'unlink_claim_listed', 'This list still holds the linked account.')
+      return refuse(409, 'unlink_claim_listed', 'This list still holds the linked account. Remove the remaining row for this account (including any alternate handle or platform name), then retry.')
     }
   } else if (record && signed.created_at < record.checked_at) {
     // NIP-98 is checked against the server clock, as is checked_at; the

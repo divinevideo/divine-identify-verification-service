@@ -1234,7 +1234,10 @@ describe('POST /auth/oauth/revoke with a signed list', () => {
     await seedRecord(env, { pubkey })
     const res = await listRevoke(env, pubkey, await signEvent(key, 10011, [['i', 'twitter:alice', 'oauth']], 2001))
     expect(res.status).toBe(409)
-    expect(await errorCode(res)).toBe('unlink_claim_listed')
+    expect(await res.json()).toEqual({
+      code: 'unlink_claim_listed',
+      error: 'This list still holds the linked account. Remove the remaining row for this account (including any alternate handle or platform name), then retry.',
+    })
     expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
   })
 
