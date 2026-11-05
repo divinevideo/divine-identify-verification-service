@@ -1295,19 +1295,22 @@ describe('POST /auth/oauth/revoke with a signed list', () => {
     const { key, pubkey } = owner()
     await seedRecord(env, { pubkey, confirm_event_id: '8'.repeat(64) })
     const forgedSig = (list: SignedNostrEvent) => ({ ...list, sig: bytesToHex(schnorr.sign(hexToBytes('11'.repeat(32)), key)) })
-    const sameSecond = await signEvent(key, 10011, [], 2000)
+    // The same second as the link, with a true id that sorts before the
+    // link's, so only the signature can refuse it.
+    let sameSecond = await signEvent(key, 10011, [], 2000)
+    for (let n = 0; sameSecond.id >= '8'.repeat(64); n++) sameSecond = await signEvent(key, 10011, [['t', String(n)]], 2000)
     const cases: Array<[string, unknown]> = [
       // Newer than the link and without the claim, but not signed by its pubkey.
       ['newer', forgedSig(await signEvent(key, 10011, [], 2001))],
       // The same second as the link, with an id that would sort first.
-      ['lower id', { ...sameSecond, id: '0'.repeat(64) }],
+      ['lower id', forgedSig(sameSecond)],
       // Older than the link: refused as a bad proof, not as an older list.
       ['older', forgedSig(await signEvent(key, 10011, [], 1999))],
     ]
     for (const [name, list] of cases) {
       const res = await listRevoke(env, pubkey, list)
       expect(res.status, name).toBe(401)
-      expect(await errorCode(res), name).toBe('unlink_proof_invalid')
+      expect(await res.json(), name).toEqual({ code: 'unlink_proof_invalid', error: 'List signature is invalid' })
       expect(await env.CACHE_KV.get(aliceKey(pubkey)), name).not.toBeNull()
     }
   })
