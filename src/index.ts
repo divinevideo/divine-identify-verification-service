@@ -2884,8 +2884,11 @@ Content-Type: application/json
 
     const pendingRemovalRetries = new Map();
 
+    // Keyed by the account rather than how the tag spells it (X as twitter,
+    // any case), so removing it in another form clears its pending retry.
     function removalRetryKey(pubkey, platform, identity) {
-      return JSON.stringify([pubkey, platform, identity]);
+      const p = String(platform).trim().toLowerCase();
+      return JSON.stringify([pubkey, p === 'x' ? 'twitter' : p, String(identity).trim().toLowerCase()]);
     }
 
     function updateRemovalRetryButton() {
@@ -2945,16 +2948,24 @@ Content-Type: application/json
             newerEvent(retry.removalEvent, event) === event &&
             iTags.some(tag => typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey)) {
           pendingRemovalRetries.delete(retryKey);
+          // Show the list that holds it again first (loading clears the status).
+          await loadLinkedVerifications();
           setStatus('manage-status', 'This account was linked again; remove it from the list if you still want to unlink.', 'error');
           return;
         }
         const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey));
 
         // Dated one second past the list it replaces (as mobile does), so the
-        // verifier can tell this list is newer even if the clocks disagree.
+        // verifier can tell this list is newer even if the clocks disagree. A
+        // retry also dates past its own first removal, which a relay that
+        // missed it may not return.
         const unsignedEvent = {
           kind: 10011,
-          created_at: Math.max(Math.floor(Date.now() / 1000), event && event.kind === 10011 ? event.created_at + 1 : 0),
+          created_at: Math.max(
+            Math.floor(Date.now() / 1000),
+            event && event.kind === 10011 ? event.created_at + 1 : 0,
+            retry && retry.removalEvent ? retry.removalEvent.created_at + 1 : 0,
+          ),
           tags: nextTags,
           content: '',
           pubkey: signerPubkey,

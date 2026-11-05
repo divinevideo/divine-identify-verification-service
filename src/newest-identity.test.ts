@@ -802,9 +802,42 @@ describe('removing a linked account', () => {
     expect(h.published).toHaveLength(cancelled ? 1 : 2)
     expect(h.fetches).toHaveLength(cancelled ? 1 : 2)
     expect(h.element('retry-revoke-btn').hidden).toBe(cancelled)
+    // Both ways the list is shown again: after the retry, or with the
+    // account back in it, so the person can remove it.
+    expect(h.listed).toHaveLength(2)
     if (cancelled) {
+      expect(h.listed[1]).toEqual([TWITTER])
       expect(h.element('manage-status').textContent).toContain('linked again; remove it from the list if you still want to unlink')
     }
+  })
+
+  it('dates a retry past its own first removal when a relay returns an older list', async () => {
+    const page = await loadPage()
+    const ahead = Math.floor(Date.now() / 1000) + 300
+    const relays: Record<string, Relay> = { [DIVINE]: [event(10011, ahead, [TWITTER])] }
+    const h = harness(relays, { removing: { platform: 'twitter', identity: 'alice' }, revokeOk: false })
+    await page(h.env).executeRemoveVerification()
+    expect(h.published[0].created_at).toBe(ahead + 1)
+    // A relay that missed the first removal answers with an older list.
+    relays[DIVINE] = [event(10011, 100, [GITHUB])]
+    await h.element('retry-revoke-btn').click()
+    expect(h.published).toHaveLength(2)
+    expect(h.published[1].created_at).toBe(ahead + 2)
+  })
+
+  it('clears a pending retry when the account is removed in another form', async () => {
+    const page = await loadPage()
+    const removing = { platform: 'X', identity: 'Alice' }
+    const opts = { removing, revokeOk: false }
+    const h = harness({ [DIVINE]: [event(10011, 100, [iTag('X', 'Alice', 'oauth'), TWITTER])] }, opts)
+    const instance = page(h.env)
+    await instance.executeRemoveVerification()
+    expect(h.element('retry-revoke-btn').hidden).toBe(false)
+    removing.platform = 'twitter'
+    removing.identity = 'alice'
+    opts.revokeOk = true
+    await instance.executeRemoveVerification()
+    expect(h.element('retry-revoke-btn').hidden).toBe(true)
   })
 
   it('preserves the original removal ordering after another revoke failure', async () => {
