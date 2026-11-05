@@ -2882,10 +2882,28 @@ Content-Type: application/json
       document.getElementById('remove-confirm-dialog').style.display = 'none';
     }
 
-    let pendingRemovalRetry = null;
+    const pendingRemovalRetries = new Map();
+
+    function removalRetryKey(pubkey, platform, identity) {
+      return JSON.stringify([pubkey, platform, identity]);
+    }
+
+    function updateRemovalRetryButton() {
+      const button = document.getElementById('retry-revoke-btn');
+      button.hidden = pendingRemovalRetries.size === 0;
+      button.textContent = 'Retry sign-in record removal (' + pendingRemovalRetries.size + ' pending)';
+    }
 
     async function retryRemoveVerification() {
-      if (pendingRemovalRetry) await executeRemoveVerification(pendingRemovalRetry);
+      const next = pendingRemovalRetries.entries().next();
+      if (next.done) return;
+      const [key, retry] = next.value;
+      await executeRemoveVerification(retry);
+      // A failed attempt goes to the back so it cannot block other removals.
+      if (pendingRemovalRetries.get(key) === retry) {
+        pendingRemovalRetries.delete(key);
+        pendingRemovalRetries.set(key, retry);
+      }
     }
 
     async function executeRemoveVerification(retry = null) {
@@ -2922,6 +2940,14 @@ Content-Type: application/json
         const tags = event ? (event.tags || []).filter(Array.isArray) : [];
         const iTags = tags.filter(tag => tag[0] === 'i');
         const claimKey = (platform + ':' + identity).toLowerCase();
+        const retryKey = removalRetryKey(signerPubkey, platform, identity);
+        if (retry && event && event.kind === 10011 &&
+            newerEvent(retry.removalEvent, event) === event &&
+            iTags.some(tag => typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey)) {
+          pendingRemovalRetries.delete(retryKey);
+          setStatus('manage-status', 'This account was linked again; remove it from the list if you still want to unlink.', 'error');
+          return;
+        }
         const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey));
 
         // Dated one second past the list it replaces (as mobile does), so the
@@ -2970,19 +2996,19 @@ Content-Type: application/json
         // the refusal or the retry when the removed claim is no longer a row.
         await loadLinkedVerifications();
         if (revokeWarning) {
-          pendingRemovalRetry = { platform, identity, pubkey: signerPubkey };
-          retryButton.hidden = false;
+          pendingRemovalRetries.set(retryKey, retry || {
+            platform, identity, pubkey: signerPubkey,
+            removalEvent: { id: signedEvent.id, created_at: signedEvent.created_at },
+          });
           setStatus('manage-status', 'Removed from profile, but sign-in record removal failed: ' + revokeWarning, 'error');
         } else {
-          if (pendingRemovalRetry && pendingRemovalRetry.platform === platform && pendingRemovalRetry.identity === identity && pendingRemovalRetry.pubkey === signerPubkey) {
-            pendingRemovalRetry = null;
-            retryButton.hidden = true;
-          }
+          pendingRemovalRetries.delete(retryKey);
           setStatus('manage-status', 'Verification removed from your Nostr profile.', 'ok');
         }
       } catch (e) {
         setStatus('manage-status', e.message || 'Could not remove verification.', 'error');
       } finally {
+        updateRemovalRetryButton();
         retryButton.disabled = false;
       }
     }

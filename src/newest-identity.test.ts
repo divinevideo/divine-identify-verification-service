@@ -43,7 +43,7 @@ async function loadPage() {
     scriptBetween(html, 'function fetchIdentityEvent(relayUrl, pubkey)', '// --- Manage / Remove linked verifications ---'),
     scriptBetween(html, 'async function publishIdentityTagToNostr()', 'const PENDING_SIGN_IN_KEY'),
     scriptBetween(html, 'async function loadLinkedVerifications()', '// Renders manage table'),
-    scriptBetween(html, 'let pendingRemovalRetry = null;', '// A platform pill links to the card'),
+    scriptBetween(html, 'const pendingRemovalRetries = new Map();', '// A platform pill links to the card'),
     scriptBetween(html, "document.getElementById('remove-confirm-btn').addEventListener", "document.getElementById('lookup-btn').addEventListener"),
   ].join('\n')
   return (env: Record<string, unknown>) => {
@@ -756,6 +756,75 @@ describe('removing a linked account', () => {
     const status = h.element('manage-status')
     expect(status.style.display).not.toBe('none')
     expect(status.textContent).toContain('This list is older than the sign-in link.')
+  })
+
+  it('retains two failed removals, rotates failures, and clears only the successful claim', async () => {
+    const page = await loadPage()
+    const removing = { platform: 'twitter', identity: 'alice' }
+    const opts = { removing, revokeOk: false }
+    const h = harness({ [DIVINE]: [event(10011, 100, [TWITTER, BLUESKY])] }, opts)
+    const instance = page(h.env)
+    await instance.executeRemoveVerification()
+    removing.platform = 'bluesky'
+    removing.identity = BLUESKY[1].slice('bluesky:'.length)
+    await instance.executeRemoveVerification()
+    expect(h.element('retry-revoke-btn').textContent).toContain('2 pending')
+
+    // The first still fails, but the next click must reach the second claim.
+    await h.element('retry-revoke-btn').click()
+    expect(h.element('retry-revoke-btn').textContent).toContain('2 pending')
+    opts.revokeOk = true
+    await h.element('retry-revoke-btn').click()
+    expect(JSON.parse(h.fetches[3].init.body as string).platform).toBe('bluesky')
+    expect(h.element('retry-revoke-btn').hidden).toBe(false)
+    expect(h.element('retry-revoke-btn').textContent).toContain('1 pending')
+    await h.element('retry-revoke-btn').click()
+    expect(JSON.parse(h.fetches[4].init.body as string).platform).toBe('twitter')
+    expect(h.element('retry-revoke-btn').hidden).toBe(true)
+  })
+
+  it.each([
+    { label: 'later timestamp', offset: 1, id: 'ff'.repeat(32), cancelled: true },
+    { label: 'same second, lower ID', offset: 0, id: 'dd'.repeat(32), cancelled: true },
+    { label: 'same second, higher ID', offset: 0, id: 'ff'.repeat(32), cancelled: false },
+    { label: 'same event', offset: 0, id: 'ee'.repeat(32), cancelled: false },
+    { label: 'older stale relay list', offset: -1, id: '11'.repeat(32), cancelled: false },
+  ])('checks relink ordering before retry: $label', async ({ offset, id, cancelled }) => {
+    const page = await loadPage()
+    const relays: Record<string, Relay> = { [DIVINE]: [event(10011, 100, [TWITTER])] }
+    const h = harness(relays, { removing: { platform: 'twitter', identity: 'alice' }, revokeOk: false })
+    await page(h.env).executeRemoveVerification()
+    relays[DIVINE] = [event(10011, h.published[0].created_at + offset, [TWITTER], { id })]
+
+    await h.element('retry-revoke-btn').click()
+
+    expect(h.signs()).toBe(cancelled ? 1 : 2)
+    expect(h.published).toHaveLength(cancelled ? 1 : 2)
+    expect(h.fetches).toHaveLength(cancelled ? 1 : 2)
+    expect(h.element('retry-revoke-btn').hidden).toBe(cancelled)
+    if (cancelled) {
+      expect(h.element('manage-status').textContent).toContain('linked again; remove it from the list if you still want to unlink')
+    }
+  })
+
+  it('preserves the original removal ordering after another revoke failure', async () => {
+    const page = await loadPage()
+    const relays: Record<string, Relay> = { [DIVINE]: [event(10011, 100, [TWITTER])] }
+    const h = harness(relays, { removing: { platform: 'twitter', identity: 'alice' }, revokeOk: false })
+    await page(h.env).executeRemoveVerification()
+    const originalTime = h.published[0].created_at
+    relays[DIVINE] = [event(10011, originalTime + 10, [GITHUB])]
+    await h.element('retry-revoke-btn').click()
+    expect(h.signs()).toBe(2)
+    // A different relay can later reveal a relink newer than the first removal,
+    // even though it predates the latest failed retry's replacement list.
+    relays[DIVINE] = [event(10011, originalTime + 5, [TWITTER])]
+    await h.element('retry-revoke-btn').click()
+    expect(h.signs()).toBe(2)
+    expect(h.published).toHaveLength(2)
+    expect(h.fetches).toHaveLength(2)
+    expect(h.element('retry-revoke-btn').hidden).toBe(true)
+    expect(h.element('manage-status').textContent).toContain('linked again; remove it from the list if you still want to unlink')
   })
 
   it('disables the retry button while a retry runs', async () => {
