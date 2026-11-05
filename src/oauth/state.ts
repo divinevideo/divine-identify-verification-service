@@ -67,9 +67,10 @@ export async function deleteOAuthVerification(
   kv: KVNamespace,
   platform: string,
   identity: string,
-  pubkey: string
+  pubkey: string,
+  checkedRecord?: OAuthVerification | null
 ): Promise<void> {
-  const record = await getOAuthVerification(kv, platform, identity, pubkey)
+  const record = checkedRecord === undefined ? await getOAuthVerification(kv, platform, identity, pubkey) : checkedRecord
   if (platform === 'bluesky' && record?.account_id) {
     const others = new Set([record.handle, record.account_id]
       .filter((id): id is string => !!id && id.toLowerCase() !== identity.toLowerCase())

@@ -1,4 +1,4 @@
-// ABOUTME: Pins how the Divine app confirms a sign-in and unlinks one, so a change
+// ABOUTME: Pins how the Divine app and the verifier page confirm a sign-in and unlink one, so a change
 // ABOUTME: (or a move to another worker) cannot silently break shipped clients.
 import { describe, expect, it } from 'vitest'
 import { schnorr } from '@noble/curves/secp256k1.js'
@@ -205,6 +205,80 @@ describe('POST /auth/oauth/revoke (mobile verifier_client.dart revoke)', () => {
     expect(body).not.toBeNull()
     expect(typeof body).toBe('object')
     expect(Array.isArray(body)).toBe(false)
+    const after = await oauthClaimAnswer(env, claim)
+    expectAppShape(after)
+    expect(after).toMatchObject({ platform: 'twitter', identity: 'synthetic-user', verified: false })
+    expect(after.code).not.toBe('temporarily_unavailable')
+  })
+})
+
+describe('POST /auth/oauth/revoke (verifier page unlink, and any client using the NIP-98 header)', () => {
+  // The verifier page (src/index.ts): it confirms through /auth/confirm, then
+  // unlinks by sending the kind 10011 list it signed afterwards, without the claim, in the
+  // JSON body as `list`.
+  it('T4.4 removes a confirmed sign-in when the page sends the list it signed without the claim', async () => {
+    const p = await pendingSignIn()
+    const t0 = Math.floor(Date.now() / 1000)
+    expect((await confirm(p, await signed(p.secretKey, 10011, bound(p), t0))).status).toBe(200)
+    const claim = { platform: p.platform, identity: p.identity, pubkey: p.pubkey }
+    expect(await oauthClaimVerifies(p.env, claim)).toBe(true)
+
+    const list = await signed(p.secretKey, 10011, [], t0 + 1)
+    const res = await call(target, 'POST', '/auth/oauth/revoke', { ...claim, list }, p.env)
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).not.toBeNull()
+    expect(typeof body).toBe('object')
+    expect(Array.isArray(body)).toBe(false)
+    const after = await oauthClaimAnswer(p.env, claim)
+    expectAppShape(after)
+    expect(after).toMatchObject({ platform: p.platform, identity: p.identity, verified: false })
+    expect(after.code).not.toBe('temporarily_unavailable')
+  })
+
+  // A confirming list may be dated up to 600 seconds ahead of the server clock, so the record then
+  // carries a confirmation date ahead of its own check date. The shipped body-form unlink, dated at
+  // server time, must still remove it.
+  it('T4.6 removes a sign-in confirmed by a list dated ahead of the server clock, with the body-form event', async () => {
+    const p = await pendingSignIn()
+    const ahead = Math.floor(Date.now() / 1000) + 120
+    expect((await confirm(p, await signed(p.secretKey, 10011, bound(p), ahead))).status).toBe(200)
+    const claim = { platform: p.platform, identity: p.identity, pubkey: p.pubkey }
+    expect(await oauthClaimVerifies(p.env, claim)).toBe(true)
+
+    const event = await signed(p.secretKey, 27235, [['u', `${BASE_URL}/auth/oauth/revoke`], ['method', 'POST']])
+    const res = await call(target, 'POST', '/auth/oauth/revoke', { ...claim, event }, p.env)
+
+    expect(res.status).toBe(200)
+    const after = await oauthClaimAnswer(p.env, claim)
+    expectAppShape(after)
+    expect(after).toMatchObject({ platform: p.platform, identity: p.identity, verified: false })
+  })
+
+  // Any client may put the NIP-98 event in the Authorization header instead, with the
+  // payload tag set to the SHA-256 of the exact body bytes it sends.
+  it('T4.5 removes the stored sign-in when the NIP-98 event is in the Authorization header with the body hash', async () => {
+    const env = adapter.env({ SIGNIN_CONFIRMATION: 'required' }).env
+    const secretKey = schnorr.utils.randomSecretKey()
+    const pubkey = bytesToHex(schnorr.getPublicKey(secretKey))
+    const claim = { platform: 'twitter', identity: 'synthetic-user', pubkey }
+    await adapter.seedSignIn(env, claim)
+    expect(await oauthClaimVerifies(env, claim)).toBe(true)
+
+    const body = { ...claim }
+    const payload = bytesToHex(await sha256Bytes(JSON.stringify(body)))
+    const event = await signed(secretKey, 27235, [
+      ['u', `${BASE_URL}/auth/oauth/revoke`], ['method', 'POST'], ['payload', payload],
+    ])
+    const res = await call(target, 'POST', '/auth/oauth/revoke', body, env,
+      { authorization: 'Nostr ' + btoa(JSON.stringify(event)) })
+
+    expect(res.status).toBe(200)
+    const answer = await res.json()
+    expect(answer).not.toBeNull()
+    expect(typeof answer).toBe('object')
+    expect(Array.isArray(answer)).toBe(false)
     const after = await oauthClaimAnswer(env, claim)
     expectAppShape(after)
     expect(after).toMatchObject({ platform: 'twitter', identity: 'synthetic-user', verified: false })

@@ -8,6 +8,11 @@ app.post('/', async (c) => {
   return read.ok ? c.json({ got: read.body }) : read.response
 })
 
+app.post('/bytes', async (c) => {
+  const read = await readJsonBody(c, 64)
+  return read.ok ? c.json({ text: new TextDecoder().decode(read.bytes), length: read.bytes.byteLength }) : read.response
+})
+
 const post = (body: string, type = 'application/json') =>
   app.request('/', { method: 'POST', headers: { 'Content-Type': type }, body })
 
@@ -15,6 +20,12 @@ describe('reading a JSON body', () => {
   it('reads JSON sent as application/json, with or without a charset', async () => {
     expect(await (await post('{"a":1}')).json()).toEqual({ got: { a: 1 } })
     expect((await post('{"a":1}', 'application/json; charset=utf-8')).status).toBe(200)
+  })
+
+  it('hands back the exact bytes it read, so a caller can hash them', async () => {
+    const res = await app.request('/bytes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"a": "é"}' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ text: '{"a": "é"}', length: 11 })
   })
 
   it('refuses other content types with 415', async () => {

@@ -2,9 +2,12 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { Hono } from 'hono'
 import { schnorr } from '@noble/curves/secp256k1.js'
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js'
-import type { Bindings } from '../types'
+import type { Bindings, OAuthVerification } from '../types'
+import type { SignedNostrEvent } from '../utils/nostr-event'
 import auth, { isAllowedReturnUrl } from './auth'
-import { oauthStateKey } from '../oauth/state'
+import worker from '../index'
+import { oauthStateKey, oauthVerificationKey, storeOAuthVerification } from '../oauth/state'
+import { sha256Hex } from '../oauth/unlink-proof'
 
 // Mount auth sub-app at /auth to match production routing
 const app = new Hono<{ Bindings: Bindings }>()
@@ -882,5 +885,596 @@ describe('GET /auth/bluesky/status for a kept sign-in', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ did: 'did:plc:other222222222222222222' }), { status: 200 })))
     const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
     expect((await res.json() as { verified: boolean }).verified).toBe(false)
+  })
+})
+
+// Signed the same way as signNip98Event, for any kind and tags.
+async function signEvent(secretKey: Uint8Array, kind: number, tags: string[][], createdAt = Math.floor(Date.now() / 1000)): Promise<SignedNostrEvent> {
+  const pubkey = bytesToHex(schnorr.getPublicKey(secretKey))
+  const content = ''
+  const serialized = JSON.stringify([0, pubkey, createdAt, kind, tags, content])
+  const id = bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(serialized))))
+  const sig = bytesToHex(schnorr.sign(hexToBytes(id), secretKey))
+  return { id, pubkey, sig, kind, tags, created_at: createdAt, content }
+}
+
+const aliceKey = (pubkey: string) => oauthVerificationKey('twitter', 'alice', pubkey)
+
+async function seedRecord(env: Bindings, over: Partial<OAuthVerification> & { pubkey: string }) {
+  await storeOAuthVerification(env.CACHE_KV, {
+    platform: 'twitter', identity: 'alice', verified: true, method: 'oauth',
+    checked_at: 1000, confirmed: true, confirm_event_id: '5'.repeat(64), confirm_created_at: 2000,
+    ...over,
+  })
+}
+
+function revokeRequest(env: Bindings, body: unknown, headers: Record<string, string> = {}) {
+  return app.request('/auth/oauth/revoke', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  }, env)
+}
+
+const nostrHeader = (event: unknown) => 'Nostr ' + btoa(JSON.stringify(event))
+
+const bodySha = (body: unknown) => sha256Hex(new TextEncoder().encode(JSON.stringify(body)))
+
+async function headerEvent(secretKey: Uint8Array, payload: string | null, createdAt?: number) {
+  const tags = [['u', REVOKE_URL], ['method', 'POST'], ...(payload === null ? [] : [['payload', payload]])]
+  return signEvent(secretKey, 27235, tags, createdAt)
+}
+
+async function errorCode(res: Response) {
+  return ((await res.json()) as { code?: string }).code
+}
+
+describe('POST /auth/oauth/revoke body and NIP-98 proofs', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('answers 413 to a body over 64 KiB and keeps the record', async () => {
+    const env = createTestEnv()
+    const key = schnorr.utils.randomSecretKey()
+    const event = await signNip98Event(key)
+    await seedRecord(env, { pubkey: event.pubkey })
+    forbidUpstreamFetch()
+    const res = await revokeRequest(env, { platform: 'twitter', identity: 'alice', pubkey: event.pubkey, event, pad: 'a'.repeat(65536) })
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({ error: 'Request body too large' })
+    expect(await env.CACHE_KV.get(aliceKey(event.pubkey))).not.toBeNull()
+  })
+
+  it('answers 415 to a body sent without a JSON content type', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    const res = await app.request('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ platform: 'twitter', identity: 'alice', pubkey: event.pubkey, event }),
+    }, env)
+    expect(res.status).toBe(415)
+  })
+
+  it('accepts an Authorization header whose payload is the sha256 of the body', async () => {
+    const env = createTestEnv()
+    const key = schnorr.utils.randomSecretKey()
+    const pubkey = bytesToHex(schnorr.getPublicKey(key))
+    await seedRecord(env, { pubkey })
+    const body = { platform: 'twitter', identity: 'alice', pubkey }
+    const event = await headerEvent(key, await bodySha(body))
+    forbidUpstreamFetch()
+    const res = await revokeRequest(env, body, { Authorization: nostrHeader(event) })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ revoked: true, platform: 'twitter', identity: 'alice' })
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+  })
+
+  it('refuses a header whose payload does not match the body, or has none', async () => {
+    const env = createTestEnv()
+    const key = schnorr.utils.randomSecretKey()
+    const pubkey = bytesToHex(schnorr.getPublicKey(key))
+    await seedRecord(env, { pubkey })
+    const body = { platform: 'twitter', identity: 'alice', pubkey }
+    forbidUpstreamFetch()
+    for (const payload of [await bodySha({ ...body, identity: 'bob' }), null]) {
+      const res = await revokeRequest(env, body, { Authorization: nostrHeader(await headerEvent(key, payload)) })
+      expect(res.status, String(payload)).toBe(401)
+      expect(await errorCode(res)).toBe('unlink_proof_invalid')
+      expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+    }
+  })
+
+  it('refuses a malformed Nostr Authorization header', async () => {
+    const env = createTestEnv()
+    const pubkey = bytesToHex(schnorr.getPublicKey(schnorr.utils.randomSecretKey()))
+    forbidUpstreamFetch()
+    for (const header of ['Nostr', 'Nostr !!!']) {
+      const res = await revokeRequest(env, { platform: 'twitter', identity: 'alice', pubkey }, { Authorization: header })
+      expect(res.status, header).toBe(400)
+      expect(await errorCode(res)).toBe('unlink_proof_invalid')
+    }
+  })
+
+  it('refuses an unreadable or invalid Nostr header even when the body carries a valid event', async () => {
+    const env = createTestEnv()
+    const key = schnorr.utils.randomSecretKey()
+    const event = await signNip98Event(key)
+    await seedRecord(env, { pubkey: event.pubkey })
+    const body = { platform: 'twitter', identity: 'alice', pubkey: event.pubkey, event }
+    forbidUpstreamFetch()
+    const cases: Array<[string, string, number]> = [
+      ['unreadable', 'Nostr !!!', 400],
+      ['no payload', nostrHeader(await headerEvent(key, null)), 401],
+    ]
+    for (const [name, header, status] of cases) {
+      const res = await revokeRequest(env, body, { Authorization: header })
+      expect(res.status, name).toBe(status)
+      expect(await errorCode(res), name).toBe('unlink_proof_invalid')
+      expect(await env.CACHE_KV.get(aliceKey(event.pubkey)), name).not.toBeNull()
+    }
+  })
+
+  it('uses the header when the body also carries an event', async () => {
+    const env = createTestEnv()
+    const key = schnorr.utils.randomSecretKey()
+    const pubkey = bytesToHex(schnorr.getPublicKey(key))
+    await seedRecord(env, { pubkey })
+    const body = { platform: 'twitter', identity: 'alice', pubkey, event: await signNip98Event(schnorr.utils.randomSecretKey()) }
+    forbidUpstreamFetch()
+    const res = await revokeRequest(env, body, { Authorization: nostrHeader(await headerEvent(key, await bodySha(body))) })
+    expect(res.status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+  })
+
+  it('ignores an Authorization header with another scheme', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    await seedRecord(env, { pubkey: event.pubkey })
+    forbidUpstreamFetch()
+    const res = await revokeRequest(env, { platform: 'twitter', identity: 'alice', pubkey: event.pubkey, event }, { Authorization: 'Bearer abc' })
+    expect(res.status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(event.pubkey))).toBeNull()
+  })
+
+  it('refuses a header signed by a key other than the body pubkey', async () => {
+    const env = createTestEnv()
+    const pubkey = bytesToHex(schnorr.getPublicKey(schnorr.utils.randomSecretKey()))
+    await seedRecord(env, { pubkey })
+    const body = { platform: 'twitter', identity: 'alice', pubkey }
+    forbidUpstreamFetch()
+    const res = await revokeRequest(env, body, { Authorization: nostrHeader(await headerEvent(schnorr.utils.randomSecretKey(), await bodySha(body))) })
+    expect(res.status).toBe(401)
+    expect(await errorCode(res)).toBe('unlink_proof_invalid')
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+  })
+
+  it('refuses a NIP-98 event dated before the server saved the link, and accepts the same second', async () => {
+    const T = 1_790_000_000
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T * 1000)
+    const env = createTestEnv()
+    const key = schnorr.utils.randomSecretKey()
+    const pubkey = bytesToHex(schnorr.getPublicKey(key))
+    await seedRecord(env, { pubkey, checked_at: T + 30, confirm_created_at: T + 30 })
+    forbidUpstreamFetch()
+
+    const early = await revokeRequest(env, { platform: 'twitter', identity: 'alice', pubkey, event: await signNip98Event(key, { created_at: T }) })
+    expect(early.status).toBe(401)
+    expect(await errorCode(early)).toBe('unlink_proof_invalid')
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+
+    vi.setSystemTime((T + 30) * 1000)
+    const same = await revokeRequest(env, { platform: 'twitter', identity: 'alice', pubkey, event: await signNip98Event(key, { created_at: T + 30 }) })
+    expect(same.status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+  })
+
+  it('after unlinking and linking again, the earlier NIP-98 event is refused', async () => {
+    const T = 1_790_000_000
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T * 1000)
+    const env = createTestEnv()
+    const key = schnorr.utils.randomSecretKey()
+    const pubkey = bytesToHex(schnorr.getPublicKey(key))
+    await seedRecord(env, { pubkey, checked_at: T - 100, confirm_created_at: T - 100 })
+    const event = await signNip98Event(key, { created_at: T - 5 })
+    const body = { platform: 'twitter', identity: 'alice', pubkey, event }
+    forbidUpstreamFetch()
+    expect((await revokeRequest(env, body)).status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+
+    await seedRecord(env, { pubkey, checked_at: T, confirm_created_at: T })
+    const replay = await revokeRequest(env, body)
+    expect(replay.status).toBe(401)
+    expect(await errorCode(replay)).toBe('unlink_proof_invalid')
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+  })
+
+  it('unlinks immediately with either NIP-98 form when the confirming list was dated ahead', async () => {
+    const T = 1_790_000_000
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T * 1000)
+    const env = createTestEnv()
+    const key = schnorr.utils.randomSecretKey()
+    const pubkey = bytesToHex(schnorr.getPublicKey(key))
+    const body = { platform: 'twitter', identity: 'alice', pubkey }
+    for (const form of ['body', 'header']) {
+      await seedRecord(env, { pubkey, checked_at: T, confirm_created_at: T + 120 })
+      const res = form === 'body'
+        ? await revokeRequest(env, { ...body, event: await signNip98Event(key) })
+        : await revokeRequest(env, body, { Authorization: nostrHeader(await headerEvent(key, await bodySha(body))) })
+      expect(res.status, form).toBe(200)
+      expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+    }
+  })
+
+  it('deletes the requested key even when its initial KV read is a cached miss', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    await seedRecord(env, { pubkey: event.pubkey })
+    const get = env.CACHE_KV.get.bind(env.CACHE_KV)
+    const read = vi.spyOn(env.CACHE_KV as { get(key: string): Promise<string | null> }, 'get').mockResolvedValue(null)
+    const del = vi.spyOn(env.CACHE_KV, 'delete')
+    expect((await revokeRequest(env, { platform: 'twitter', identity: '@alice', pubkey: event.pubkey, event })).status).toBe(200)
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(del).toHaveBeenCalledWith(aliceKey(event.pubkey))
+    expect(await get(aliceKey(event.pubkey))).toBeNull()
+  })
+
+  it('marks every refused NIP-98 proof unlink_proof_invalid', async () => {
+    const env = createTestEnv()
+    const key = schnorr.utils.randomSecretKey()
+    const event = await signNip98Event(key)
+    await seedRecord(env, { pubkey: event.pubkey })
+    forbidUpstreamFetch()
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ['wrong URL', await signNip98Event(key, { url: LOGIN_URL }), event.pubkey],
+      ['wrong method', await signNip98Event(key, { method: 'GET' }), event.pubkey],
+      ['61 seconds old', await signNip98Event(key, { created_at: Math.floor(Date.now() / 1000) - 61 }), event.pubkey],
+      ['bad signature', { ...event, sig: bytesToHex(schnorr.sign(hexToBytes('11'.repeat(32)), key)) }, event.pubkey],
+      ['id mismatch', { ...event, content: 'altered after signing' }, event.pubkey],
+      ['pubkey mismatch', await signNip98Event(schnorr.utils.randomSecretKey()), event.pubkey],
+    ]
+    for (const [name, bad, pubkey] of cases) {
+      const res = await revokeRequest(env, { platform: 'twitter', identity: 'alice', pubkey, event: bad })
+      expect(res.status, name).toBeGreaterThanOrEqual(400)
+      expect(await errorCode(res), name).toBe('unlink_proof_invalid')
+    }
+    expect(await env.CACHE_KV.get(aliceKey(event.pubkey))).not.toBeNull()
+  })
+})
+
+describe('POST /auth/oauth/revoke with a signed list', () => {
+  const DID = 'did:plc:alice111111111111111111'
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(2005 * 1000)
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  function owner() {
+    const key = schnorr.utils.randomSecretKey()
+    return { key, pubkey: bytesToHex(schnorr.getPublicKey(key)) }
+  }
+
+  const listRevoke = (env: Bindings, pubkey: string, list: unknown, platform = 'twitter', identity = 'alice') =>
+    revokeRequest(env, { platform, identity, pubkey, list })
+
+  it('removes the record when a newer list no longer holds the claim, and /verify then answers signin_expired', async () => {
+    const env = { ...createTestEnv(), SIGNIN_CONFIRMATION: 'required' } as Bindings
+    const { key, pubkey } = owner()
+    const now = Math.floor(Date.now() / 1000)
+    await seedRecord(env, { pubkey, checked_at: now, confirm_created_at: now - 10 })
+    forbidUpstreamFetch()
+    const claim = { platform: 'twitter', identity: 'alice', proof: 'oauth', pubkey }
+    const verify = async () => {
+      const res = await worker.fetch(new Request('http://localhost/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ claims: [claim] }),
+      }), env)
+      return ((await res.json()) as { results: Array<{ verified: boolean; code?: string }> }).results[0]
+    }
+    expect((await verify()).verified).toBe(true)
+
+    const list = await signEvent(key, 10011, [['i', 'github:alice', 'gist1']], now - 9)
+    const res = await listRevoke(env, pubkey, list)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ revoked: true, platform: 'twitter', identity: 'alice' })
+    expect(await verify()).toMatchObject({ verified: false, code: 'signin_expired' })
+  })
+
+  it('treats an empty event field as absent and unlinks through the list', async () => {
+    const env = { ...createTestEnv(), SIGNIN_CONFIRMATION: 'required' } as Bindings
+    const { key, pubkey } = owner()
+    const now = Math.floor(Date.now() / 1000)
+    await seedRecord(env, { pubkey, checked_at: now, confirm_created_at: now - 10 })
+    const list = await signEvent(key, 10011, [['i', 'github:alice', 'gist1']], now - 9)
+    const res = await revokeRequest(env, { platform: 'twitter', identity: 'alice', pubkey, event: '', list })
+    expect(res.status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+  })
+
+  it('treats an empty list field as absent, so a request with no other proof is a missing-field error', async () => {
+    const env = { ...createTestEnv(), SIGNIN_CONFIRMATION: 'required' } as Bindings
+    const { pubkey } = owner()
+    await seedRecord(env, { pubkey })
+    const res = await revokeRequest(env, { platform: 'twitter', identity: 'alice', pubkey, list: '' })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toMatch(/^Missing required fields/)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+  })
+
+  it('refuses a list dated before the confirmation', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await seedRecord(env, { pubkey })
+    const res = await listRevoke(env, pubkey, await signEvent(key, 10011, [], 1999))
+    expect(res.status).toBe(409)
+    expect(await errorCode(res)).toBe('unlink_list_older')
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+  })
+
+  it('on the same second, refuses a higher id and accepts a lower one', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    const list = await signEvent(key, 10011, [], 2000)
+    await seedRecord(env, { pubkey, confirm_event_id: '0'.repeat(64) })
+    const higher = await listRevoke(env, pubkey, list)
+    expect(higher.status).toBe(409)
+    expect(await errorCode(higher)).toBe('unlink_list_older')
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+
+    await seedRecord(env, { pubkey, confirm_event_id: 'f'.repeat(64) })
+    expect((await listRevoke(env, pubkey, list)).status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+  })
+
+  it('refuses a list that still holds the claim', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await seedRecord(env, { pubkey })
+    const res = await listRevoke(env, pubkey, await signEvent(key, 10011, [['i', 'twitter:alice', 'oauth']], 2001))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({
+      code: 'unlink_claim_listed',
+      error: 'This list still holds the linked account. Remove the remaining row for this account (including any alternate handle or platform name), then retry.',
+    })
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+  })
+
+  it('refuses a list that still holds the claim as @Alice', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await seedRecord(env, { pubkey })
+    const res = await listRevoke(env, pubkey, await signEvent(key, 10011, [['i', 'twitter:@Alice', 'oauth']], 2001))
+    expect(res.status).toBe(409)
+    expect(await errorCode(res)).toBe('unlink_claim_listed')
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+  })
+
+  it('refuses a Bluesky unlink while the DID is still listed, and removes both records when neither is', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    for (const identity of ['alice.bsky.social', DID]) {
+      await seedRecord(env, { pubkey, platform: 'bluesky', identity, checked_at: 1, account_id: DID, handle: 'alice.bsky.social' })
+    }
+    const handleKey = oauthVerificationKey('bluesky', 'alice.bsky.social', pubkey)
+    const didKey = oauthVerificationKey('bluesky', DID, pubkey)
+
+    const listed = await listRevoke(env, pubkey, await signEvent(key, 10011, [['i', `bluesky:${DID}`, 'oauth']], 2001), 'bluesky', 'alice.bsky.social')
+    expect(listed.status).toBe(409)
+    expect(await errorCode(listed)).toBe('unlink_claim_listed')
+    expect(await env.CACHE_KV.get(handleKey)).not.toBeNull()
+    expect(await env.CACHE_KV.get(didKey)).not.toBeNull()
+
+    const gone = await listRevoke(env, pubkey, await signEvent(key, 10011, [], 2001), 'bluesky', 'alice.bsky.social')
+    expect(gone.status).toBe(200)
+    expect(await env.CACHE_KV.get(handleKey)).toBeNull()
+    expect(await env.CACHE_KV.get(didKey)).toBeNull()
+  })
+
+  it('refuses a list from another key, with a bad signature, or of another kind', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await seedRecord(env, { pubkey })
+    const good = await signEvent(key, 10011, [], 2001)
+    const cases: Array<[string, unknown, number]> = [
+      ['another key', await signEvent(schnorr.utils.randomSecretKey(), 10011, [], 2001), 401],
+      ['bad signature', { ...good, sig: bytesToHex(schnorr.sign(hexToBytes('11'.repeat(32)), key)) }, 401],
+      ['another kind', await signEvent(key, 1, [], 2001), 400],
+    ]
+    for (const [name, list, status] of cases) {
+      const res = await listRevoke(env, pubkey, list)
+      expect(res.status, name).toBe(status)
+      expect(await errorCode(res), name).toBe('unlink_proof_invalid')
+      expect(await env.CACHE_KV.get(aliceKey(pubkey)), name).not.toBeNull()
+    }
+  })
+
+  it('refuses a list whose signature does not check out before comparing it with the link', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await seedRecord(env, { pubkey, confirm_event_id: '8'.repeat(64) })
+    const forgedSig = (list: SignedNostrEvent) => ({ ...list, sig: bytesToHex(schnorr.sign(hexToBytes('11'.repeat(32)), key)) })
+    // The same second as the link, with a true id that sorts before the
+    // link's, so only the signature can refuse it.
+    let sameSecond = await signEvent(key, 10011, [], 2000)
+    for (let n = 0; sameSecond.id >= '8'.repeat(64); n++) sameSecond = await signEvent(key, 10011, [['t', String(n)]], 2000)
+    const cases: Array<[string, unknown]> = [
+      // Newer than the link and without the claim, but not signed by its pubkey.
+      ['newer', forgedSig(await signEvent(key, 10011, [], 2001))],
+      // The same second as the link, with an id that would sort first.
+      ['lower id', forgedSig(sameSecond)],
+      // Older than the link: refused as a bad proof, not as an older list.
+      ['older', forgedSig(await signEvent(key, 10011, [], 1999))],
+    ]
+    for (const [name, list] of cases) {
+      const res = await listRevoke(env, pubkey, list)
+      expect(res.status, name).toBe(401)
+      expect(await res.json(), name).toEqual({ code: 'unlink_proof_invalid', error: 'List signature is invalid' })
+      expect(await env.CACHE_KV.get(aliceKey(pubkey)), name).not.toBeNull()
+    }
+  })
+
+  it('accepts a list 600 seconds ahead and refuses one 601 ahead', async () => {
+    const T = 1_790_000_000
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T * 1000)
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await seedRecord(env, { pubkey, checked_at: T - 10, confirm_created_at: T - 10 })
+    expect((await listRevoke(env, pubkey, await signEvent(key, 10011, [], T + 600))).status).toBe(200)
+
+    await seedRecord(env, { pubkey, checked_at: T - 10, confirm_created_at: T - 10 })
+    const ahead = await listRevoke(env, pubkey, await signEvent(key, 10011, [], T + 601))
+    expect(ahead.status).toBe(400)
+    expect(await errorCode(ahead)).toBe('unlink_proof_invalid')
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+  })
+
+  it('accepts a list 60 seconds old but refuses a 61-second-old list even when newer than the link', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    vi.setSystemTime(2100 * 1000)
+    await seedRecord(env, { pubkey })
+    const old = await listRevoke(env, pubkey, await signEvent(key, 10011, [], 2039))
+    expect(old.status).toBe(401)
+    expect(await errorCode(old)).toBe('unlink_proof_invalid')
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+    expect((await listRevoke(env, pubkey, await signEvent(key, 10011, [], 2040))).status).toBe(200)
+  })
+
+  it('allows a slow signer to unlink a transitional unconfirmed record within the freshness window', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await storeOAuthVerification(env.CACHE_KV, {
+      platform: 'twitter', identity: 'alice', pubkey, verified: true, method: 'oauth', checked_at: 2005,
+    })
+    expect((await listRevoke(env, pubkey, await signEvent(key, 10011, [], 1945))).status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+  })
+
+  it('still deletes a cached-miss key, but never when the submitted list holds the claim', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await seedRecord(env, { pubkey })
+    const get = env.CACHE_KV.get.bind(env.CACHE_KV)
+    const read = vi.spyOn(env.CACHE_KV as { get(key: string): Promise<string | null> }, 'get').mockResolvedValue(null)
+    const del = vi.spyOn(env.CACHE_KV, 'delete')
+    const listed = await listRevoke(env, pubkey, await signEvent(key, 10011, [['i', 'twitter:alice', 'oauth']], 2005))
+    expect(listed.status).toBe(409)
+    expect(del).not.toHaveBeenCalled()
+    expect((await listRevoke(env, pubkey, await signEvent(key, 10011, [], 2005))).status).toBe(200)
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(del).toHaveBeenCalledWith(aliceKey(pubkey))
+    expect(await get(aliceKey(pubkey))).toBeNull()
+  })
+
+  it('after unlinking and linking again, the earlier list is refused', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await seedRecord(env, { pubkey })
+    const first = await signEvent(key, 10011, [], 2001)
+    expect((await listRevoke(env, pubkey, first)).status).toBe(200)
+
+    await seedRecord(env, { pubkey, confirm_created_at: first.created_at + 5 })
+    const replay = await listRevoke(env, pubkey, first)
+    expect(replay.status).toBe(409)
+    expect(await errorCode(replay)).toBe('unlink_list_older')
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).not.toBeNull()
+  })
+
+  it('answers revoked when nothing is stored, once the list checks out', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    const list = await signEvent(key, 10011, [], 2001)
+    const res = await listRevoke(env, pubkey, list)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ revoked: true, platform: 'twitter', identity: 'alice' })
+
+    const forged = { ...list, sig: bytesToHex(schnorr.sign(hexToBytes('11'.repeat(32)), key)) }
+    const bad = await listRevoke(env, pubkey, forged)
+    expect(bad.status).toBe(401)
+    expect(await errorCode(bad)).toBe('unlink_proof_invalid')
+  })
+
+  it('gives the same answer when the same list is sent twice', async () => {
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    await seedRecord(env, { pubkey })
+    const list = await signEvent(key, 10011, [], 2001)
+    for (let i = 0; i < 2; i++) {
+      const res = await listRevoke(env, pubkey, list)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ revoked: true, platform: 'twitter', identity: 'alice' })
+    }
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+  })
+
+  it('logs which proof was used, without the pubkey or identity', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const env = createTestEnv()
+    const { key, pubkey } = owner()
+    forbidUpstreamFetch()
+
+    await seedRecord(env, { pubkey })
+    const body = { platform: 'twitter', identity: 'alice', pubkey }
+    expect((await revokeRequest(env, body, { Authorization: nostrHeader(await headerEvent(key, await bodySha(body))) })).status).toBe(200)
+
+    await seedRecord(env, { pubkey })
+    expect((await revokeRequest(env, { ...body, event: await signNip98Event(key) })).status).toBe(200)
+
+    await seedRecord(env, { pubkey })
+    expect((await listRevoke(env, pubkey, await signEvent(key, 10011, [], 2001))).status).toBe(200)
+
+    await seedRecord(env, { pubkey })
+    expect((await listRevoke(env, pubkey, await signEvent(key, 10011, [], 1999))).status).toBe(409)
+
+    const lines = info.mock.calls.map(call => call.map(String).join(' '))
+    // One line per revoke, and nothing else logged on these paths.
+    expect(lines).toEqual([
+      'twitter unlink: header proof, revoked',
+      'twitter unlink: body proof, revoked',
+      'twitter unlink: list proof, revoked',
+      'twitter unlink: list proof, unlink_list_older',
+    ])
+    for (const line of lines) {
+      expect(line).not.toContain(pubkey)
+      expect(line.toLowerCase()).not.toContain('alice')
+    }
+  })
+})
+
+describe('POST /auth/oauth/revoke finds the record /verify counts, however the identity was typed', () => {
+  const key = () => schnorr.utils.randomSecretKey()
+
+  for (const typed of ['@Alice', '  alice  ', '@alice']) {
+    it(`deletes the record stored under alice when the body form sends ${JSON.stringify(typed)}`, async () => {
+      const env = createTestEnv()
+      const event = await signNip98Event(key())
+      await seedRecord(env, { pubkey: event.pubkey })
+      const res = await revokeRequest(env, { platform: 'twitter', identity: typed, pubkey: event.pubkey, event })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ revoked: true, platform: 'twitter', identity: typed })
+      expect(await env.CACHE_KV.get(aliceKey(event.pubkey))).toBeNull()
+    })
+  }
+
+  it('deletes the record stored under alice when the list form sends @alice, and /verify then answers signin_expired', async () => {
+    const env = { ...createTestEnv(), SIGNIN_CONFIRMATION: 'required' } as Bindings
+    const owner = key()
+    const pubkey = bytesToHex(schnorr.getPublicKey(owner))
+    const now = Math.floor(Date.now() / 1000)
+    await seedRecord(env, { pubkey, checked_at: now, confirm_created_at: now - 10 })
+    forbidUpstreamFetch()
+    const list = await signEvent(owner, 10011, [['i', 'github:alice', 'gist1']], now - 9)
+    const res = await revokeRequest(env, { platform: 'twitter', identity: '@alice', pubkey, list })
+    expect(res.status).toBe(200)
+    expect(await env.CACHE_KV.get(aliceKey(pubkey))).toBeNull()
+    const verify = await worker.fetch(new Request('http://localhost/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ claims: [{ platform: 'twitter', identity: '@alice', proof: 'oauth', pubkey }] }),
+    }), env)
+    const result = ((await verify.json()) as { results: Array<{ verified: boolean; code?: string }> }).results[0]
+    expect(result).toMatchObject({ verified: false, code: 'signin_expired' })
   })
 })

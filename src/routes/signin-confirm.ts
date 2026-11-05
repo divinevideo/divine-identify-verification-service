@@ -4,7 +4,7 @@ import { Hono } from 'hono'
 import type { Bindings, OAuthPlatform } from '../types'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { readJsonBody } from '../utils/json-body'
-import { verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
+import { verifyEventSignature, asLinkedAccountsList, LINKED_ACCOUNTS_MAX_SECONDS_AHEAD } from '../utils/nostr-event'
 import {
   getUsedCode, storeUsedCode, getPendingSignIn, deletePendingSignIn,
   startCheckFor, confirmBindingFor, isSignInToken, sameToken,
@@ -14,8 +14,6 @@ import { saveSignIn, savedIdentities } from '../oauth/signin-records'
 const confirm = new Hono<{ Bindings: Bindings }>()
 
 const CONFIRM_BODY_LIMIT = 65536
-// Only so a far-future date isn't stored for ordering later unlinks (#76).
-const MAX_SECONDS_AHEAD = 600
 
 const REFUSALS = {
   not_found: { status: 404, code: 'signin_not_found', error: 'This sign-in couldn\'t be confirmed. Sign in again.' },
@@ -28,17 +26,6 @@ const REFUSALS = {
 } as const
 
 type Refusal = keyof typeof REFUSALS
-
-// A kind 10011 with the shape NIP-01 requires, or null.
-function asLinkedAccountsList(raw: unknown): SignedNostrEvent | null {
-  if (!raw || typeof raw !== 'object') return null
-  const e = raw as Record<string, unknown>
-  if (typeof e.id !== 'string' || typeof e.pubkey !== 'string' || typeof e.sig !== 'string') return null
-  if (e.kind !== 10011 || typeof e.content !== 'string') return null
-  if (typeof e.created_at !== 'number' || !Number.isInteger(e.created_at)) return null
-  if (!Array.isArray(e.tags) || !e.tags.every(t => Array.isArray(t) && t.every(v => typeof v === 'string'))) return null
-  return { id: e.id, pubkey: e.pubkey, sig: e.sig, kind: 10011, created_at: e.created_at, content: e.content, tags: e.tags as string[][] }
-}
 
 confirm.post('/confirm', async (c) => {
   const refuse = (reason: Refusal, platform: OAuthPlatform | null) => {
@@ -60,7 +47,7 @@ confirm.post('/confirm', async (c) => {
   }
 
   const event = asLinkedAccountsList(body.event)
-  if (!event || event.created_at > Math.floor(Date.now() / 1000) + MAX_SECONDS_AHEAD) return refuse('invalid_event', null)
+  if (!event || event.created_at > Math.floor(Date.now() / 1000) + LINKED_ACCOUNTS_MAX_SECONDS_AHEAD) return refuse('invalid_event', null)
   if (!(await verifyEventSignature(event)).ok) return refuse('invalid_event', null)
 
   // The same event sent again (its first answer was lost) gets the same answer.

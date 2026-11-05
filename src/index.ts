@@ -732,6 +732,7 @@ app.get('/', (c) => {
       <button id="load-links-btn" class="verify-btn verify-btn-primary" type="button">Load my links</button>
       <div id="manage-links-container" style="margin-top:1rem;"></div>
       <div id="manage-status" class="status-row"></div>
+      <button id="retry-revoke-btn" class="verify-btn" type="button" hidden>Retry sign-in record removal</button>
       <div id="remove-confirm-dialog" style="display:none;margin-top:1rem;padding:16px;background:rgba(255,127,175,0.18);border:2px solid var(--dark);border-radius:16px;">
         <h4 style="margin-bottom:0.5rem;color:var(--dark);">Remove this verification?</h4>
         <p>This unlinks <strong id="remove-confirm-claim"></strong> from your Nostr profile.</p>
@@ -2081,9 +2082,11 @@ Content-Type: application/json
           ? ['i', claimKey, link.proof, await confirmBindingFor(waiting.code, waiting.startCheck)]
           : ['i', claimKey, link.proof]);
 
+        // Dated one second past the list it replaces when that list is ahead of
+        // the clock, so relays keep this one over it.
         const unsignedEvent = {
           kind: 10011,
-          created_at: Math.floor(Date.now() / 1000),
+          created_at: Math.max(Math.floor(Date.now() / 1000), identityEvent && identityEvent.kind === 10011 ? identityEvent.created_at + 1 : 0),
           tags: nextTags,
           content: '',
           pubkey: signerPubkey,
@@ -2879,11 +2882,42 @@ Content-Type: application/json
       document.getElementById('remove-confirm-dialog').style.display = 'none';
     }
 
-    async function executeRemoveVerification() {
+    const pendingRemovalRetries = new Map();
+
+    // Keyed by the account rather than how the tag spells it (X as twitter,
+    // any case), so removing it in another form clears its pending retry.
+    function removalRetryKey(pubkey, platform, identity) {
+      const p = String(platform).trim().toLowerCase();
+      return JSON.stringify([pubkey, p === 'x' ? 'twitter' : p, String(identity).trim().toLowerCase()]);
+    }
+
+    function updateRemovalRetryButton() {
+      const button = document.getElementById('retry-revoke-btn');
+      button.hidden = pendingRemovalRetries.size === 0;
+      button.textContent = 'Retry sign-in record removal (' + pendingRemovalRetries.size + ' pending)';
+    }
+
+    async function retryRemoveVerification() {
+      const next = pendingRemovalRetries.entries().next();
+      if (next.done) return;
+      const [key, retry] = next.value;
+      await executeRemoveVerification(retry);
+      // A failed attempt goes to the back so it cannot block other removals.
+      if (pendingRemovalRetries.get(key) === retry) {
+        pendingRemovalRetries.delete(key);
+        pendingRemovalRetries.set(key, retry);
+      }
+    }
+
+    async function executeRemoveVerification(retry = null) {
       const dialog = document.getElementById('remove-confirm-dialog');
-      const platform = dialog.dataset.platform;
-      const identity = dialog.dataset.identity;
+      const platform = retry ? retry.platform : dialog.dataset.platform;
+      const identity = retry ? retry.identity : dialog.dataset.identity;
+      const normalizedPlatform = platform.trim().toLowerCase();
+      const oauthPlatform = normalizedPlatform === 'x' ? 'twitter' : normalizedPlatform;
       dialog.style.display = 'none';
+      const retryButton = document.getElementById('retry-revoke-btn');
+      retryButton.disabled = true;
 
       setStatus('manage-status', 'Removing verification...', 'loading');
 
@@ -2897,6 +2931,9 @@ Content-Type: application/json
         if (pubkey !== signerPubkey) {
           throw new Error('Signed-in key and selected account do not match.');
         }
+        if (retry && retry.pubkey !== signerPubkey) {
+          throw new Error('Sign in with the original account to retry this removal.');
+        }
 
         // Fetch current identity event (kind 10011, fall back to kind 0)
         const current = await readLinkedAccounts(signerPubkey);
@@ -2906,11 +2943,29 @@ Content-Type: application/json
         const tags = event ? (event.tags || []).filter(Array.isArray) : [];
         const iTags = tags.filter(tag => tag[0] === 'i');
         const claimKey = (platform + ':' + identity).toLowerCase();
+        const retryKey = removalRetryKey(signerPubkey, platform, identity);
+        if (retry && event && event.kind === 10011 &&
+            newerEvent(retry.removalEvent, event) === event &&
+            iTags.some(tag => typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey)) {
+          pendingRemovalRetries.delete(retryKey);
+          // Show the list that holds it again first (loading clears the status).
+          await loadLinkedVerifications();
+          setStatus('manage-status', 'This account was linked again; remove it from the list if you still want to unlink.', 'error');
+          return;
+        }
         const nextTags = iTags.filter(tag => !(typeof tag[1] === 'string' && tag[1].toLowerCase() === claimKey));
 
+        // Dated one second past the list it replaces (as mobile does), so the
+        // verifier can tell this list is newer even if the clocks disagree. A
+        // retry also dates past its own first removal, which a relay that
+        // missed it may not return.
         const unsignedEvent = {
           kind: 10011,
-          created_at: Math.floor(Date.now() / 1000),
+          created_at: Math.max(
+            Math.floor(Date.now() / 1000),
+            event && event.kind === 10011 ? event.created_at + 1 : 0,
+            retry && retry.removalEvent ? retry.removalEvent.created_at + 1 : 0,
+          ),
           tags: nextTags,
           content: '',
           pubkey: signerPubkey,
@@ -2932,54 +2987,41 @@ Content-Type: application/json
 
         // Attempt OAuth cache revoke for OAuth platforms
         let revokeWarning = '';
-        if (OAUTH_PLATFORMS_SET.has(platform)) {
+        if (OAUTH_PLATFORMS_SET.has(oauthPlatform)) {
           try {
-            const nip98Event = await buildNip98EventForRevoke(API + '/auth/oauth/revoke', 'POST');
             const revokeResp = await fetch(API + '/auth/oauth/revoke', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ platform: platform, identity: identity, pubkey: signerPubkey, event: nip98Event }),
+              body: JSON.stringify({ platform: oauthPlatform, identity: identity, pubkey: signerPubkey, list: signedEvent }),
             });
             if (!revokeResp.ok) {
-              revokeWarning = ' OAuth cache revoke did not complete.';
+              const refusal = await revokeResp.json().catch(() => null);
+              revokeWarning = refusal && typeof refusal.error === 'string' && refusal.error.trim() ? refusal.error : 'OAuth cache revoke did not complete.';
             }
           } catch {
-            revokeWarning = ' OAuth cache revoke did not complete.';
+            revokeWarning = 'OAuth cache revoke did not complete.';
           }
         }
 
+        // Refresh first: loading the list clears its status, but must not erase
+        // the refusal or the retry when the removed claim is no longer a row.
+        await loadLinkedVerifications();
         if (revokeWarning) {
-          setStatus('manage-status', 'Removed from profile, but' + revokeWarning, 'ok');
+          pendingRemovalRetries.set(retryKey, retry || {
+            platform, identity, pubkey: signerPubkey,
+            removalEvent: { id: signedEvent.id, created_at: signedEvent.created_at },
+          });
+          setStatus('manage-status', 'Removed from profile, but sign-in record removal failed: ' + revokeWarning, 'error');
         } else {
+          pendingRemovalRetries.delete(retryKey);
           setStatus('manage-status', 'Verification removed from your Nostr profile.', 'ok');
         }
-
-        await loadLinkedVerifications();
       } catch (e) {
         setStatus('manage-status', e.message || 'Could not remove verification.', 'error');
+      } finally {
+        updateRemovalRetryButton();
+        retryButton.disabled = false;
       }
-    }
-
-    async function buildNip98EventForRevoke(url, method) {
-      const signerPubkey = String(await activeSigner.getPublicKey()).toLowerCase();
-      const event = {
-        kind: 27235,
-        created_at: Math.floor(Date.now() / 1000),
-        tags: [
-          ['u', url],
-          ['method', method],
-        ],
-        content: '',
-        pubkey: signerPubkey,
-      };
-      const signedEvent = await activeSigner.signEvent(event);
-      if (!signedEvent || !signedEvent.id || !signedEvent.sig) {
-        throw new Error('Signer did not return a valid auth event.');
-      }
-      if (String(signedEvent.pubkey || '').toLowerCase() !== signerPubkey) {
-        throw new Error('Signer returned an auth event for a different pubkey.');
-      }
-      return signedEvent;
     }
 
     // A platform pill links to the card where that platform can be linked.
@@ -3041,7 +3083,8 @@ Content-Type: application/json
     // start-up code below so an error there cannot leave them dead.
     document.getElementById('load-links-btn').addEventListener('click', loadLinkedVerifications);
     document.getElementById('remove-cancel-btn').addEventListener('click', cancelRemove);
-    document.getElementById('remove-confirm-btn').addEventListener('click', executeRemoveVerification);
+    document.getElementById('remove-confirm-btn').addEventListener('click', () => executeRemoveVerification());
+    document.getElementById('retry-revoke-btn').addEventListener('click', retryRemoveVerification);
     document.getElementById('lookup-btn').addEventListener('click', doLookup);
 
     // Start-up: a returning sign-in is handled first, before any signer is

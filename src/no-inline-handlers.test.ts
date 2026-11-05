@@ -37,6 +37,7 @@ const BUTTONS: Array<[string, string]> = [
   ['load-links-btn', 'loadLinkedVerifications'],
   ['remove-cancel-btn', 'cancelRemove'],
   ['remove-confirm-btn', 'executeRemoveVerification'],
+  ['retry-revoke-btn', 'retryRemoveVerification'],
   ['lookup-btn', 'doLookup'],
 ]
 
@@ -86,7 +87,7 @@ describe('pages carry no inline handlers', () => {
     expect(hasInlineHandler('<div data-x=">" class="a">')).toBe(false)
   })
 
-  it('the main page has each of the four buttons, once', async () => {
+  it('the main page has each wired button once', async () => {
     const html = await mainPage()
     for (const [id] of BUTTONS) expect(html.split(`id="${id}"`).length - 1).toBe(1)
   })
