@@ -68,6 +68,29 @@ describe('GET /platforms (mobile verifier_platform.dart)', () => {
     })
   })
 
+  // mobile divinevideo/divine-mobile#10726 verifier_platform.dart: signin_expires_after_days is the
+  // length of a sign-in link, shown where sign-in is offered. The verifier sends it, as a
+  // positive integer, only where oauth is true; it is absent where oauth is false and on
+  // platforms without sign-in.
+  describe('T2.8 reports signin_expires_after_days only where sign-in is on', () => {
+    it.each(Object.keys(SIGNIN_SETUPS) as SignInPlatform[])('%s', async (platform) => {
+      const on = (await platformsFor(SIGNIN_SETUPS[platform].on))[platform]
+      expect(on.oauth, 'on').toBe(true)
+      expect(Number.isInteger(on.signin_expires_after_days), 'on days').toBe(true)
+      expect(on.signin_expires_after_days as number).toBeGreaterThan(0)
+      const off = (await platformsFor(SIGNIN_SETUPS[platform].off))[platform]
+      expect(off.oauth, 'off').toBe(false)
+      expect('signin_expires_after_days' in off, 'off days').toBe(false)
+    })
+
+    it('leaves it off platforms without sign-in', async () => {
+      const platforms = await platformsFor({ ...SIGNIN_SETUPS.twitter.on, DISCORD_BOT_TOKEN: 'synthetic-token' })
+      for (const key of ['github', 'mastodon', 'telegram', 'discord']) {
+        expect('signin_expires_after_days' in platforms[key], key).toBe(false)
+      }
+    })
+  })
+
   // mobile 1.0.26 verifier_platform.dart: a missing oauth reads as "sign-in available",
   // so every sign-in platform must state it explicitly, in both configured and unconfigured setups.
   it('T2.3 gives every sign-in platform a boolean oauth', async () => {

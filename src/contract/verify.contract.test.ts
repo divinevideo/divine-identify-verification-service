@@ -114,7 +114,8 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
 
   // mobile 1.0.24-1.0.27 (same files as above): any code but temporarily_unavailable makes
   // verified false a definite no, so a known-good claim loses its badge. A sign-in link that
-  // no longer counts must be that. No app reads which code it is, so only that is pinned.
+  // no longer counts must be that. mobile divinevideo/divine-mobile#10726 reads the exact string
+  // signin_expired to offer "Sign in again"; an absent or unknown code reads as "not verified".
   it('T1.2 answers a sign-in link with no counted record as a definite no', async () => {
     const { env } = verifyEnv()
     const out = await results(await call(target, 'POST', '/verify', {
@@ -122,12 +123,12 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
     }, env))
     expect(out).toHaveLength(1)
     expectAppShape(out[0])
-    expect(out[0]).toMatchObject({ platform: 'twitter', identity: '@Synthetic-Lapsed', verified: false })
-    expect(out[0].code).not.toBe('temporarily_unavailable')
+    expect(out[0]).toMatchObject({ platform: 'twitter', identity: '@Synthetic-Lapsed', verified: false, code: 'signin_expired' })
   })
 
   // mobile 1.0.24-1.0.27 (same files as above): a Bluesky handle that now points to another
-  // account is a definite no, not a retry.
+  // account is a definite no, not a retry. mobile divinevideo/divine-mobile#10726 reads the exact
+  // string signin_account_changed to offer "Sign in again".
   it('T1.2 answers a signed-in Bluesky handle that now points elsewhere as a definite no', async () => {
     const { env } = verifyEnv()
     await seedBlueskySignIn(env, 'synthetic.bsky.social', 'did:plc:syntheticlinked')
@@ -138,8 +139,7 @@ describe('POST /verify (mobile verifier_client.dart)', () => {
     }, env))
     expect(out).toHaveLength(1)
     expectAppShape(out[0])
-    expect(out[0]).toMatchObject({ platform: 'bluesky', identity: 'synthetic.bsky.social', verified: false })
-    expect(out[0].code).not.toBe('temporarily_unavailable')
+    expect(out[0]).toMatchObject({ platform: 'bluesky', identity: 'synthetic.bsky.social', verified: false, code: 'signin_account_changed' })
   })
 
   // mobile 1.0.26 identity_claims_repository.dart: results are matched on
@@ -233,6 +233,27 @@ for (const path of ['/verify/single', '/api/verify']) {
       const result = await response.json() as Record<string, unknown>
       expect(result).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
       expectAppShape(result)
+    })
+
+    // mobile divinevideo/divine-mobile#10726: the same exact strings as in the batch, from the single endpoint.
+    it('T1.10 answers a sign-in link with no counted record as signin_expired', async () => {
+      const { env } = verifyEnv()
+      const response = await call(target, 'POST', path, { platform: 'twitter', identity: '@Synthetic-Lapsed', proof: 'oauth', pubkey: PUBKEY }, env)
+      expect(response.status).toBe(200)
+      const result = await response.json() as Record<string, unknown>
+      expectAppShape(result)
+      expect(result).toMatchObject({ verified: false, code: 'signin_expired' })
+    })
+
+    it('T1.10 answers a signed-in Bluesky handle that now points elsewhere as signin_account_changed', async () => {
+      const { env } = verifyEnv()
+      await seedBlueskySignIn(env, 'synthetic.bsky.social', 'did:plc:syntheticlinked')
+      blueskyResolvesTo('did:plc:syntheticother')
+      const response = await call(target, 'POST', path, { platform: 'bluesky', identity: 'synthetic.bsky.social', proof: '', pubkey: PUBKEY }, env)
+      expect(response.status).toBe(200)
+      const result = await response.json() as Record<string, unknown>
+      expectAppShape(result)
+      expect(result).toMatchObject({ verified: false, code: 'signin_account_changed' })
     })
 
     // mobile 1.0.26-1.0.27 verify_connect_cubit.dart: verified true is the connect flow's success, and the
