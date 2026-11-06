@@ -7,6 +7,7 @@ import { oauthVerificationKey } from '../oauth/state'
 import { DIVINE_RELAY } from '../verified/linked-accounts'
 import { cacheKey, putCached } from '../utils/cache'
 import { hexToNpub } from '../utils/npub'
+import { MAX_RELAY_EVENTS } from '../utils/relay'
 import { MAX_LIST_CLAIMS, MAX_LOOKUP_CANDIDATES, MAX_LOOKUP_UNITS_PER_CANDIDATE } from './verified'
 import type { Bindings } from '../types'
 import type { SignedNostrEvent } from '../utils/nostr-event'
@@ -439,7 +440,8 @@ describe('GET /verified?platform=&identity=', () => {
       relaysWith(lists)
       expect(MAX_LIST_CLAIMS).toBe(20)
       const res = await get(env, `/verified?platform=bluesky&identity=${handle}`)
-      expect(res.status).toBe(404)
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual(UNAVAILABLE)
     })
 
     it('stops at the first tag that does not fit in the checks left, across candidates', async () => {
@@ -465,7 +467,8 @@ describe('GET /verified?platform=&identity=', () => {
       }
       relaysWith(lists)
       const res = await get(env, `/verified?platform=bluesky&identity=${handle}`)
-      expect(res.status).toBe(404)
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual(UNAVAILABLE)
     })
 
     it('makes at most 20 platform checks however many candidates have alias tags', async () => {
@@ -492,6 +495,39 @@ describe('GET /verified?platform=&identity=', () => {
         signedList(tags(c), secretFor(0x41 + c), 1_700_000_100 - c)))
     }
 
+    it('reports unknown when another relay candidate was omitted', async () => {
+      const { env, kv } = envWith()
+      const lists = await candidateLists(MAX_LOOKUP_CANDIDATES + 1, () => [['i', 'github:alice', 'p1']])
+      for (const [i, list] of lists.entries()) {
+        await seedProof(kv, 'github', 'alice', 'p1', list.pubkey,
+          i === MAX_LOOKUP_CANDIDATES ? {} : { verified: false, type: 'failed', code: 'proof_not_found' })
+      }
+      relaysWith(lists)
+      const res = await get(env, '/verified?platform=github&identity=alice')
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual(UNAVAILABLE)
+    })
+
+    it('reports unknown when the sign-in key page is incomplete', async () => {
+      const { env, kv } = envWith()
+      const cache = { ...kv, list: async () => ({ keys: [], list_complete: false, cursor: 'next', cacheStatus: null }) } as unknown as KVNamespace
+      relaysWith([])
+      const res = await get({ ...env, CACHE_KV: cache }, '/verified?platform=twitter&identity=jack')
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual(UNAVAILABLE)
+    })
+
+    it('reports unknown when a relay fills its event cap', async () => {
+      const { env, kv } = envWith()
+      const events = await Promise.all(Array.from({ length: MAX_RELAY_EVENTS }, (_, i) =>
+        signedList([['i', 'github:alice', 'p1']], SECRET, 1_700_000_000 + i)))
+      await seedProof(kv, 'github', 'alice', 'p1', PK, { verified: false, type: 'failed', code: 'proof_not_found' })
+      relaysWith(events)
+      const res = await get(env, '/verified?platform=github&identity=alice')
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual(UNAVAILABLE)
+    })
+
     it('makes at most 20 platform checks across 10 candidates with 20 tags each', async () => {
       const { env } = envWith()
       const lists = await candidateLists(MAX_LOOKUP_CANDIDATES, c =>
@@ -502,7 +538,7 @@ describe('GET /verified?platform=&identity=', () => {
         return new Response('not found', { status: 404 })
       }) as typeof fetch)
       const res = await get(env, '/verified?platform=github&identity=alice')
-      expect(res.status).toBe(404)
+      expect(res.status).toBe(503)
       expect(checks.length).toBeGreaterThan(0)
       expect(checks.length).toBeLessThanOrEqual(MAX_LIST_CLAIMS)
     })
@@ -535,8 +571,8 @@ describe('GET /verified?platform=&identity=', () => {
       relaysWith([await signedList([['i', 'github:alice', 'p1'], ['i', 'github:alice', 'p2'], ['i', 'github:alice', 'p3']])])
       expect(MAX_LOOKUP_UNITS_PER_CANDIDATE).toBe(2)
       const res = await get(env, '/verified?platform=github&identity=alice')
-      expect(res.status).toBe(404)
-      expect(await res.json()).toEqual(NOT_FOUND)
+      expect(res.status).toBe(503)
+      expect(await res.json()).toMatchObject({ error: { code: 'temporarily_unavailable' } })
     })
 
     it("does not verify a tag past the ones the person's own answer checks", async () => {
@@ -545,8 +581,8 @@ describe('GET /verified?platform=&identity=', () => {
       const others = Array.from({ length: MAX_LIST_CLAIMS }, (_, i) => ['i', `github:other${i}`, `q${i}`])
       relaysWith([await signedList([...others, ['i', 'github:alice', 'p1']])])
       const res = await get(env, '/verified?platform=github&identity=alice')
-      expect(res.status).toBe(404)
-      expect(await res.json()).toEqual(NOT_FOUND)
+      expect(res.status).toBe(503)
+      expect(await res.json()).toMatchObject({ error: { code: 'temporarily_unavailable' } })
       // Both endpoints agree: the person's own answer lists the tag as not checked.
       const person = await (await get(env, `/verified/${PK}`)).json() as { verifications: unknown[]; unchecked: unknown[] }
       expect(person.verifications).toEqual([])

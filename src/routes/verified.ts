@@ -132,17 +132,17 @@ interface CandidateOutcome {
  * Pubkeys the verifier holds a sign-in record for under this account, in KV list order.
  * A Bluesky record also names the account's handle and DID, and a list may tag either.
  */
-async function signInCandidates(env: Bindings, platform: Platform, identity: string): Promise<{ pubkeys: string[]; identities: string[] }> {
-  if (!SIGNIN_PLATFORMS.has(platform)) return { pubkeys: [], identities: [] }
+async function signInCandidates(env: Bindings, platform: Platform, identity: string): Promise<{ pubkeys: string[]; identities: string[]; incomplete: boolean }> {
+  if (!SIGNIN_PLATFORMS.has(platform)) return { pubkeys: [], identities: [], incomplete: false }
   const prefix = oauthVerificationKey(platform, identity, '')
   // Only the first few owners are checked, so one page of keys is enough.
-  const { keys } = await env.CACHE_KV.list({ prefix })
+  const { keys, list_complete } = await env.CACHE_KV.list({ prefix })
   // What follows the prefix must be a whole pubkey: a longer account that starts the
   // same, such as a DID with more parts, leaves more than that.
-  const pubkeys = keys
+  const owners = keys
     .map(key => key.name.slice(prefix.length))
     .filter(pubkey => HEX_PUBKEY.test(pubkey))
-    .slice(0, MAX_LOOKUP_CANDIDATES)
+  const pubkeys = owners.slice(0, MAX_LOOKUP_CANDIDATES)
   const identities: string[] = []
   if (platform === 'bluesky') {
     const records = await Promise.all(pubkeys.map(pubkey => getOAuthVerification(env.CACHE_KV, platform, identity, pubkey)))
@@ -150,7 +150,7 @@ async function signInCandidates(env: Bindings, platform: Platform, identity: str
       for (const id of [record?.handle, record?.account_id]) if (typeof id === 'string' && id) identities.push(id)
     }
   }
-  return { pubkeys, identities }
+  return { pubkeys, identities, incomplete: list_complete === false || owners.length > pubkeys.length }
 }
 
 /**
@@ -158,7 +158,7 @@ async function signInCandidates(env: Bindings, platform: Platform, identity: str
  * only names someone to check: its tags may be stale, so their current list decides.
  * `searched` is false when Divine's relay didn't answer, since a miss is then a guess.
  */
-async function relayCandidates(platform: Platform, identities: string[], known: string[], room: number): Promise<{ pubkeys: string[]; searched: boolean }> {
+async function relayCandidates(platform: Platform, identities: string[], known: string[], room: number): Promise<{ pubkeys: string[]; searched: boolean; incomplete: boolean }> {
   const filter = { kinds: [10011, 0], '#i': tagSpellings(platform, identities), limit: MAX_RELAY_EVENTS }
   const answers = await Promise.all(PROFILE_RELAYS.map(relay => queryRelay(relay, [filter]).catch(() => null)))
   const searched = answers[PROFILE_RELAYS.indexOf(DIVINE_RELAY)] !== null
@@ -167,13 +167,20 @@ async function relayCandidates(platform: Platform, identities: string[], known: 
     .filter((event): event is SignedNostrEvent => event !== null)
     .sort((a, b) => b.created_at - a.created_at)
   const found: string[] = []
+  // A full relay answer can hide more owners even when its events repeat one author.
+  let incomplete = answers.some(answer => answer !== null && answer.length >= MAX_RELAY_EVENTS)
   for (const event of events) {
-    if (found.length >= room) break
     if (known.includes(event.pubkey) || found.includes(event.pubkey)) continue
     // Signatures are checked newest first and only until there are enough candidates.
-    if ((await verifyEventSignature(event)).ok) found.push(event.pubkey)
+    if ((await verifyEventSignature(event)).ok) {
+      if (found.length >= room) {
+        incomplete = true
+        break
+      }
+      found.push(event.pubkey)
+    }
   }
-  return { pubkeys: found, searched }
+  return { pubkeys: found, searched, incomplete }
 }
 
 /**
@@ -186,22 +193,22 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
   // tags written the plain way must still be found and matched.
   const identities = [...new Set([identity, tidyIdentity, ...signIns.identities])]
   const room = MAX_LOOKUP_CANDIDATES - signIns.pubkeys.length
-  const search = room > 0 ? await relayCandidates(platform, identities, signIns.pubkeys, room) : { pubkeys: [], searched: true }
+  const search = room > 0 ? await relayCandidates(platform, identities, signIns.pubkeys, room) : { pubkeys: [], searched: false, incomplete: true }
   // Sign-in candidates come first, so they are planned first when the checks run out.
   const candidates = [...signIns.pubkeys, ...search.pubkeys]
 
   const requestKey = accountKey(platform, tidyIdentity)
   const sameAccount = new Set(identities.map(id => accountKey(platform, id)))
+  let incomplete = signIns.incomplete || search.incomplete
 
   // A candidate's tags for the account, in tag order. Each unit is the checks that must
   // all pass for one tag to count.
   function matchingUnits(pubkey: string, event: SignedNostrEvent | null): VerifyClaim[][] {
     const units: VerifyClaim[][] = []
     const seen = new Set<string>()
-    // Only the tags /verified/<pubkey> checks, so a tag past them can't verify here
-    // while that page lists it as not checked.
-    for (const claim of linkedAccountClaims(event, pubkey).slice(0, MAX_LIST_CLAIMS)) {
-      if (units.length >= MAX_LOOKUP_UNITS_PER_CANDIDATE) break
+    // Only check tags /verified/<pubkey> checks; later matching tags still make a
+    // missed owner unknown, as that page lists them as not checked.
+    for (const [index, claim] of linkedAccountClaims(event, pubkey).entries()) {
       const key = accountKey(platform, claim.identity)
       if (claim.platform !== platform || !sameAccount.has(key)) continue
       // A tag naming another spelling of the account, such as the DID for a looked-up
@@ -215,6 +222,10 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
       const unitKey = `${unit.length}|${claim.identity}|${claim.proof}`
       if (seen.has(unitKey)) continue
       seen.add(unitKey)
+      if (index >= MAX_LIST_CLAIMS || units.length >= MAX_LOOKUP_UNITS_PER_CANDIDATE) {
+        incomplete = true
+        continue
+      }
       units.push(unit)
     }
     return units
@@ -240,8 +251,8 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
   // Every check can ask a platform, so one lookup makes no more checks than one
   // /verified/<pubkey> answer does, however many candidates it has. They are shared out
   // in candidate order before any runs; a tag checked twice uses two, and the planning
-  // stops at the first unit that doesn't fit, as the per-list cap does. A candidate left
-  // without checks is not found rather than try-later, as a tag past that cap is.
+  // stops at the first unit that doesn't fit, as the per-list cap does. Omitted checks
+  // leave absence unknown, not a definitive not-found answer.
   // A null plan is a candidate who counts as couldn't-check without any checks.
   let budget = MAX_LIST_CLAIMS
   let spent = false
@@ -258,6 +269,7 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
     const planned: VerifyClaim[][] = []
     for (const unit of units) {
       if (spent || unit.length > budget) {
+        incomplete = true
         spent = true
         break
       }
@@ -279,7 +291,7 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
   }))
 
   let best: { pubkey: string; claim: VerifyClaim; result: VerifyResult } | null = null
-  let unavailable = !search.searched
+  let unavailable = !search.searched || incomplete
   for (const [i, outcome] of outcomes.entries()) {
     if (!outcome || outcome.unavailable) unavailable = true
     for (const { claim, result } of outcome?.verified ?? []) {
