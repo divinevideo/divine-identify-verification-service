@@ -62,7 +62,7 @@ async function rememberResult(env: Bindings, key: string, platform: string, entr
   }
 }
 
-async function verifySingleClaim(
+export async function verifySingleClaim(
   claim: VerifyClaim,
   env: Bindings,
   clientIp: string

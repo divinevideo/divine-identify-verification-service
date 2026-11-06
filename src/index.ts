@@ -4,6 +4,7 @@ import { getCookie, setCookie } from 'hono/cookie'
 import type { Bindings } from './types'
 import health from './routes/health'
 import platforms from './routes/platforms'
+import { verified } from './routes/verified'
 import verify, { MAX_BATCH_SIZE } from './routes/verify'
 import nip05 from './routes/nip05'
 import auth from './routes/auth'
@@ -40,6 +41,7 @@ app.use('*', cors({
 app.route('/health', health)
 app.route('/platforms', platforms)
 app.route('/verify', verify)
+app.route('/verified', verified)
 app.route('/nip05', nip05)
 app.route('/auth', auth)
 
