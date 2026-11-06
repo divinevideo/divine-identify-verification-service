@@ -44,8 +44,21 @@ describe('GET /docs', () => {
 
   it('documents the old names, the limits and the error codes', async () => {
     const html = await (await get('/docs')).text()
-    for (const text of ['identity_link', 'oauth', 'temporarily_unavailable', 'invalid_pubkey', 'invalid_request', 'not_found', 'rate_limited', 'proof_url']) {
-      expect(html).toContain(text)
+    // Read within the section: oauth, invalid_request and temporarily_unavailable
+    // also appear in the other sections, so the whole page would pass without it.
+    const start = html.indexOf('<section id="verified-api">')
+    expect(start).toBeGreaterThan(-1)
+    const section = html.slice(start, html.indexOf('</section>', start))
+    for (const text of [
+      '<code>x</code>', '<code>proof-post</code>', '<code>oauth</code>', '<code>identity_link</code>',
+      '<code>proof_url</code>', '<code>unchecked</code>', 'at most 10 candidates', 'the limit of 20 links checked per list',
+      '<tr><td><code>invalid_pubkey</code></td><td>400</td>',
+      '<tr><td><code>invalid_request</code></td><td>400</td>',
+      '<tr><td><code>not_found</code></td><td>404</td>',
+      '<tr><td><code>rate_limited</code></td><td>429</td>',
+      '<tr><td><code>temporarily_unavailable</code></td><td>503</td>',
+    ]) {
+      expect(section, text).toContain(text)
     }
     expect(html).toContain('<tr><td><code>/verified</code></td>')
   })
