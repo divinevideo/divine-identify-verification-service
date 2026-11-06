@@ -229,7 +229,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         <tr><td><code>method</code></td><td>string</td><td><code>proof-post</code> (a post that carries the npub), <code>oauth</code> (a confirmed sign-in), or <code>identity_link</code> (Bluesky's identity-link record, which the old host had no name for)</td></tr>
         <tr><td><code>verified_at</code></td><td>number</td><td>Unix timestamp in seconds</td></tr>
         <tr><td><code>proof_url</code></td><td>string or null</td><td>A full link to the proof post. <code>null</code> when there is no post to link to, as for sign-ins and identity-link records. verify.divine.video returned the raw proof value here, so callers that built their own link from it should use this link as is.</td></tr>
-        <tr><td><code>unchecked</code></td><td>array</td><td><code>{ "platform", "identity" }</code> for links that could not be checked right now: a platform outage, a time limit, or the limit of 20 links checked per list. Treat these as unknown, not as removed.</td></tr>
+        <tr><td><code>unchecked</code></td><td>array</td><td><code>{ "platform", "identity" }</code> for links that could not be checked right now: a platform outage or time limit, the per-person or per-platform check limit, or the limit of 20 links checked per list. Treat these as unknown, not as removed.</td></tr>
       </table>
 
       <h3>GET /verified?platform=&amp;identity=: Who Owns an Account</h3>
@@ -252,8 +252,8 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
       <table>
         <tr><th>Code</th><th>Status</th><th>Meaning</th></tr>
         <tr><td><code>invalid_pubkey</code></td><td>400</td><td>The pubkey is not 64 hex characters</td></tr>
-        <tr><td><code>invalid_request</code></td><td>400</td><td><code>platform</code> and <code>identity</code> are both required</td></tr>
-        <tr><td><code>not_found</code></td><td>404</td><td>No one verifies this account right now, or the platform is not one this verifier supports or the identity can't be checked</td></tr>
+        <tr><td><code>invalid_request</code></td><td>400</td><td><code>platform</code> or <code>identity</code> is missing, or <code>platform</code> is not a platform name either host knows</td></tr>
+        <tr><td><code>not_found</code></td><td>404</td><td>No one verifies this account right now, the identity can't be checked, or the platform is one verify.divine.video listed that this verifier doesn't check (<code>instagram</code>, <code>snapchat</code>)</td></tr>
         <tr><td><code>rate_limited</code></td><td>429</td><td>The per-IP limit is spent; see Rate Limits below</td></tr>
         <tr><td><code>temporarily_unavailable</code></td><td>503</td><td>Try again shortly. For <code>/verified/:pubkey</code>, Divine's relay could not be read. For the lookup, no owner checked out and something could not be checked.</td></tr>
       </table>

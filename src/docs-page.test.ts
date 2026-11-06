@@ -49,6 +49,17 @@ describe('GET /docs', () => {
     }
     expect(html).toContain('<tr><td><code>/verified</code></td>')
   })
+
+  it('says an unknown platform is a 400 and one only the old host listed is a 404', async () => {
+    const html = await (await get('/docs')).text()
+    expect(html).toContain('<tr><td><code>invalid_request</code></td><td>400</td><td><code>platform</code> or <code>identity</code> is missing, or <code>platform</code> is not a platform name either host knows</td></tr>')
+    expect(html).toContain("the platform is one verify.divine.video listed that this verifier doesn't check (<code>instagram</code>, <code>snapchat</code>)</td></tr>")
+  })
+
+  it('says a check limit can leave a link unchecked', async () => {
+    const html = await (await get('/docs')).text()
+    expect(html).toContain('a platform outage or time limit, the per-person or per-platform check limit, or the limit of 20 links checked per list')
+  })
 })
 
 describe('landing page after the move', () => {
