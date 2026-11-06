@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { proofUrl, renderVerifyHtml } from './verify'
+import { proofUrl, renderVerifyHtml, storageForm } from './verify'
 import { MESSAGE_LINK_HOSTS } from '../platforms/discord'
-import type { VerifyResult } from '../types'
+import { fitsStorageKeys } from '../utils/validation'
+import { tidyClaim } from '../utils/tidy-claim'
+import type { VerifyClaim, VerifyResult } from '../types'
 
 const FAKE_RESULT: VerifyResult = {
   platform: 'discord',
@@ -223,5 +225,36 @@ describe('Mastodon proof link on the verification-link page', () => {
       'test-nonce',
     )
     expect(html).toContain('href="https://social.example.com/statuses/109876543210"')
+  })
+})
+
+describe('storageForm', () => {
+  const PUBKEY = 'ab'.repeat(32)
+  const fitsAsSent = (c: VerifyClaim) => fitsStorageKeys(c.platform, c.identity, c.proof, c.pubkey)
+  const fitsTidied = (c: VerifyClaim) => {
+    const tidy = tidyClaim(c.platform, c.identity, c.proof)
+    return fitsStorageKeys(c.platform, tidy.identity, tidy.proof, c.pubkey)
+  }
+
+  it('checks a long pasted proof by its tidy form', () => {
+    const claim: VerifyClaim = {
+      platform: 'youtube',
+      identity: '@alice',
+      proof: `https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=${'1'.repeat(460)}`,
+      pubkey: PUBKEY.toUpperCase(),
+    }
+    expect(fitsAsSent(claim)).toBe(false)
+    expect(storageForm(claim)).toEqual({ platform: 'youtube', identity: '@alice', proof: 'dQw4w9WgXcQ', pubkey: PUBKEY })
+  })
+
+  it('checks a claim as sent when its tidy form would not fit', () => {
+    // Tidied, the channel in the proof becomes the account and the key grows past the limit.
+    const claim: VerifyClaim = { platform: 'telegram', identity: 's', proof: `s/${'a'.repeat(32)}/${'1'.repeat(395)}`, pubkey: PUBKEY }
+    expect(fitsTidied(claim)).toBe(false)
+    expect(storageForm(claim)).toEqual(claim)
+  })
+
+  it('is null when neither form fits', () => {
+    expect(storageForm({ platform: 'github', identity: 'alice', proof: 'b'.repeat(500), pubkey: PUBKEY })).toBeNull()
   })
 })

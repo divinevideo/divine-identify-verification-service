@@ -3,7 +3,7 @@ import { schnorr } from '@noble/curves/secp256k1.js'
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js'
 import { fakeRelays, type FakeRelay } from '../contract/harness'
 import type { SignedNostrEvent } from '../utils/nostr-event'
-import { DIVINE_RELAY, linkedAccountClaims, readLinkedAccounts } from './linked-accounts'
+import { DIVINE_RELAY, linkedAccountClaims, readLinkedAccounts, readLinkedAccountsOf } from './linked-accounts'
 
 const SECRET = hexToBytes('11'.repeat(32))
 const OTHER_SECRET = hexToBytes('22'.repeat(32))
@@ -90,6 +90,76 @@ describe('readLinkedAccounts', () => {
         { kinds: [0], authors: [PK], limit: 1 },
       ]])
     }
+  })
+})
+
+describe('readLinkedAccountsOf', () => {
+  const OTHER_PK = bytesToHex(schnorr.getPublicKey(OTHER_SECRET))
+  const forge = (e: SignedNostrEvent): SignedNostrEvent => ({ ...e, sig: e.sig.replace(/^./, c => (c === '0' ? '1' : '0')) })
+
+  it('reads two people in one request per relay', async () => {
+    const mine = await signed(10011, [tag('github')], 100)
+    const theirs = await signed(10011, [tag('twitter')], 100, OTHER_SECRET)
+    const relays = [relay(DIVINE_RELAY, [mine, theirs]), relay(DAMUS), relay(PRIMAL)]
+    fakeRelays(relays)
+    const reads = await readLinkedAccountsOf([PK, OTHER_PK])
+    expect(reads.get(PK)).toEqual({ read: true, event: mine })
+    expect(reads.get(OTHER_PK)).toEqual({ read: true, event: theirs })
+    for (const r of relays) {
+      expect(r.seenFilters).toEqual([[
+        { kinds: [10011], authors: [PK, OTHER_PK], limit: 2 },
+        { kinds: [0], authors: [PK, OTHER_PK], limit: 2 },
+      ]])
+    }
+  })
+
+  it('keeps the newest copy for each person', async () => {
+    const myOlder = await signed(10011, [tag('github')], 100)
+    const myNewer = await signed(10011, [tag('twitter')], 200)
+    const theirNewer = await signed(10011, [tag('github')], 300, OTHER_SECRET)
+    const theirOlder = await signed(10011, [tag('twitter')], 50, OTHER_SECRET)
+    fakeRelays([relay(DIVINE_RELAY, [myOlder, theirNewer]), relay(DAMUS, [myNewer, theirOlder]), relay(PRIMAL)])
+    const reads = await readLinkedAccountsOf([PK, OTHER_PK])
+    expect(reads.get(PK)?.event).toEqual(myNewer)
+    expect(reads.get(OTHER_PK)?.event).toEqual(theirNewer)
+  })
+
+  it("leaves only that person unread when Divine sends them an event that fails", async () => {
+    const mine = await signed(10011, [tag('github')], 100)
+    const theirs = forge(await signed(10011, [tag('twitter')], 100, OTHER_SECRET))
+    fakeRelays([relay(DIVINE_RELAY, [mine, theirs]), relay(DAMUS), relay(PRIMAL)])
+    const reads = await readLinkedAccountsOf([PK, OTHER_PK])
+    expect(reads.get(PK)).toEqual({ read: true, event: mine })
+    expect(reads.get(OTHER_PK)).toEqual({ read: false, event: null })
+  })
+
+  it("leaves everyone unread when Divine sends an event that can't be pinned on anyone", async () => {
+    const mine = await signed(10011, [tag('github')], 100)
+    const theirs = await signed(10011, [tag('twitter')], 100, OTHER_SECRET)
+    // Matches the profile filter but has no valid shape, so no author can be trusted from it.
+    const junk = { pubkey: PK, kind: 0, tags: [], created_at: 'soon' }
+    fakeRelays([relay(DIVINE_RELAY, [mine, theirs, junk]), relay(DAMUS), relay(PRIMAL)])
+    const reads = await readLinkedAccountsOf([PK, OTHER_PK])
+    expect(reads.get(PK)?.read).toBe(false)
+    expect(reads.get(OTHER_PK)?.read).toBe(false)
+  })
+
+  it("leaves unread anyone a full answer from Divine may have left out", async () => {
+    // Two copies of my list fill the shared limit of 2, so Divine's answer can't show theirs.
+    const myOlder = await signed(10011, [tag('github')], 200)
+    const myNewer = await signed(10011, [tag('twitter')], 300)
+    const theirs = await signed(10011, [tag('github')], 100, OTHER_SECRET)
+    fakeRelays([relay(DIVINE_RELAY, [myOlder, myNewer, theirs]), relay(DAMUS), relay(PRIMAL)])
+    const reads = await readLinkedAccountsOf([PK, OTHER_PK])
+    expect(reads.get(PK)).toEqual({ read: true, event: myNewer })
+    expect(reads.get(OTHER_PK)?.read).toBe(false)
+  })
+
+  it('reads no one when asked about no one', async () => {
+    const relays = [relay(DIVINE_RELAY), relay(DAMUS), relay(PRIMAL)]
+    fakeRelays(relays)
+    expect((await readLinkedAccountsOf([])).size).toBe(0)
+    expect(relays.every(r => r.seenFilters.length === 0)).toBe(true)
   })
 })
 

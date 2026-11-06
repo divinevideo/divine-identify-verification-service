@@ -12,10 +12,9 @@ function newerEvent(a: SignedNostrEvent | null, b: SignedNostrEvent): SignedNost
   return b.created_at > a.created_at || (b.created_at === a.created_at && b.id < a.id) ? b : a
 }
 
-async function usableEvent(raw: unknown, pubkey: string): Promise<SignedNostrEvent | null> {
-  const event = asSignedEvent(raw, [0, 10011])
-  if (!event || event.pubkey !== pubkey) return null
-  return (await verifyEventSignature(event)).ok ? event : null
+export interface LinkedAccountsRead {
+  read: boolean
+  event: SignedNostrEvent | null
 }
 
 /**
@@ -25,24 +24,72 @@ async function usableEvent(raw: unknown, pubkey: string): Promise<SignedNostrEve
  * Divine's relay answered and everything it sent passed the checks; the other relays can
  * supply a newer copy but can't stand in for it.
  */
-export async function readLinkedAccounts(pubkey: string): Promise<{ read: boolean; event: SignedNostrEvent | null }> {
-  const filters = [{ kinds: [10011], authors: [pubkey], limit: 1 }, { kinds: [0], authors: [pubkey], limit: 1 }]
+export async function readLinkedAccounts(pubkey: string): Promise<LinkedAccountsRead> {
+  return (await readLinkedAccountsOf([pubkey])).get(pubkey) ?? { read: false, event: null }
+}
+
+/**
+ * readLinkedAccounts for several people in one REQ per relay, so a lookup holds three
+ * connections rather than three per person. Both kinds are replaceable, so each filter's
+ * limit is the number of people asked about; a relay that keeps old copies can still fill
+ * it. A pubkey is read only when Divine's relay answered and every event it sent for that
+ * pubkey passed the checks. A failing event that names no requested pubkey can't be pinned
+ * on anyone, so it leaves every pubkey unread. When Divine's answer for a kind fills the
+ * limit, anyone with none of that kind in it may have been left out, so they are unread.
+ */
+export async function readLinkedAccountsOf(pubkeys: string[]): Promise<Map<string, LinkedAccountsRead>> {
+  const wanted = new Set(pubkeys)
+  const reads = new Map<string, LinkedAccountsRead>()
+  for (const pubkey of wanted) reads.set(pubkey, { read: false, event: null })
+  if (wanted.size === 0) return reads
+
+  const authors = [...wanted]
+  const filters = [{ kinds: [10011], authors, limit: authors.length }, { kinds: [0], authors, limit: authors.length }]
   const answers = await Promise.all(PROFILE_RELAYS.map(relay => queryRelay(relay, filters).catch(() => null)))
-  let read = false
-  let identityEvent: SignedNostrEvent | null = null
-  let profile: SignedNostrEvent | null = null
+  let divineAnswered = false
+  let divineUnattributable = false
+  const divineFailed = new Set<string>()
+  const divineKinds = new Map<number, Set<string>>([[10011, new Set()], [0, new Set()]])
+  const divineShaped = new Map<number, number>()
+  const identityEvents = new Map<string, SignedNostrEvent>()
+  const profiles = new Map<string, SignedNostrEvent>()
   for (let i = 0; i < answers.length; i++) {
     const answer = answers[i]
     if (!answer) continue
-    const checked = await Promise.all(answer.map(raw => usableEvent(raw, pubkey)))
-    const usable = checked.filter((e): e is SignedNostrEvent => e !== null)
-    if (PROFILE_RELAYS[i] === DIVINE_RELAY) read = usable.length === answer.length
-    for (const e of usable) {
-      if (e.kind === 10011) identityEvent = newerEvent(identityEvent, e)
-      else profile = newerEvent(profile, e)
+    const fromDivine = PROFILE_RELAYS[i] === DIVINE_RELAY
+    if (fromDivine) divineAnswered = true
+    const shaped = answer.map(raw => asSignedEvent(raw, [0, 10011]))
+    if (fromDivine) {
+      for (const event of shaped) {
+        if (!event) continue
+        divineShaped.set(event.kind, (divineShaped.get(event.kind) ?? 0) + 1)
+        divineKinds.get(event.kind)?.add(event.pubkey)
+      }
     }
+    const signed = await Promise.all(shaped.map(e => (e && wanted.has(e.pubkey) ? verifyEventSignature(e) : null)))
+    shaped.forEach((event, j) => {
+      if (event && wanted.has(event.pubkey) && signed[j]?.ok) {
+        const newest = event.kind === 10011 ? identityEvents : profiles
+        newest.set(event.pubkey, newerEvent(newest.get(event.pubkey) ?? null, event))
+      } else if (fromDivine) {
+        if (event && wanted.has(event.pubkey)) divineFailed.add(event.pubkey)
+        else divineUnattributable = true
+      }
+    })
   }
-  return { read, event: identityEvent ?? profile }
+  // The limit is shared, so a full answer for a kind may have left someone out: a
+  // person with none of that kind in it can't be told apart from one who has none.
+  for (const [kind, authorsSeen] of divineKinds) {
+    if ((divineShaped.get(kind) ?? 0) < authors.length) continue
+    for (const pubkey of wanted) if (!authorsSeen.has(pubkey)) divineFailed.add(pubkey)
+  }
+  for (const pubkey of wanted) {
+    reads.set(pubkey, {
+      read: divineAnswered && !divineUnattributable && !divineFailed.has(pubkey),
+      event: identityEvents.get(pubkey) ?? profiles.get(pubkey) ?? null,
+    })
+  }
+  return reads
 }
 
 /**
