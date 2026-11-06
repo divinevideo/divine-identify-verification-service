@@ -69,6 +69,12 @@ describe('GET /docs', () => {
     expect(html).toContain("the platform is one verify.divine.video listed that this verifier doesn't check (<code>instagram</code>, <code>snapchat</code>)</td></tr>")
   })
 
+  it('says how letter case affects finding a proof-post owner', async () => {
+    const html = await (await get('/docs')).text()
+    expect(html).toContain('<code>?identity=Alice</code> finds a list tagged <code>Alice</code> or <code>alice</code>, but <code>?identity=alice</code> does not find <code>Alice</code>')
+    expect(html).toContain('Owners who linked by signing in are found in any letter case. YouTube channel IDs (<code>UC…</code>) are case-sensitive either way.')
+  })
+
   it('says a check limit can leave a link unchecked', async () => {
     const html = await (await get('/docs')).text()
     expect(html).toContain('a platform outage or time limit, the per-person or per-platform check limit, or the limit of 20 links checked per list')
