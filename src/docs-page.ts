@@ -234,6 +234,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
 
       <h3>GET /verified?platform=&amp;identity=: Who Owns an Account</h3>
       <p>Finds the person whose list links the account and whose link verifies now. It answers one owner, the most recently verified, chosen from at most 10 candidates. <code>platform</code> accepts <code>x</code> or <code>twitter</code> (any letter case) for Twitter; the answer names it <code>x</code>.</p>
+      <p>This is a bounded, best-effort search, not a complete account index. Relay activity or a long list can keep an owner outside the search and check limits. If no checked owner verifies, that lookup answers <code>503 temporarily_unavailable</code>; repeating the same request need not resolve it. Clients should use bounded retries, keep the result unknown, and not treat it as removal of an existing badge.</p>
       <p>Relays match tags exactly, so for an owner who linked with a proof post, send the account the way their list spells it:<code>?identity=Alice</code> finds a list tagged <code>Alice</code> or <code>alice</code>, but <code>?identity=alice</code> does not find <code>Alice</code>. verify.divine.video ignored letter case here. Owners who linked by signing in are found in any letter case. YouTube channel IDs (<code>UC…</code>) are case-sensitive either way.</p>
       <h4>Request</h4>
       <pre>GET ${origin}/verified?platform=x&amp;identity=example</pre>

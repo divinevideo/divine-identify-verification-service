@@ -69,6 +69,14 @@ describe('GET /docs', () => {
     expect(html).toContain("the platform is one verify.divine.video listed that this verifier doesn't check (<code>instagram</code>, <code>snapchat</code>)</td></tr>")
   })
 
+  it('explains persistent unknown lookup results and bounded retries', async () => {
+    const html = await (await get('/docs')).text()
+    const section = html.slice(html.indexOf('<section id="verified-api">'), html.indexOf('<section id="nip05">'))
+    expect(section).toContain('not a complete account index')
+    expect(section).toContain('repeating the same request need not resolve it')
+    expect(section).toContain('Clients should use bounded retries')
+  })
+
   it('says how letter case affects finding a proof-post owner', async () => {
     const html = await (await get('/docs')).text()
     expect(html).toContain('<code>?identity=Alice</code> finds a list tagged <code>Alice</code> or <code>alice</code>, but <code>?identity=alice</code> does not find <code>Alice</code>')
