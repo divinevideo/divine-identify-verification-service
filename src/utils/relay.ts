@@ -59,7 +59,17 @@ export function queryRelay(
     }
 
     upgrade.then((response) => {
-      if (settled) return
+      if (settled) {
+        // The answer is already given, but a socket that arrives late is still open.
+        try {
+          const late = response.webSocket
+          if (late) {
+            late.accept()
+            late.close()
+          }
+        } catch { /* nothing more to free */ }
+        return
+      }
       const ws = response.status === 101 ? response.webSocket : null
       if (!ws) return fail(`Relay did not upgrade to a WebSocket (status ${response.status})`)
       socket = ws

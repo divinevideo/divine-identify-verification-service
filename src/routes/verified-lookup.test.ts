@@ -7,7 +7,7 @@ import { oauthVerificationKey } from '../oauth/state'
 import { DIVINE_RELAY } from '../verified/linked-accounts'
 import { cacheKey, putCached } from '../utils/cache'
 import { hexToNpub } from '../utils/npub'
-import { MAX_LIST_CLAIMS, MAX_LOOKUP_CANDIDATES } from './verified'
+import { MAX_LIST_CLAIMS, MAX_LOOKUP_CANDIDATES, MAX_LOOKUP_UNITS_PER_CANDIDATE } from './verified'
 import type { Bindings } from '../types'
 import type { SignedNostrEvent } from '../utils/nostr-event'
 
@@ -268,6 +268,21 @@ describe('GET /verified?platform=&identity=', () => {
     expect((await res.json() as { pubkey: string }).pubkey).toBe(PK)
   })
 
+  it("answers a sign-in owner when Divine sends another candidate's profile malformed", async () => {
+    const { env, store } = envWith()
+    seedSignIn(store, 'twitter', 'jack', PK)
+    // OTHER_PK is a relay candidate whose profile has no valid shape but names them.
+    const malformed = { pubkey: OTHER_PK, kind: 0, tags: [['i', 'twitter:jack', 'oauth']], created_at: 'soon' }
+    relaysWith([
+      await signedList([['i', 'twitter:jack', 'oauth']]),
+      await signedList([['i', 'twitter:jack', '1234567890']], OTHER_SECRET),
+      malformed,
+    ])
+    const res = await get(env, '/verified?platform=twitter&identity=jack')
+    expect(res.status).toBe(200)
+    expect((await res.json() as { pubkey: string }).pubkey).toBe(PK)
+  })
+
   it("try later when Divine's relay could not be searched", async () => {
     const { env } = envWith()
     relaysWith([], { behaviour: filters => ((filters as Array<{ authors?: string[] }>)[0].authors ? 'answer' : 'refuse') })
@@ -402,38 +417,140 @@ describe('GET /verified?platform=&identity=', () => {
       expect(await res.json()).toEqual({ platform: 'bluesky', identity: handle, pubkey: PK, method: 'proof-post', verified_at: checkedAt })
     })
 
-    it('uses two of the checks a list is allowed', async () => {
-      const proofs = Array.from({ length: 11 }, (_, i) => `p${i}`)
-      const { env, kv } = await setUp(proofs.map(proof => ['i', `bluesky:${did}`, proof]))
-      for (const proof of proofs.slice(0, 10)) {
-        await seedProof(kv, 'bluesky', did, proof, PK, failed)
-        await seedProof(kv, 'bluesky', handle, proof, PK, failed)
+    // Relay candidates, newest first, each with its own list for the account.
+    async function candidateLists(tagsPerCandidate: string[][][]) {
+      return Promise.all(tagsPerCandidate.map((tags, i) =>
+        signedList(tags, secretFor(0x41 + i), 1_700_000_100 - i)))
+    }
+
+    it("uses two of the lookup's checks", async () => {
+      const { env, kv, store } = envWith()
+      seedSignIn(store, 'bluesky', handle, OTHER_PK, { account_id: did, handle })
+      // Five candidates with two alias tags each use all 20 checks; the sixth would hold.
+      const lists = await candidateLists(Array.from({ length: 6 }, (_, c) =>
+        [0, 1].map(t => ['i', `bluesky:${did}`, `c${c}t${t}`])))
+      for (const [c, list] of lists.entries()) {
+        for (const t of [0, 1]) {
+          const verdict = c === 5 ? {} : failed
+          await seedProof(kv, 'bluesky', did, `c${c}t${t}`, list.pubkey, verdict)
+          await seedProof(kv, 'bluesky', handle, `c${c}t${t}`, list.pubkey, verdict)
+        }
       }
-      // Only the eleventh tag holds, and it needs checks 21 and 22.
-      await seedProof(kv, 'bluesky', did, 'p10', PK)
-      await seedProof(kv, 'bluesky', handle, 'p10', PK)
+      relaysWith(lists)
       expect(MAX_LIST_CLAIMS).toBe(20)
       const res = await get(env, `/verified?platform=bluesky&identity=${handle}`)
       expect(res.status).toBe(404)
     })
 
-    it('stops at the first tag that does not fit in the checks left', async () => {
-      const aliases = Array.from({ length: 10 }, (_, i) => `a${i}`)
-      const { env, kv } = await setUp([
-        ['i', `bluesky:${handle}`, 'd0'],
-        ...aliases.map(proof => ['i', `bluesky:${did}`, proof]),
-        ['i', `bluesky:${handle}`, 'd1'],
+    it('stops at the first tag that does not fit in the checks left, across candidates', async () => {
+      const { env, kv, store } = envWith()
+      seedSignIn(store, 'bluesky', handle, OTHER_PK, { account_id: did, handle })
+      const direct = (proof: string) => ['i', `bluesky:${handle}`, proof]
+      const alias = (proof: string) => ['i', `bluesky:${did}`, proof]
+      // 1 + 4 x 4 + 2 = 19 checks, so the seventh candidate's alias tag needs 2 and the
+      // planning stops there, before the eighth candidate's tag, which would hold.
+      const lists = await candidateLists([
+        [direct('s0')],
+        ...[1, 2, 3, 4].map(c => [alias(`a${c}x`), alias(`a${c}y`)]),
+        [direct('s5x'), direct('s5y')],
+        [alias('a6')],
+        [direct('holds')],
       ])
-      await seedProof(kv, 'bluesky', handle, 'd0', PK, failed)
-      for (const proof of aliases) {
-        await seedProof(kv, 'bluesky', did, proof, PK, failed)
-        await seedProof(kv, 'bluesky', handle, proof, PK, failed)
+      for (const list of lists) {
+        for (const tag of list.tags) {
+          const verdict = tag[2] === 'holds' ? {} : failed
+          await seedProof(kv, 'bluesky', handle, tag[2], list.pubkey, verdict)
+          if (tag[1] === `bluesky:${did}`) await seedProof(kv, 'bluesky', did, tag[2], list.pubkey, verdict)
+        }
       }
-      // 1 + 9 x 2 = 19 checks, so the tenth alias tag needs 2 and the list stops there,
-      // in tag order, before the last tag, which would hold.
-      await seedProof(kv, 'bluesky', handle, 'd1', PK)
+      relaysWith(lists)
       const res = await get(env, `/verified?platform=bluesky&identity=${handle}`)
       expect(res.status).toBe(404)
+    })
+
+    it('makes at most 20 platform checks however many candidates have alias tags', async () => {
+      const { env, store } = envWith()
+      seedSignIn(store, 'bluesky', handle, OTHER_PK, { account_id: did, handle })
+      const lists = await candidateLists(Array.from({ length: 9 }, (_, c) =>
+        Array.from({ length: 20 }, (_, t) => ['i', `bluesky:${did}`, `c${c}t${t}`])))
+      const posts: string[] = []
+      relaysWith(lists, {}, (async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('getPostThread')) posts.push(url)
+        return new Response('{}', { status: 404 })
+      }) as typeof fetch)
+      await get(env, `/verified?platform=bluesky&identity=${handle}`)
+      expect(posts.length).toBeGreaterThan(0)
+      expect(posts.length).toBeLessThanOrEqual(MAX_LIST_CLAIMS)
+    })
+  })
+
+  describe("the lookup's check budget", () => {
+    // Relay candidates, newest first, each with its own list.
+    async function candidateLists(count: number, tags: (c: number) => string[][]) {
+      return Promise.all(Array.from({ length: count }, (_, c) =>
+        signedList(tags(c), secretFor(0x41 + c), 1_700_000_100 - c)))
+    }
+
+    it('makes at most 20 platform checks across 10 candidates with 20 tags each', async () => {
+      const { env } = envWith()
+      const lists = await candidateLists(MAX_LOOKUP_CANDIDATES, c =>
+        Array.from({ length: 20 }, (_, t) => ['i', 'github:alice', `c${c}t${t}`]))
+      const checks: string[] = []
+      relaysWith(lists, {}, (async (input: RequestInfo | URL) => {
+        checks.push(String(input))
+        return new Response('not found', { status: 404 })
+      }) as typeof fetch)
+      const res = await get(env, '/verified?platform=github&identity=alice')
+      expect(res.status).toBe(404)
+      expect(checks.length).toBeGreaterThan(0)
+      expect(checks.length).toBeLessThanOrEqual(MAX_LIST_CLAIMS)
+    })
+
+    it('plans sign-in candidates before relay candidates when the checks run out', async () => {
+      const { env, kv, store } = envWith()
+      const did = 'did:plc:abcdefghijklmnopqrstuvwx'
+      const handle = 'alice.bsky.social'
+      const failed = { verified: false, method: undefined, type: 'failed', code: 'proof_not_found' }
+      const checkedAt = seedSignIn(store, 'bluesky', handle, PK, { account_id: did, handle })
+      // Six relay candidates with two alias tags each would take 24 checks on their own.
+      const lists = await candidateLists(6, c => [0, 1].map(t => ['i', `bluesky:${did}`, `c${c}t${t}`]))
+      for (const [c, list] of lists.entries()) {
+        for (const t of [0, 1]) {
+          await seedProof(kv, 'bluesky', did, `c${c}t${t}`, list.pubkey, failed)
+          await seedProof(kv, 'bluesky', handle, `c${c}t${t}`, list.pubkey, failed)
+        }
+      }
+      relaysWith([await signedList([['i', `bluesky:${handle}`, 'oauth']]), ...lists])
+      const res = await get(env, `/verified?platform=bluesky&identity=${handle}`)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ platform: 'bluesky', identity: handle, pubkey: PK, method: 'oauth', verified_at: checkedAt })
+    })
+
+    it("does not check a candidate's third matching tag", async () => {
+      const { env, kv } = envWith()
+      await seedProof(kv, 'github', 'alice', 'p1', PK, { verified: false, type: 'failed', code: 'proof_not_found' })
+      await seedProof(kv, 'github', 'alice', 'p2', PK, { verified: false, type: 'failed', code: 'proof_not_found' })
+      await seedProof(kv, 'github', 'alice', 'p3', PK)
+      relaysWith([await signedList([['i', 'github:alice', 'p1'], ['i', 'github:alice', 'p2'], ['i', 'github:alice', 'p3']])])
+      expect(MAX_LOOKUP_UNITS_PER_CANDIDATE).toBe(2)
+      const res = await get(env, '/verified?platform=github&identity=alice')
+      expect(res.status).toBe(404)
+      expect(await res.json()).toEqual(NOT_FOUND)
+    })
+
+    it("does not verify a tag past the ones the person's own answer checks", async () => {
+      const { env, kv } = envWith()
+      await seedProof(kv, 'github', 'alice', 'p1')
+      const others = Array.from({ length: MAX_LIST_CLAIMS }, (_, i) => ['i', `github:other${i}`, `q${i}`])
+      relaysWith([await signedList([...others, ['i', 'github:alice', 'p1']])])
+      const res = await get(env, '/verified?platform=github&identity=alice')
+      expect(res.status).toBe(404)
+      expect(await res.json()).toEqual(NOT_FOUND)
+      // Both endpoints agree: the person's own answer lists the tag as not checked.
+      const person = await (await get(env, `/verified/${PK}`)).json() as { verifications: unknown[]; unchecked: unknown[] }
+      expect(person.verifications).toEqual([])
+      expect(person.unchecked).toContainEqual({ platform: 'github', identity: 'alice' })
     })
   })
 

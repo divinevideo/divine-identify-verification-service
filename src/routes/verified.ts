@@ -8,8 +8,7 @@ import type { Bindings, Platform, VerifyClaim, VerifyResult } from '../types'
 import { asSignedEvent, verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
 import { MAX_RELAY_EVENTS, queryRelay } from '../utils/relay'
-import { tidyClaim } from '../utils/tidy-claim'
-import { fitsStorageKeys, validateClaim } from '../utils/validation'
+import { validateClaim } from '../utils/validation'
 import { DIVINE_RELAY, linkedAccountClaims, PROFILE_RELAYS, readLinkedAccounts, readLinkedAccountsOf } from '../verified/linked-accounts'
 import { accountKey, couldNotCheck, oldMethod, oldPlatformName, parseOldPlatform, tagSpellings } from '../verified/names'
 import { proofUrl, SIGNIN_PLATFORMS, storageForm, verifySingleClaim } from './verify'
@@ -23,6 +22,10 @@ export const MAX_LIST_CLAIMS = 20
 // Each candidate costs a read of their list and checks of its claims, so a lookup
 // checks only this many owners, sign-in records first.
 export const MAX_LOOKUP_CANDIDATES = 10
+
+// The checks a lookup makes are shared across its candidates, so each candidate's list
+// gets at most this many matching tags checked, in tag order, leaving checks for the rest.
+export const MAX_LOOKUP_UNITS_PER_CANDIDATE = 2
 
 export interface CheckedLink {
   platform: Platform
@@ -184,17 +187,21 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
   const identities = [...new Set([identity, tidyIdentity, ...signIns.identities])]
   const room = MAX_LOOKUP_CANDIDATES - signIns.pubkeys.length
   const search = room > 0 ? await relayCandidates(platform, identities, signIns.pubkeys, room) : { pubkeys: [], searched: true }
+  // Sign-in candidates come first, so they are planned first when the checks run out.
   const candidates = [...signIns.pubkeys, ...search.pubkeys]
 
   const requestKey = accountKey(platform, tidyIdentity)
   const sameAccount = new Set(identities.map(id => accountKey(platform, id)))
 
-  async function checkCandidate(pubkey: string, event: SignedNostrEvent | null): Promise<CandidateOutcome> {
-    // Each unit is the checks that must all pass for one tag to count.
+  // A candidate's tags for the account, in tag order. Each unit is the checks that must
+  // all pass for one tag to count.
+  function matchingUnits(pubkey: string, event: SignedNostrEvent | null): VerifyClaim[][] {
     const units: VerifyClaim[][] = []
     const seen = new Set<string>()
-    let budget = MAX_LIST_CLAIMS
-    for (const claim of linkedAccountClaims(event, pubkey)) {
+    // Only the tags /verified/<pubkey> checks, so a tag past them can't verify here
+    // while that page lists it as not checked.
+    for (const claim of linkedAccountClaims(event, pubkey).slice(0, MAX_LIST_CLAIMS)) {
+      if (units.length >= MAX_LOOKUP_UNITS_PER_CANDIDATE) break
       const key = accountKey(platform, claim.identity)
       if (claim.platform !== platform || !sameAccount.has(key)) continue
       // A tag naming another spelling of the account, such as the DID for a looked-up
@@ -207,12 +214,13 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
       const unit = key === requestKey ? [claim] : [claim, swapped]
       const unitKey = `${unit.length}|${claim.identity}|${claim.proof}`
       if (seen.has(unitKey)) continue
-      // The cap counts checks, so a tag checked twice uses two.
-      if (unit.length > budget) break
-      budget -= unit.length
       seen.add(unitKey)
       units.push(unit)
     }
+    return units
+  }
+
+  async function checkUnits(units: VerifyClaim[][]): Promise<CandidateOutcome> {
     const results = await Promise.all(units.map(unit => Promise.all(unit.map(claim => verifySingleClaim(claim, env, clientIp)))))
     const outcome: CandidateOutcome = { verified: [], unavailable: false }
     results.forEach((unitResults, u) => {
@@ -228,11 +236,41 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
   }
 
   const lists = await readLinkedAccountsOf(candidates)
-  const outcomes = await Promise.all(candidates.map(async (pubkey) => {
+
+  // Every check can ask a platform, so one lookup makes no more checks than one
+  // /verified/<pubkey> answer does, however many candidates it has. They are shared out
+  // in candidate order before any runs; a tag checked twice uses two, and the planning
+  // stops at the first unit that doesn't fit, as the per-list cap does. A candidate left
+  // without checks is not found rather than try-later, as a tag past that cap is.
+  // A null plan is a candidate who counts as couldn't-check without any checks.
+  let budget = MAX_LIST_CLAIMS
+  let spent = false
+  const plans: Array<VerifyClaim[][] | null> = candidates.map((pubkey) => {
     const list = lists.get(pubkey)
     if (!list?.read) return null
+    let units: VerifyClaim[][]
     try {
-      return await checkCandidate(pubkey, list.event)
+      units = matchingUnits(pubkey, list.event)
+    } catch (err) {
+      console.error('Checking a lookup candidate failed:', err)
+      return null
+    }
+    const planned: VerifyClaim[][] = []
+    for (const unit of units) {
+      if (spent || unit.length > budget) {
+        spent = true
+        break
+      }
+      budget -= unit.length
+      planned.push(unit)
+    }
+    return planned
+  })
+
+  const outcomes = await Promise.all(plans.map(async (units) => {
+    if (!units) return null
+    try {
+      return await checkUnits(units)
     } catch (err) {
       // One candidate's failure leaves the others to answer; it counts as couldn't-check.
       console.error('Checking a lookup candidate failed:', err)
@@ -283,9 +321,8 @@ verified.get('/', async (c) => {
   if (platform === 'not_supported') return notFound()
   // An identity /verify would reject is on no one's list, and may not fit a storage key.
   if (validateClaim({ pubkey: ANY_PUBKEY, platform, identity, proof: SIGNIN_PROOF }, 0)) return notFound()
-  // As /verify does: the tidy form, unless its storage keys wouldn't fit.
-  const tidied = tidyClaim(platform, identity, '').identity
-  const tidyIdentity = fitsStorageKeys(platform, tidied, SIGNIN_PROOF, ANY_PUBKEY) ? tidied : identity
+  // The form /verify checks the account in, with the same fallback when keys won't fit.
+  const tidyIdentity = storageForm({ pubkey: ANY_PUBKEY, platform, identity, proof: SIGNIN_PROOF })?.identity ?? identity
 
   let lookup: Lookup
   try {

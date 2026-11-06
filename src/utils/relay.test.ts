@@ -102,6 +102,20 @@ describe('queryRelay', () => {
     await expect(queryRelay(URL_, filters)).rejects.toThrow('boom')
   })
 
+  it('closes a socket whose upgrade answers after the timeout', async () => {
+    vi.useFakeTimers()
+    let answer: (response: Response) => void = () => {}
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((res) => { answer = res })))
+    const assertion = expect(queryRelay(URL_, filters)).rejects.toThrow(/timed out/)
+    await vi.advanceTimersByTimeAsync(RELAY_TIMEOUT_MS)
+    await assertion
+    const calls: string[] = []
+    const socket = { accept: () => { calls.push('accept') }, close: () => { calls.push('close') }, send: () => { calls.push('send') } }
+    answer({ status: 101, webSocket: socket } as unknown as Response)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls).toEqual(['accept', 'close'])
+  })
+
   it('rejects at the timeout when the upgrade never answers', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('fetch', vi.fn((_u: unknown, init?: RequestInit) => new Promise((_res, rej) => {

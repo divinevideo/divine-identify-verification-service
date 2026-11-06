@@ -33,8 +33,9 @@ export async function readLinkedAccounts(pubkey: string): Promise<LinkedAccounts
  * connections rather than three per person. Both kinds are replaceable, so each filter's
  * limit is the number of people asked about; a relay that keeps old copies can still fill
  * it. A pubkey is read only when Divine's relay answered and every event it sent for that
- * pubkey passed the checks. A failing event that names no requested pubkey can't be pinned
- * on anyone, so it leaves every pubkey unread. When Divine's answer for a kind fills the
+ * pubkey passed the checks. A failing event, even a malformed one, that names a requested
+ * pubkey leaves only that pubkey unread; one that names no requested pubkey can't be
+ * pinned on anyone, so it leaves every pubkey unread. When Divine's answer for a kind fills the
  * limit, anyone with none of that kind in it may have been left out, so they are unread.
  */
 export async function readLinkedAccountsOf(pubkeys: string[]): Promise<Map<string, LinkedAccountsRead>> {
@@ -50,7 +51,7 @@ export async function readLinkedAccountsOf(pubkeys: string[]): Promise<Map<strin
   let divineUnattributable = false
   const divineFailed = new Set<string>()
   const divineKinds = new Map<number, Set<string>>([[10011, new Set()], [0, new Set()]])
-  const divineShaped = new Map<number, number>()
+  const divineSent = new Map<number, number>()
   const identityEvents = new Map<string, SignedNostrEvent>()
   const profiles = new Map<string, SignedNostrEvent>()
   for (let i = 0; i < answers.length; i++) {
@@ -60,11 +61,14 @@ export async function readLinkedAccountsOf(pubkeys: string[]): Promise<Map<strin
     if (fromDivine) divineAnswered = true
     const shaped = answer.map(raw => asSignedEvent(raw, [0, 10011]))
     if (fromDivine) {
-      for (const event of shaped) {
-        if (!event) continue
-        divineShaped.set(event.kind, (divineShaped.get(event.kind) ?? 0) + 1)
-        divineKinds.get(event.kind)?.add(event.pubkey)
-      }
+      shaped.forEach((event, j) => {
+        // A malformed event still used up a filter's limit; one whose kind can't be read
+        // is counted against both, so it can't hide anyone left out.
+        const rawKind = (answer[j] as { kind?: unknown } | null)?.kind
+        const kinds = event ? [event.kind] : rawKind === 0 || rawKind === 10011 ? [rawKind] : [0, 10011]
+        for (const kind of kinds) divineSent.set(kind, (divineSent.get(kind) ?? 0) + 1)
+        if (event) divineKinds.get(event.kind)?.add(event.pubkey)
+      })
     }
     const signed = await Promise.all(shaped.map(e => (e && wanted.has(e.pubkey) ? verifyEventSignature(e) : null)))
     shaped.forEach((event, j) => {
@@ -72,7 +76,10 @@ export async function readLinkedAccountsOf(pubkeys: string[]): Promise<Map<strin
         const newest = event.kind === 10011 ? identityEvents : profiles
         newest.set(event.pubkey, newerEvent(newest.get(event.pubkey) ?? null, event))
       } else if (fromDivine) {
-        if (event && wanted.has(event.pubkey)) divineFailed.add(event.pubkey)
+        // A malformed event can still name whose it is; only that person is then in doubt.
+        const raw = answer[j] as { pubkey?: unknown } | null
+        const named = event?.pubkey ?? (raw && typeof raw === 'object' ? raw.pubkey : undefined)
+        if (typeof named === 'string' && wanted.has(named)) divineFailed.add(named)
         else divineUnattributable = true
       }
     })
@@ -80,7 +87,7 @@ export async function readLinkedAccountsOf(pubkeys: string[]): Promise<Map<strin
   // The limit is shared, so a full answer for a kind may have left someone out: a
   // person with none of that kind in it can't be told apart from one who has none.
   for (const [kind, authorsSeen] of divineKinds) {
-    if ((divineShaped.get(kind) ?? 0) < authors.length) continue
+    if ((divineSent.get(kind) ?? 0) < authors.length) continue
     for (const pubkey of wanted) if (!authorsSeen.has(pubkey)) divineFailed.add(pubkey)
   }
   for (const pubkey of wanted) {

@@ -25,6 +25,26 @@ const tag = (platform: string, proof = '123'): string[] => ['i', `${platform}:so
 
 afterEach(() => { vi.unstubAllGlobals() })
 
+// Relays that send these events whatever the REQ asked for, as a misbehaving relay may,
+// so events no filter would match still arrive.
+function sendRegardless(eventsByRelay: Record<string, unknown[]>): void {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input).replace(/^https:/, 'wss:')
+    const socket = new EventTarget() as EventTarget & { accept(): void; send(m: string): void; close(): void }
+    socket.accept = () => {}
+    socket.close = () => {}
+    socket.send = (message: string) => {
+      const [verb, sub] = JSON.parse(message)
+      if (verb !== 'REQ') return
+      const frames = [...(eventsByRelay[url] ?? []).map(e => ['EVENT', sub, e]), ['EOSE', sub]]
+      for (const frame of frames) {
+        queueMicrotask(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(frame) })))
+      }
+    }
+    return { status: 101, webSocket: socket } as unknown as Response
+  }))
+}
+
 describe('readLinkedAccounts', () => {
   it('takes the newest list across relays', async () => {
     const older = await signed(10011, [tag('github')], 100)
@@ -133,15 +153,44 @@ describe('readLinkedAccountsOf', () => {
     expect(reads.get(OTHER_PK)).toEqual({ read: false, event: null })
   })
 
+  it("leaves only that person unread when Divine sends a malformed event naming them", async () => {
+    const mine = await signed(10011, [tag('github')], 100)
+    const theirs = await signed(10011, [tag('twitter')], 100, OTHER_SECRET)
+    // A profile with no valid shape, but it says whose it is.
+    const malformed = { pubkey: OTHER_PK, kind: 0, tags: [], created_at: 'soon' }
+    fakeRelays([relay(DIVINE_RELAY, [mine, theirs, malformed]), relay(DAMUS), relay(PRIMAL)])
+    const reads = await readLinkedAccountsOf([PK, OTHER_PK])
+    expect(reads.get(PK)).toEqual({ read: true, event: mine })
+    expect(reads.get(OTHER_PK)?.read).toBe(false)
+  })
+
+  it('counts malformed events against the limit they may have filled', async () => {
+    const myProfile = await signed(0, [tag('github')], 100)
+    // Two malformed lists naming them fill the list filter's limit of 2, so my list may
+    // have been left out and my profile can't stand in for it.
+    const malformed = (n: number, kind: unknown) => ({ pubkey: OTHER_PK, kind, tags: [], created_at: `soon${n}` })
+    for (const kinds of [[10011, 10011], ['?', '?']]) {
+      sendRegardless({ [DIVINE_RELAY]: [malformed(1, kinds[0]), malformed(2, kinds[1]), myProfile] })
+      const reads = await readLinkedAccountsOf([PK, OTHER_PK])
+      expect(reads.get(PK)?.read).toBe(false)
+      expect(reads.get(OTHER_PK)?.read).toBe(false)
+    }
+  })
+
   it("leaves everyone unread when Divine sends an event that can't be pinned on anyone", async () => {
     const mine = await signed(10011, [tag('github')], 100)
     const theirs = await signed(10011, [tag('twitter')], 100, OTHER_SECRET)
-    // Matches the profile filter but has no valid shape, so no author can be trusted from it.
-    const junk = { pubkey: PK, kind: 0, tags: [], created_at: 'soon' }
-    fakeRelays([relay(DIVINE_RELAY, [mine, theirs, junk]), relay(DAMUS), relay(PRIMAL)])
-    const reads = await readLinkedAccountsOf([PK, OTHER_PK])
-    expect(reads.get(PK)?.read).toBe(false)
-    expect(reads.get(OTHER_PK)?.read).toBe(false)
+    // Malformed, and naming no one asked about, so no author can be trusted from it.
+    for (const junk of [
+      { kind: 0, tags: [], created_at: 'soon' },
+      { pubkey: 42, kind: 0, tags: [], created_at: 'soon' },
+      { pubkey: 'c'.repeat(64), kind: 0, tags: [], created_at: 'soon' },
+    ]) {
+      sendRegardless({ [DIVINE_RELAY]: [mine, theirs, junk] })
+      const reads = await readLinkedAccountsOf([PK, OTHER_PK])
+      expect(reads.get(PK)?.read).toBe(false)
+      expect(reads.get(OTHER_PK)?.read).toBe(false)
+    }
   })
 
   it("leaves unread anyone a full answer from Divine may have left out", async () => {
