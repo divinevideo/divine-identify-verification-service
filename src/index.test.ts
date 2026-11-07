@@ -51,7 +51,7 @@ describe('verifier health', () => {
   })
 
   it('documents the mode it reports on the page', async () => {
-    const response = await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)
+    const response = await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)
     const html = await response.text()
     expect(html).toContain('<code>signin_confirmation</code>')
   })
@@ -103,6 +103,18 @@ async function homeHtml(
   return response.text()
 }
 
+// The API reference, which lives at /docs. It reads the same environment as the
+// landing page, so the url's origin and the env work the same way here.
+async function docsHtml(
+  url = 'https://verifier.divine.video/',
+  env = {},
+  headers: HeadersInit = {},
+): Promise<string> {
+  const docsUrl = new URL(url)
+  docsUrl.pathname = '/docs'
+  return homeHtml(docsUrl.toString(), env, headers)
+}
+
 function sliceSelect(html: string, id: string): string {
   const start = html.indexOf(`id="${id}"`)
   expect(start).toBeGreaterThan(-1)
@@ -152,20 +164,22 @@ describe('verifier youtube sign-in gating', () => {
 
   it('offers YouTube only as a post link when just its API key is set', async () => {
     const html = await homeHtml('https://verifier.divine.video/', youtubeKeyOnly)
+    const docs = await docsHtml('https://verifier.divine.video/', youtubeKeyOnly)
     expect(sliceSelect(html, 'oauth-platform-select')).not.toContain('value="youtube"')
     expect(sliceSelect(html, 'proof-platform-select')).toContain('value="youtube"')
     expect(pillTargets(html).youtube).toBe('link-with-post')
-    expect(platformTableRow(html, 'youtube')).toContain('<td>No</td>')
-    expect(oauthDocsSection(html)).not.toContain('/auth/youtube/')
+    expect(platformTableRow(docs, 'youtube')).toContain('<td>No</td>')
+    expect(oauthDocsSection(docs)).not.toContain('/auth/youtube/')
     expect(html).toContain('For Bluesky, sign in to it from this page. For Twitter, GitHub, Mastodon, Telegram, Discord, YouTube, and TikTok, post your npub there, then paste the link to that post.')
   })
 
   it('offers YouTube sign-in when it is fully configured', async () => {
     const html = await homeHtml('https://verifier.divine.video/', youtubeSignInConfig)
+    const docs = await docsHtml('https://verifier.divine.video/', youtubeSignInConfig)
     expect(sliceSelect(html, 'oauth-platform-select')).toContain('value="youtube"')
     expect(pillTargets(html).youtube).toBe('quick-connect')
-    expect(platformTableRow(html, 'youtube')).toContain('<td>Yes</td>')
-    expect(oauthDocsSection(html)).toContain('POST https://verifier.divine.video/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}')
+    expect(platformTableRow(docs, 'youtube')).toContain('<td>Yes</td>')
+    expect(oauthDocsSection(docs)).toContain('POST https://verifier.divine.video/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}')
     expect(html).toContain('For Bluesky and YouTube, sign in to it from this page. For Twitter, GitHub, Mastodon, Telegram, Discord, and TikTok, post your npub there, then paste the link to that post.')
   })
 
@@ -276,7 +290,7 @@ describe('verifier tiktok oauth gating', () => {
   })
 
   it('does not advertise TikTok OAuth in the supported-platform table', async () => {
-    const html = await homeHtml()
+    const html = await docsHtml()
     const marker = '<code>tiktok</code>'
     const idx = html.indexOf(marker)
     expect(idx).toBeGreaterThan(-1)
@@ -291,11 +305,11 @@ describe('verifier tiktok oauth gating', () => {
   })
 
   it('documents recognition of existing TikTok OAuth verifications', async () => {
-    expect(await homeHtml()).toContain('Existing TikTok OAuth verifications remain recognized.')
+    expect(await docsHtml()).toContain('Existing TikTok OAuth verifications remain recognized.')
   })
 
   it('documents the platforms endpoint without a TikTok unsupported caveat', async () => {
-    const html = await homeHtml()
+    const html = await docsHtml()
     expect(html).not.toContain('TikTok reports unsupported')
     expect(html).toContain('<p>List platforms currently available to clients. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field')
   })
@@ -303,7 +317,7 @@ describe('verifier tiktok oauth gating', () => {
 
 describe('API docs: what a sign-in return carries', () => {
   it.each(['oauth_error_code', 'cancelled', 'provider_error', 'failed', 'update_required', 'oauth_confirm', 'oauth_verified'])('documents %s', async (name) => {
-    const html = await homeHtml()
+    const html = await docsHtml()
     const start = html.indexOf('<section id="oauth">')
     expect(html.slice(start, html.indexOf('</section>', start))).toContain(`<code>${name}</code>`)
   })
@@ -363,12 +377,12 @@ describe('verifier twitter oauth gating', () => {
   })
 
   it('marks Twitter sign-in as unavailable in the supported-platform table', async () => {
-    expect(platformTableRow(await homeHtml(), 'twitter')).toContain('<td>No</td>')
-    expect(platformTableRow(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig), 'twitter')).toContain('<td>Yes</td>')
+    expect(platformTableRow(await docsHtml(), 'twitter')).toContain('<td>No</td>')
+    expect(platformTableRow(await docsHtml('https://verifier.divine.video/', twitterOAuthConfig), 'twitter')).toContain('<td>Yes</td>')
   })
 
   it('leaves Twitter out of the sign-in API docs when it is not configured', async () => {
-    const html = await homeHtml()
+    const html = await docsHtml()
     const docs = oauthDocsSection(html)
     expect(docs).toContain('<h2>OAuth Verification (Bluesky)</h2>')
     expect(docs).not.toContain('/auth/twitter/')
@@ -378,20 +392,20 @@ describe('verifier twitter oauth gating', () => {
   })
 
   it('documents Twitter sign-in when it is configured', async () => {
-    const docs = oauthDocsSection(await homeHtml('https://verifier.divine.video/', twitterOAuthConfig))
+    const docs = oauthDocsSection(await docsHtml('https://verifier.divine.video/', twitterOAuthConfig))
     expect(docs).toContain('<h2>OAuth Verification (Twitter, Bluesky)</h2>')
     expect(docs).toContain('POST https://verifier.divine.video/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}')
   })
 
   it('documents the sign-in start as a POST with a start check, and the confirm step', async () => {
-    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), { OAUTH_REDIRECT_BASE: 'https://verifier.divine.video', TWITTER_CLIENT_ID: 'x', TWITTER_CLIENT_SECRET: 'y' } as never)).text()
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/docs'), { OAUTH_REDIRECT_BASE: 'https://verifier.divine.video', TWITTER_CLIENT_ID: 'x', TWITTER_CLIENT_SECRET: 'y' } as never)).text()
     expect(html).toContain('POST https://verifier.divine.video/auth/bluesky/start')
     expect(html).toContain('POST https://verifier.divine.video/auth/confirm')
     expect(html).not.toContain('GET https://verifier.divine.video/auth/bluesky/start?')
   })
 
   it('shows the full sign-in start and confirm requests, with their answers and error codes, as the README does', async () => {
-    const docs = oauthDocsSection(await homeHtml())
+    const docs = oauthDocsSection(await docsHtml())
     expect(docs).toContain(`POST https://verifier.divine.video/auth/bluesky/start
 Content-Type: application/json
 
@@ -415,7 +429,7 @@ Content-Type: application/json
   })
 
   it('says how the sign-in returns its code, where the code goes, and when a sign-in counts', async () => {
-    const docs = oauthDocsSection(await homeHtml())
+    const docs = oauthDocsSection(await docsHtml())
     expect(docs).toContain("The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>.")
     expect(docs).toContain('The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.')
     expect(docs).toContain("A sign-in counts only after you confirm it by publishing, and for 30 days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting. A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.")
@@ -423,7 +437,7 @@ Content-Type: application/json
   })
 
   it('documents YouTube and TikTok sign-in starts as POSTs with a start check when they are on', async () => {
-    const docs = oauthDocsSection(await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, ...youtubeSignInConfig, TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }))
+    const docs = oauthDocsSection(await docsHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, ...youtubeSignInConfig, TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }))
     // The other platforms follow the full Bluesky example after a blank line.
     expect(docs).toContain(`secret))&gt;"}\n\nPOST https://verifier.divine.video/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}\nPOST https://verifier.divine.video/auth/youtube/start`)
     expect(docs).toContain('POST https://verifier.divine.video/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}')
@@ -432,7 +446,7 @@ Content-Type: application/json
   })
 
   it('gives the hashing rule for the start check and the binding, as the README does', async () => {
-    const docs = oauthDocsSection(await homeHtml())
+    const docs = oauthDocsSection(await docsHtml())
     expect(docs).toContain(`"start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"`)
     expect(docs).toContain("The new claim's tag carries a fourth value, <code>base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))</code>.")
     expect(docs).toContain('keeps a random start secret (32 random bytes written as 43 base64url characters), sends its hash as <code>start_check</code>')
@@ -734,14 +748,14 @@ describe('how long sign-in links last, on the page', () => {
   })
 
   it('says which /platforms entries include signin_expires_after_days', async () => {
-    const html = await homeHtml()
+    const html = await docsHtml()
     expect(html).toContain('Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts.')
   })
 })
 
 describe('TikTok in the API docs', () => {
   it('lists the proof forms the verifier accepts', async () => {
-    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)).text()
     expect(html).toContain('<td><code>tiktok</code></td><td>Username (without @)</td><td>Video or photo link, share link, or post number</td>')
   })
 
@@ -755,26 +769,26 @@ describe('TikTok in the API docs', () => {
 
 describe('response fields in the API docs', () => {
   it('documents canonical_proof in the response fields', async () => {
-    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)).text()
     expect(html).toContain('<tr><td><code>canonical_proof</code></td><td>string?</td>')
   })
 
   it('documents canonical_identity in the response fields', async () => {
-    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)).text()
     expect(html).toContain('<tr><td><code>canonical_identity</code></td><td>string?</td>')
   })
 
   it('says canonical_proof also reports a pasted link reduced to its post', async () => {
-    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)).text()
     expect(html).toContain('a pasted post link was reduced to the part the check uses')
   })
 
   it('says a /platforms entry is unsupported when this deployment cannot check its proof posts', async () => {
-    expect(await homeHtml()).toContain("Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token.")
+    expect(await docsHtml()).toContain("Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token.")
   })
 
   it('says canonical_identity also reports a tidied account', async () => {
-    const html = await (await worker.fetch(new Request('https://verifier.divine.video/'), {} as never)).text()
+    const html = await (await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)).text()
     expect(html).toContain('the account as sent was tidied (for example a leading @ removed, or a Mastodon handle sent as <code>@user@server</code> returned as <code>server/@user</code>)')
   })
 })

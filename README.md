@@ -24,11 +24,13 @@ The service is a single [Hono](https://hono.dev) app running on Cloudflare Worke
 - `POST /verify` — batch verification, up to 10 claims.
 - `POST /verify/single` and `POST /api/verify` — single-claim verification (the `/api/verify` alias exists for divine-web compatibility).
 - `GET /verify/:platform/*` — URL-based verification; returns HTML for browsers, JSON with `?format=json`.
+- `GET /verified/:pubkey` and `GET /verified?platform=&identity=` — read-only badge lookups in the shape verify.divine.video answered: the links a person's current list verifies now, or the pubkey that owns an account.
 - `GET /nip05/verify` — NIP-05 lookup.
 - `GET /platforms` — list platforms currently available to clients; deployment configuration controls YouTube and Discord availability. Sign-in platforms also report an `oauth` field for whether sign-in is set up, and, where sign-in is set up, `signin_expires_after_days`.
 - `GET /health` and `GET /api/health` — health checks.
 - `/auth/*`: sign-in start (`POST /auth/:platform/start`; `GET`, used by app versions that can't confirm, is refused while confirmation is required), provider callbacks, `POST /auth/confirm`, Nostr login, Bluesky client metadata, sign-in status, and revoke.
 - `GET /` — the interactive landing page (returns JSON when the client asks for it).
+- `GET /docs` — the API reference.
 
 Each platform is a verifier in `src/platforms/` behind a shared interface, wired up in `registry.ts`; adding a platform is a matter of adding a verifier rather than reshaping the service. OAuth handlers live in `src/oauth/`, and shared helpers (caching, rate limiting, validation, npub encoding) live in `src/utils/`.
 
@@ -116,7 +118,7 @@ Configuration lives in `wrangler.toml`.
 - `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` — TikTok Login Kit credentials.
 - `OAUTH_REDIRECT_BASE`: base URL for OAuth callbacks (for example `https://verifier.divine.video`), also used to validate return URLs against open redirects. Its origin's `/` is also accepted as a return address, for staging and local development.
 
-The landing page (`GET /`) documents the API with request and response examples. `PRD.md` is the original product brief; its API section predates sign-in and the Discord, YouTube and TikTok verifiers.
+The API reference (`GET /docs`) documents the API with request and response examples. `PRD.md` is the original product brief; its API section predates sign-in and the Discord, YouTube and TikTok verifiers.
 
 ## Deployment
 

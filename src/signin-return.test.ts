@@ -403,7 +403,7 @@ describe('sign-in return on the verifier page', () => {
   })
 
   it('tells API callers that the page only reports sign-ins it started', async () => {
-    const html = await pageHtml()
+    const html = await (await worker.fetch(new Request(`${API}/docs`), {} as never)).text()
     const section = html.slice(html.indexOf('<section id="oauth">'), html.indexOf('</section>', html.indexOf('<section id="oauth">')))
     expect(section).toContain('The verifier page only reports sign-ins it started itself.')
   })

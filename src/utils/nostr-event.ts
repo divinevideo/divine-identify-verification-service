@@ -13,15 +13,20 @@ export interface SignedNostrEvent {
 
 export const LINKED_ACCOUNTS_MAX_SECONDS_AHEAD = 600
 
-// A kind 10011 with the shape NIP-01 requires, or null.
-export function asLinkedAccountsList(raw: unknown): SignedNostrEvent | null {
+// An event of one of `kinds` with the shape NIP-01 requires, or null.
+export function asSignedEvent(raw: unknown, kinds: readonly number[]): SignedNostrEvent | null {
   if (!raw || typeof raw !== 'object') return null
   const e = raw as Record<string, unknown>
   if (typeof e.id !== 'string' || typeof e.pubkey !== 'string' || typeof e.sig !== 'string') return null
-  if (e.kind !== 10011 || typeof e.content !== 'string') return null
+  if (typeof e.kind !== 'number' || !kinds.includes(e.kind) || typeof e.content !== 'string') return null
   if (typeof e.created_at !== 'number' || !Number.isInteger(e.created_at)) return null
   if (!Array.isArray(e.tags) || !e.tags.every(t => Array.isArray(t) && t.every(v => typeof v === 'string'))) return null
-  return { id: e.id, pubkey: e.pubkey, sig: e.sig, kind: 10011, created_at: e.created_at, content: e.content, tags: e.tags as string[][] }
+  return { id: e.id, pubkey: e.pubkey, sig: e.sig, kind: e.kind, created_at: e.created_at, content: e.content, tags: e.tags as string[][] }
+}
+
+// A kind 10011 with the shape NIP-01 requires, or null.
+export function asLinkedAccountsList(raw: unknown): SignedNostrEvent | null {
+  return asSignedEvent(raw, [10011])
 }
 
 const HEX_64 = /^[0-9a-f]{64}$/
