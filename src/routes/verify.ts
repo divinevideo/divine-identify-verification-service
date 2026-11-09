@@ -19,7 +19,7 @@ export const MAX_BATCH_SIZE = 10
 // Platforms whose accounts can be linked by signing in, and the proof value
 // Divine's page and app write for such a link: there is no post to check, only
 // the verifier's record of the sign-in.
-const SIGNIN_PLATFORMS: ReadonlySet<Platform> = new Set<Platform>(['twitter', 'bluesky', 'youtube', 'tiktok'])
+export const SIGNIN_PLATFORMS: ReadonlySet<Platform> = new Set<Platform>(['twitter', 'bluesky', 'youtube', 'tiktok'])
 const SIGNIN_PROOF = 'oauth'
 
 // A sign-in link with no counting record (it lapsed, was unlinked, was never
@@ -60,6 +60,36 @@ async function rememberResult(env: Bindings, key: string, platform: string, entr
   } catch (err) {
     console.error(`Saving the ${platform} result failed:`, err)
   }
+}
+
+// Normalize pubkey to lowercase for consistent cache keys. Validation treats a
+// Bluesky proof that is only whitespace as no proof, so make it no proof here
+// too: the same cache entry, and the Bluesky check's own no-proof answer.
+function normalizeClaim(claim: VerifyClaim): VerifyClaim {
+  const proof = claim.proof || ''
+  return {
+    ...claim,
+    pubkey: normalizePubkey(claim.pubkey),
+    proof: claim.platform === 'bluesky' && proof.trim() === '' ? '' : proof,
+  }
+}
+
+/**
+ * The form verifySingleClaim checks a claim in and keys its storage by, or null when
+ * no form's storage keys fit. Other callers ask this rather than size a claim
+ * themselves, so they judge exactly the claim that would be checked.
+ */
+export function storageForm(claim: VerifyClaim): VerifyClaim | null {
+  const normalized = normalizeClaim(claim)
+  // People paste handles and links in many shapes, so the tidy form is checked and cached.
+  const tidy = tidyClaim(normalized.platform, normalized.identity, normalized.proof)
+  if (fitsStorageKeys(normalized.platform, tidy.identity, tidy.proof, normalized.pubkey)) {
+    return { ...normalized, identity: tidy.identity, proof: tidy.proof }
+  }
+  // The tidy account can be longer than the one sent: a Telegram channel copied
+  // into the account in place of "s". Then the claim is checked as sent, so a
+  // claim validation accepted stays checkable.
+  return fitsStorageKeys(normalized.platform, normalized.identity, normalized.proof, normalized.pubkey) ? normalized : null
 }
 
 // What a claim that needs its platform asked carries from the first look to the check.
@@ -118,25 +148,12 @@ async function signInAnswer(
 // left over needs a unit from the limits.
 async function lookFirst(claim: VerifyClaim, env: Bindings): Promise<FirstLook> {
   const now = Math.floor(Date.now() / 1000)
-  // Normalize pubkey to lowercase for consistent cache keys. Validation treats a
-  // Bluesky proof that is only whitespace as no proof, so make it no proof here
-  // too: the same cache entry, and the Bluesky check's own no-proof answer.
-  const proof = claim.proof || ''
-  const normalizedClaim = {
-    ...claim,
-    pubkey: normalizePubkey(claim.pubkey),
-    proof: claim.platform === 'bluesky' && proof.trim() === '' ? '' : proof,
-  }
-  // People paste handles and links in many shapes. Check and cache the tidy
-  // form, but echo the identity as sent: clients match results on it.
-  const tidyForm = tidyClaim(normalizedClaim.platform, normalizedClaim.identity, normalizedClaim.proof)
-  // The tidy account can be longer than the one sent: a Telegram channel copied
-  // into the account in place of "s". Validation sized the claim as sent, so
-  // when the tidy form's storage keys wouldn't fit, the claim is checked as
-  // sent and stays checkable.
-  const tidy = fitsStorageKeys(normalizedClaim.platform, tidyForm.identity, tidyForm.proof, normalizedClaim.pubkey)
-    ? tidyForm
-    : { identity: normalizedClaim.identity, proof: normalizedClaim.proof }
+  const normalizedClaim = normalizeClaim(claim)
+  // Check and cache the storage form, but echo the identity as sent: clients
+  // match results on it. Validation sized the claim as sent, so a claim with no
+  // form that fits is one no caller sends; it keeps the form as sent rather than
+  // changing what is checked.
+  const tidy = storageForm(normalizedClaim) ?? normalizedClaim
   // The tidy values to hand back, on a verified answer, when tidying changed something.
   const tidied = {
     ...(tidy.identity !== normalizedClaim.identity ? { canonical_identity: tidy.identity } : {}),
