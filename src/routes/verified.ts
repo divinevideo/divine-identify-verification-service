@@ -11,7 +11,7 @@ import { MAX_RELAY_EVENTS, queryRelay } from '../utils/relay'
 import { validateClaim } from '../utils/validation'
 import { DIVINE_RELAY, linkedAccountClaims, PROFILE_RELAYS, readLinkedAccounts, readLinkedAccountsOf } from '../verified/linked-accounts'
 import { accountKey, couldNotCheck, oldMethod, oldPlatformName, parseOldPlatform, tagSpellings } from '../verified/names'
-import { proofUrl, SIGNIN_PLATFORMS, storageForm, verifySingleClaim } from './verify'
+import { proofUrl, SIGNIN_PLATFORMS, storageForm, verifyClaims } from './verify'
 
 const verified = new Hono<{ Bindings: Bindings }>()
 
@@ -66,7 +66,7 @@ interface ClaimChecks {
 // Checks the first MAX_LIST_CLAIMS claims as /verify would, in parallel, keeping tag order.
 async function checkClaims(claims: VerifyClaim[], env: Bindings, clientIp: string): Promise<ClaimChecks> {
   const checked = claims.slice(0, MAX_LIST_CLAIMS)
-  const results = await Promise.all(checked.map(claim => verifySingleClaim(claim, env, clientIp)))
+  const results = await Promise.all(verifyClaims(checked, env, clientIp))
   const checks: ClaimChecks = { verified: [], unavailable: [], pastCap: claims.slice(MAX_LIST_CLAIMS) }
   results.forEach((result, i) => {
     if (couldNotCheck(result)) checks.unavailable.push(checked[i])
@@ -234,8 +234,8 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
     return units
   }
 
-  async function checkUnits(units: VerifyClaim[][]): Promise<CandidateOutcome> {
-    const results = await Promise.all(units.map(unit => Promise.all(unit.map(claim => verifySingleClaim(claim, env, clientIp)))))
+  async function checkUnits(units: VerifyClaim[][], answers: Promise<VerifyResult>[][]): Promise<CandidateOutcome> {
+    const results = await Promise.all(answers.map(unitAnswers => Promise.all(unitAnswers)))
     const outcome: CandidateOutcome = { verified: [], unavailable: false }
     results.forEach((unitResults, u) => {
       const last = unitResults.length - 1
@@ -282,10 +282,17 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
     return planned
   })
 
-  const outcomes = await Promise.all(plans.map(async (units) => {
+  // One call for every planned check, in candidate then tag order, so the whole lookup
+  // is counted in one reservation and what the limits have left goes to candidates in order.
+  const flat = plans.flatMap(units => (units ?? []).flat())
+  const flatAnswers = verifyClaims(flat, env, clientIp)
+  let next = 0
+  const answers = plans.map(units => (units ?? []).map(unit => unit.map(() => flatAnswers[next++])))
+
+  const outcomes = await Promise.all(plans.map(async (units, i) => {
     if (!units) return null
     try {
-      return await checkUnits(units)
+      return await checkUnits(units, answers[i])
     } catch (err) {
       // One candidate's failure leaves the others to answer; it counts as couldn't-check.
       console.error('Checking a lookup candidate failed:', err)

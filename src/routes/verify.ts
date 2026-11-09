@@ -75,7 +75,7 @@ function normalizeClaim(claim: VerifyClaim): VerifyClaim {
 }
 
 /**
- * The form verifySingleClaim checks a claim in and keys its storage by, or null when
+ * The form verifyClaims checks a claim in and keys its storage by, or null when
  * no form's storage keys fit. Other callers ask this rather than size a claim
  * themselves, so they judge exactly the claim that would be checked.
  */
@@ -351,11 +351,6 @@ export function verifyClaims(claims: readonly VerifyClaim[], env: Bindings, clie
     const [result] = await Promise.all([checkPlatform(first.check, env), written])
     return result
   }))
-}
-
-// TODO(#179): remove once /verified calls verifyClaims.
-export async function verifySingleClaim(claim: VerifyClaim, env: Bindings, clientIp: string): Promise<VerifyResult> {
-  return verifyClaims([claim], env, clientIp)[0]
 }
 
 type InvalidClaimResult = {
