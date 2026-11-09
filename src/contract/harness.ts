@@ -111,3 +111,90 @@ export function call(
   }
   return target(new Request(`${BASE_URL}${path}`, init), env)
 }
+
+export type FakeRelayBehaviour = 'answer' | 'refuse' | 'hang' | 'drop'
+
+export interface FakeRelay {
+  /** The relay's wss:// URL, as the service is configured with it. */
+  url: string
+  events: unknown[]
+  /** A string, or a function called per REQ with that REQ's filters. Defaults to 'answer'. */
+  behaviour?: FakeRelayBehaviour | ((filters: unknown[]) => FakeRelayBehaviour)
+  /** The filters of each REQ received, in order. */
+  seenFilters: unknown[][]
+}
+
+type Filter = { kinds?: number[]; authors?: string[]; '#i'?: string[]; limit?: number }
+
+function matchesFilter(event: any, filter: Filter): boolean {
+  if (filter.kinds && !filter.kinds.includes(event?.kind)) return false
+  if (filter.authors && !filter.authors.includes(event?.pubkey)) return false
+  if (filter['#i']) {
+    const tags: unknown[] = Array.isArray(event?.tags) ? event.tags : []
+    const hit = tags.some((t) => Array.isArray(t) && t[0] === 'i' && filter['#i']!.includes(t[1]))
+    if (!hit) return false
+  }
+  return true
+}
+
+function answerFor(relay: FakeRelay, subId: string, filters: Filter[]): string[] {
+  // NIP-01: limit applies per filter, to that filter's matches newest first.
+  const newestFirst = (a: any, b: any) =>
+    (b?.created_at ?? 0) - (a?.created_at ?? 0) || String(a?.id).localeCompare(String(b?.id))
+  const kept = new Map<unknown, unknown>()
+  for (const filter of filters) {
+    const matched = relay.events.filter((e) => matchesFilter(e, filter)).sort(newestFirst)
+    const capped = typeof filter.limit === 'number' ? matched.slice(0, filter.limit) : matched
+    for (const e of capped) kept.set((e as any)?.id ?? e, e)
+  }
+  return [...kept.values()].map((e) => JSON.stringify(['EVENT', subId, e])).concat(JSON.stringify(['EOSE', subId]))
+}
+
+function fakeSocket(relay: FakeRelay) {
+  const socket = new EventTarget() as EventTarget & {
+    accept(): void
+    send(message: string): void
+    close(): void
+  }
+  let closed = false
+  const emit = (event: Event) => queueMicrotask(() => { if (!closed) socket.dispatchEvent(event) })
+  socket.accept = () => {}
+  socket.close = () => { closed = true }
+  socket.send = (message: string) => {
+    let frame: unknown
+    try { frame = JSON.parse(message) } catch { return }
+    if (!Array.isArray(frame) || frame[0] !== 'REQ') return
+    const subId = String(frame[1])
+    const filters = frame.slice(2) as Filter[]
+    relay.seenFilters.push(filters)
+    const behaviour = typeof relay.behaviour === 'function' ? relay.behaviour(filters) : (relay.behaviour ?? 'answer')
+    if (behaviour === 'answer') {
+      for (const text of answerFor(relay, subId, filters)) emit(new MessageEvent('message', { data: text }))
+    } else if (behaviour === 'refuse') {
+      emit(new MessageEvent('message', { data: JSON.stringify(['CLOSED', subId, 'blocked: refused']) }))
+    } else if (behaviour === 'drop') {
+      emit(new Event('close'))
+    }
+  }
+  return socket
+}
+
+/**
+ * Stubs global fetch so a WebSocket upgrade to a listed relay's https:// host
+ * answers with a fake socket that behaves as the relay says. Any other request
+ * goes to `otherFetch`, or throws as failEveryFetch does.
+ */
+export function fakeRelays(relays: FakeRelay[], otherFetch?: typeof fetch): void {
+  vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : null
+    const url = request ? request.url : String(input)
+    const upgrade = new Headers(init?.headers ?? request?.headers).get('Upgrade')
+    const relay = relays.find((r) => r.url.replace(/^wss:/, 'https:') === url)
+    if (relay && upgrade?.toLowerCase() === 'websocket') {
+      // Node's Response refuses status 101, so this is the shape the Workers runtime returns.
+      return Promise.resolve({ status: 101, webSocket: fakeSocket(relay) } as unknown as Response)
+    }
+    if (otherFetch) return otherFetch(input as any, init)
+    throw new Error('Unexpected platform fetch')
+  }))
+}

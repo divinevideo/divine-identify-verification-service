@@ -22,6 +22,12 @@ function verifierEnv(config: ContractConfig = {}): ContractEnv {
     get: vi.fn(async (key: string) => store.get(key) ?? null),
     put: vi.fn(async (key: string, value: string) => { store.set(key, value) }),
     delete: vi.fn(async (key: string) => { store.delete(key) }),
+    // GET /verified?platform=&identity= finds sign-in owners by key prefix; KV lists in key order.
+    list: vi.fn(async ({ prefix = '' }: { prefix?: string } = {}) => ({
+      keys: [...store.keys()].filter(key => key.startsWith(prefix)).sort().map(name => ({ name })),
+      list_complete: true,
+      cacheStatus: null,
+    })),
   }
   const spent: string[] = []
   const rateLimit = {

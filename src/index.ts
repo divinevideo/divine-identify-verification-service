@@ -4,22 +4,17 @@ import { getCookie, setCookie } from 'hono/cookie'
 import type { Bindings } from './types'
 import health from './routes/health'
 import platforms from './routes/platforms'
+import { verified } from './routes/verified'
 import verify, { MAX_BATCH_SIZE } from './routes/verify'
 import nip05 from './routes/nip05'
 import auth from './routes/auth'
 import { EMBED_BRIDGE_SCRIPT } from './embed-bridge'
 import { setPagePolicy } from './content-security-policy'
 import { NOSTR_TOOLS_MODULE_PATH } from './generated/vendor'
-import { isTikTokOAuthUsable } from './oauth/tiktok'
 import { FIXED_SIGNIN_LIFETIME_DAYS } from './oauth/signin-lifetime'
-import { isTwitterOAuthUsable } from './oauth/twitter'
-import { isYouTubeOAuthUsable } from './oauth/youtube'
-
-// Joins names the way the page's copy reads them: "A", "A and B", "A, B, and C".
-function listInProse(items: string[]): string {
-  if (items.length <= 2) return items.join(' and ')
-  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`
-}
+import { listInProse, oauthPlatformsFor, platformFlags } from './page-platforms'
+import { PAGE_STYLES } from './page-styles'
+import { renderDocsPage } from './docs-page'
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -40,6 +35,7 @@ app.use('*', cors({
 app.route('/health', health)
 app.route('/platforms', platforms)
 app.route('/verify', verify)
+app.route('/verified', verified)
 app.route('/nip05', nip05)
 app.route('/auth', auth)
 
@@ -86,14 +82,6 @@ app.get('/', (c) => {
 
   const requestUrl = new URL(c.req.url)
   const origin = requestUrl.origin
-  const hasYouTube = !!c.env.YOUTUBE_API_KEY
-  const hasTikTok = true // TikTok oEmbed is public, no key needed for proof verification
-  // Twitter proof posts use the public oEmbed endpoint and need no
-  // credentials; only sign-in does, so the page hides just that path.
-  const twitterOAuthEnabled = isTwitterOAuthUsable(c.env)
-  // YouTube shows with its API key; its sign-in also needs the Google client
-  // ID and secret and the redirect base (isYouTubeOAuthUsable).
-  const youtubeOAuthEnabled = hasYouTube && isYouTubeOAuthUsable(c.env)
   // TODO(#39): Enable the production UI after TikTok OAuth is approved.
   // The review cookie survives OAuth redirects without changing their exact
   // registered redirect URI, while ordinary users stay off the sandbox flow.
@@ -109,22 +97,11 @@ app.get('/', (c) => {
   }
   const tiktokOAuthReviewEnabled = tiktokOAuthReviewRequested
     || getCookie(c, 'tiktok_oauth_review') === '1'
-  const tiktokOAuthEnabled = isTikTokOAuthUsable(c.env, tiktokOAuthReviewEnabled)
+  const flags = platformFlags(c.env, tiktokOAuthReviewEnabled)
+  const { hasYouTube, hasTikTok, twitterOAuthEnabled, youtubeOAuthEnabled, tiktokOAuthEnabled } = flags
 
-  // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
-  const ytTableRow = hasYouTube ? `<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>${youtubeOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
-  const ttTableRow = hasTikTok ? `<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video or photo link, share link, or post number</td><td>${tiktokOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
-  // Sign-in platforms, in picker order. Leaves out Twitter, YouTube and TikTok
-  // while their sign-in is unavailable. The picker and every list of sign-in
-  // platforms in the copy are built from this one list, so the copy never
-  // advertises a path the picker omits.
-  const oauthPlatforms = [
-    ...(twitterOAuthEnabled ? [{ value: 'twitter', name: 'Twitter', shortLabel: 'Twitter/X', optionLabel: 'Twitter / X' }] : []),
-    { value: 'bluesky', name: 'Bluesky', shortLabel: 'Bluesky', optionLabel: 'Bluesky' },
-    ...(youtubeOAuthEnabled ? [{ value: 'youtube', name: 'YouTube', shortLabel: 'YouTube', optionLabel: 'YouTube' }] : []),
-    ...(hasTikTok && tiktokOAuthEnabled ? [{ value: 'tiktok', name: 'TikTok', shortLabel: 'TikTok', optionLabel: 'TikTok' }] : []),
-  ]
-  const oauthPlatformNames = oauthPlatforms.map(platform => platform.name)
+  // Sign-in platforms, in picker order (see oauthPlatformsFor).
+  const oauthPlatforms = oauthPlatformsFor(flags)
   const quickConnectPlatformList = listInProse(oauthPlatforms.map(platform => platform.shortLabel))
   // Platforms verified only by pasting a post link: the always post-only ones,
   // plus Twitter, YouTube and TikTok while their sign-in is unavailable.
@@ -155,15 +132,6 @@ app.get('/', (c) => {
   // Every confirmed sign-in link lasts the same time, so the sign-in card says
   // it once, before the person starts.
   const signInLifetimeCardNote = `<p class="field-help">Links made by signing in last ${FIXED_SIGNIN_LIFETIME_DAYS} days. After that, sign in again to keep them verified.</p>`
-  const tiktokOAuthHistoryNote = hasTikTok && !tiktokOAuthEnabled
-    ? ' Existing TikTok OAuth verifications remain recognized.'
-    : ''
-  const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
-  const otherOAuthStartExamples = [
-    twitterOAuthEnabled ? `POST ${origin}/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}` : '',
-    youtubeOAuthEnabled ? `POST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : '',
-    hasTikTok && tiktokOAuthEnabled ? `POST ${origin}/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}` : '',
-  ].filter(Boolean).join('\n')
   const extraLookupPlatforms = (hasYouTube ? ",'youtube'" : '') + (hasTikTok ? ",'tiktok'" : '')
   const oauthPlatformOptions = oauthPlatforms.map(platform => `<option value="${platform.value}">${platform.optionLabel}</option>`).join('')
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
@@ -189,349 +157,7 @@ app.get('/', (c) => {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&display=swap">
   <style>
-    :root {
-      --green: #27C58B;
-      --dark: #07241B;
-      --mint: #D0FBCB;
-      --off: #F9F7F6;
-      --yellow: #FFF140;
-      --pink: #FF7FAF;
-      --orange: #FF7640;
-      --violet: #A3A9FF;
-      color-scheme: dark;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body {
-      background: var(--dark); color: var(--off);
-      font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      font-size: 17px; line-height: 1.55;
-      -webkit-font-smoothing: antialiased;
-    }
-    h1, h2, h3, h4 {
-      font-family: 'Bricolage Grotesque', 'Inter', sans-serif;
-      font-weight: 800; letter-spacing: -0.02em; line-height: 1.05;
-    }
-    .container { max-width: 960px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 32px); }
-
-    /* Top brand bar */
-    .topbar {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 24px 0; gap: 16px; flex-wrap: wrap;
-    }
-    .brand {
-      display: inline-flex; align-items: center; gap: 12px;
-      color: var(--off);
-      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800; font-size: 1.3rem;
-      text-decoration: none;
-    }
-    .logomark {
-      width: 26px; height: 26px; border-radius: 50%;
-      background: var(--green); border: 2px solid var(--off);
-      position: relative; display: inline-block;
-    }
-    .logomark::after {
-      content: ""; position: absolute; inset: 5px;
-      background: var(--dark); border-radius: 50%;
-    }
-    .nav-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
-    .nav-link {
-      font-size: 0.92rem; color: var(--mint);
-      border-bottom: 1.5px solid rgba(208, 251, 203, 0.4); padding-bottom: 1px;
-      text-decoration: none;
-    }
-    .nav-link:hover { color: var(--green); border-bottom-color: var(--green); }
-
-    /* Hero */
-    .hero { padding: 32px 0 24px; text-align: left; }
-    .hero h1 {
-      font-size: clamp(2.2rem, 6vw, 3.8rem);
-      color: var(--off); max-width: 18ch; margin-bottom: 18px;
-    }
-    .hero h1 .punct { color: var(--green); }
-    .hero .subtitle {
-      max-width: 60ch; color: var(--mint);
-      font-size: 1.05rem; line-height: 1.5; margin-bottom: 1.5rem;
-    }
-    .hero .subtitle a { color: var(--off); border-bottom: 1.5px solid rgba(249, 247, 246, 0.35); padding-bottom: 1px; text-decoration: none; }
-    .hero .subtitle a:hover { color: var(--green); border-bottom-color: var(--green); }
-    .hero .cta-row { display: flex; gap: 12px; justify-content: flex-start; flex-wrap: wrap; margin-top: 4px; }
-
-    /* Buttons */
-    .btn {
-      display: inline-flex; align-items: center; justify-content: center;
-      min-height: 44px; padding: 10px 18px; border-radius: 999px;
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-size: 0.96rem; font-weight: 800; line-height: 1;
-      text-decoration: none; cursor: pointer;
-      border: 2px solid transparent;
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }
-    .btn-primary { background: var(--green); color: var(--dark); border-color: var(--green); }
-    .btn-primary:hover { transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--off); text-decoration: none; }
-    .btn-outline { background: transparent; color: var(--mint); border-color: rgba(208, 251, 203, 0.4); }
-    .btn-outline:hover { color: var(--off); border-color: var(--mint); transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--green); text-decoration: none; }
-
-    /* Value props */
-    .value-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 14px; margin: 2rem 0;
-    }
-    .value-card {
-      background: var(--off); color: var(--dark);
-      border: 2px solid var(--dark); border-radius: 22px; padding: 22px;
-      box-shadow: 6px 6px 0 var(--green);
-    }
-    .value-card .icon { font-size: 2rem; margin-bottom: 0.75rem; }
-    .value-card h3 { font-size: 1.15rem; color: var(--dark); margin-bottom: 0.5rem; }
-    .value-card p { font-size: 0.95rem; color: rgba(7, 36, 27, 0.78); margin: 0; line-height: 1.5; }
-
-    /* How it works */
-    .steps {
-      display: grid; grid-template-columns: repeat(4, 1fr);
-      gap: 16px; margin: 1.25rem 0;
-    }
-    @media (max-width: 820px) {
-      .steps { grid-template-columns: repeat(2, 1fr); }
-    }
-    @media (max-width: 460px) {
-      .steps { grid-template-columns: 1fr; }
-    }
-    .step {
-      padding: 16px;
-      border: 2px solid rgba(7, 36, 27, 0.12);
-      border-radius: 16px;
-      background: rgba(208, 251, 203, 0.35);
-    }
-    .step-number {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 36px; height: 36px; border-radius: 50%;
-      background: var(--dark); color: var(--mint);
-      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800; font-size: 1.05rem;
-      margin-bottom: 0.75rem;
-    }
-    .step h4 { color: var(--dark); margin-bottom: 6px; font-size: 1rem; }
-    .step p { color: rgba(7, 36, 27, 0.78); font-size: 0.9rem; margin: 0; line-height: 1.45; }
-    .step a { color: var(--dark); border-bottom: 1.5px solid rgba(7, 36, 27, 0.4); padding-bottom: 1px; text-decoration: none; font-weight: 600; }
-    .step a:hover { border-bottom-color: var(--green); }
-
-    /* Platform pills */
-    .platform-grid {
-      display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
-      margin: 1.5rem auto;
-      max-width: 640px;
-    }
-    .platform-pill {
-      display: inline-flex; align-items: center; gap: 0.5rem;
-      background: var(--off); color: var(--dark);
-      border: 2px solid var(--dark); border-radius: 999px;
-      padding: 8px 14px; font-size: 0.92rem; font-weight: 600;
-      box-shadow: 3px 3px 0 var(--green);
-      text-decoration: none; cursor: pointer;
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }
-    .platform-pill:hover { transform: translate(-2px, -2px); box-shadow: 5px 5px 0 var(--green); }
-    .platform-pill:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
-    .platform-pill svg { width: 18px; height: 18px; flex-shrink: 0; fill: var(--dark); }
-
-    /* Sections (cards) */
-    section {
-      background: var(--off); color: var(--dark);
-      border: 2px solid var(--dark); border-radius: 22px;
-      padding: 24px; margin-bottom: 18px;
-      box-shadow: 6px 6px 0 var(--green);
-    }
-    section h2 {
-      font-size: 1.45rem; color: var(--dark);
-      margin-bottom: 0.85rem; padding-bottom: 0.5rem;
-      border-bottom: 2px solid rgba(7, 36, 27, 0.12);
-    }
-    section h3 { font-size: 1.05rem; color: var(--dark); margin: 1.25rem 0 0.5rem; }
-    section h4 { font-size: 0.95rem; color: rgba(7, 36, 27, 0.78); margin: 0.75rem 0 0.25rem; }
-    section p { margin-bottom: 0.55rem; color: rgba(7, 36, 27, 0.78); font-size: 0.95rem; line-height: 1.5; }
-    section ul { margin: 0.4rem 0 0.6rem 1.25rem; color: rgba(7, 36, 27, 0.78); font-size: 0.95rem; }
-    section li { margin-bottom: 0.25rem; }
-    section a { color: var(--dark); border-bottom: 1.5px solid rgba(7, 36, 27, 0.4); padding-bottom: 1px; text-decoration: none; font-weight: 600; }
-    section a:hover { border-bottom-color: var(--green); color: var(--dark); }
-    section strong { color: var(--dark); }
-
-    code {
-      background: rgba(7, 36, 27, 0.08); color: var(--dark);
-      padding: 1px 6px; border-radius: 6px;
-      font-size: 0.88em; font-family: 'SF Mono', Menlo, Consolas, monospace;
-    }
-    pre {
-      background: var(--dark); color: var(--mint);
-      padding: 1rem; border-radius: 14px;
-      overflow-x: auto; font-size: 0.82rem; margin: 0.5rem 0 0.75rem;
-      font-family: 'SF Mono', Menlo, Consolas, monospace; line-height: 1.5;
-      border: 2px solid var(--dark);
-    }
-    pre .comment { color: rgba(208, 251, 203, 0.55); }
-
-    .endpoint { margin-bottom: 1.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid rgba(7, 36, 27, 0.1); }
-    .endpoint:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
-    .method {
-      display: inline-block; padding: 2px 8px; border-radius: 6px;
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-size: 0.72rem; font-weight: 800; margin-right: 0.5rem; color: var(--dark);
-      letter-spacing: 0.02em;
-    }
-    .get { background: var(--green); }
-    .post { background: var(--mint); }
-    .head { background: var(--violet); }
-
-    table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; }
-    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid rgba(7, 36, 27, 0.12); font-size: 0.9rem; }
-    th { color: rgba(7, 36, 27, 0.6); font-weight: 700; font-family: 'Bricolage Grotesque', sans-serif; }
-    td code { font-size: 0.82rem; }
-
-    .note {
-      background: var(--mint); color: var(--dark);
-      border-left: 4px solid var(--green); padding: 0.7rem 0.9rem;
-      border-radius: 0 12px 12px 0; margin: 0.75rem 0; font-size: 0.92rem;
-    }
-    .note strong { color: var(--dark); }
-
-    /* Divider */
-    .section-divider {
-      text-align: center; padding: 2.25rem 0 1rem;
-      color: var(--mint); font-size: 0.82rem;
-      font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700;
-      letter-spacing: 0.08em; text-transform: uppercase;
-    }
-    .section-divider span {
-      background: var(--dark); padding: 0 1rem; position: relative;
-    }
-    .section-divider::before {
-      content: ''; display: block; height: 1px;
-      background: rgba(208, 251, 203, 0.2);
-      position: relative; top: 0.7rem;
-    }
-
-    /* Verify flow */
-    .verify-here {
-      box-shadow: 6px 6px 0 var(--yellow);
-      background: var(--off);
-    }
-    .verify-lead { font-size: 1rem; color: var(--dark); margin-bottom: 1rem; }
-    .verify-step-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 14px;
-    }
-    .verify-card {
-      background: var(--mint); color: var(--dark);
-      border: 2px solid var(--dark); border-radius: 16px;
-      padding: 16px;
-    }
-    .step-pill {
-      display: inline-block;
-      background: var(--dark); color: var(--mint);
-      border-radius: 999px; padding: 4px 10px;
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-size: 0.7rem; font-weight: 800;
-      letter-spacing: 0.04em; text-transform: uppercase;
-      margin-bottom: 0.7rem;
-    }
-    .field-label {
-      display: block; font-size: 0.82rem; color: var(--dark);
-      margin-bottom: 0.3rem; font-weight: 700;
-    }
-    .field-input, .field-select {
-      width: 100%; padding: 10px 12px;
-      border: 2px solid var(--dark); border-radius: 12px;
-      font-size: 0.95rem; font-family: 'Inter', sans-serif;
-      margin-bottom: 0.6rem;
-      background: var(--off); color: var(--dark);
-      outline: none; transition: box-shadow 0.15s ease;
-    }
-    .field-input:focus, .field-select:focus {
-      box-shadow: 3px 3px 0 var(--green);
-    }
-    .field-help {
-      color: rgba(7, 36, 27, 0.65); font-size: 0.82rem;
-      margin-top: -0.1rem; margin-bottom: 0.55rem;
-    }
-    .status-row {
-      display: none; padding: 10px 14px;
-      border-radius: 12px; margin-top: 0.75rem;
-      font-size: 0.9rem; line-height: 1.4;
-      border: 1px solid transparent;
-    }
-    .verify-btn {
-      padding: 10px 16px; border-radius: 12px;
-      border: 2px solid var(--dark);
-      background: var(--dark); color: var(--mint);
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-size: 0.95rem; font-weight: 700;
-      cursor: pointer;
-      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.2s;
-    }
-    .verify-btn:hover:not(:disabled) { transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--green); }
-    .verify-btn:disabled { cursor: not-allowed; opacity: 0.55; }
-    .verify-btn-primary { background: var(--green); color: var(--dark); }
-    .verify-btn-primary:hover:not(:disabled) { box-shadow: 4px 4px 0 var(--dark); }
-    .verify-btn-success { background: var(--yellow); color: var(--dark); }
-    .verify-btn-success:hover:not(:disabled) { box-shadow: 4px 4px 0 var(--dark); }
-    .verify-step-gap { margin-top: 1.25rem; }
-    /* Room above a card when a platform pill jumps to it. */
-    .verify-card { scroll-margin-top: 16px; }
-    /* Card titles under a step heading: h4 for structure, styled like the step titles. */
-    .verify-card h4 { font-size: 1.05rem; color: var(--dark); margin: 0 0 0.5rem; }
-    .advanced-proof {
-      margin-top: 1rem;
-      border: 2px dashed rgba(7, 36, 27, 0.25);
-      border-radius: 16px; padding: 14px 16px;
-      background: rgba(7, 36, 27, 0.04);
-    }
-    .advanced-proof summary {
-      cursor: pointer; font-weight: 800; color: var(--dark);
-      font-family: 'Bricolage Grotesque', sans-serif;
-      outline: none;
-    }
-    .advanced-proof-inner { margin-top: 0.85rem; }
-
-    /* Lookup section */
-    .lookup-input {
-      flex: 1; min-width: 200px;
-      padding: 10px 14px;
-      border: 2px solid var(--dark); border-radius: 12px;
-      font-size: 0.95rem; font-family: 'Inter', sans-serif;
-      background: var(--off); color: var(--dark);
-      outline: none; transition: box-shadow 0.15s ease;
-    }
-    .lookup-input:focus { box-shadow: 3px 3px 0 var(--green); }
-    .lookup-btn {
-      padding: 10px 22px;
-      background: var(--dark); color: var(--mint);
-      border: 2px solid var(--dark); border-radius: 12px;
-      font-family: 'Bricolage Grotesque', sans-serif;
-      font-size: 0.95rem; font-weight: 800;
-      cursor: pointer;
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }
-    .lookup-btn:hover { transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--green); }
-    .lookup-status {
-      display: none; padding: 10px 14px;
-      border-radius: 12px; margin-bottom: 0.85rem;
-      font-size: 0.9rem; border: 1px solid transparent;
-    }
-
-    /* Footer */
-    footer {
-      text-align: center; padding: 56px 0 40px;
-      color: var(--mint); font-size: 0.92rem;
-      border-top: 1px solid rgba(208, 251, 203, 0.14);
-      margin-top: 32px;
-    }
-    footer a { color: var(--off); border-bottom: 1.5px solid rgba(249, 247, 246, 0.35); padding-bottom: 1px; text-decoration: none; }
-    footer a:hover { color: var(--green); border-bottom-color: var(--green); }
-
-    @media (max-width: 640px) {
-      .container { padding: 0 18px; }
-      .hero { padding: 18px 0 16px; }
-      .nav-actions { width: 100%; justify-content: flex-start; }
-      section { padding: 18px; }
-    }
+${PAGE_STYLES}
   </style>
 </head>
 <body>
@@ -757,223 +383,9 @@ app.get('/', (c) => {
       <div id="lookup-results"></div>
     </section>
 
-    <!-- DIVIDER -->
-    <div class="section-divider"><span>API Documentation</span></div>
-
-    <!-- API DOCS (for developers) -->
-    <section id="api-about">
-      <h2>About the API</h2>
-      <p>This service verifies that a Nostr pubkey is linked to accounts on supported platforms. It fetches proof posts server-side, bypassing CORS restrictions that prevent browser-based verification.</p>
-      <p>Two verification methods are supported:</p>
-      <ul>
-        <li><strong>Proof posts</strong> &mdash; User publishes a post containing their <code>npub</code> on the external platform. The service fetches the post and checks that the npub is present and the author matches.</li>
-        <li><strong>OAuth login</strong> (${oauthPlatformNames.join(', ')}) &mdash; User authenticates directly. No proof post needed.</li>
-      </ul>
-    </section>
-
-    <section id="platforms-api">
-      <h2>Supported Platforms</h2>
-      <table>
-        <tr><th>Platform</th><th>Identity Format</th><th>Proof Format</th><th>OAuth</th></tr>
-        <tr>
-          <td><code>github</code></td>
-          <td>Username (e.g., <code>octocat</code>)</td>
-          <td>Gist ID</td>
-          <td>No</td>
-        </tr>
-        <tr>
-          <td><code>twitter</code></td>
-          <td>Username (e.g., <code>example</code>)</td>
-          <td>Tweet ID</td>
-          <td>${twitterOAuthEnabled ? 'Yes' : 'No'}</td>
-        </tr>
-        <tr>
-          <td><code>bluesky</code></td>
-          <td>Handle (e.g., <code>example.bsky.social</code>)</td>
-          <td>Post rkey</td>
-          <td>Yes</td>
-        </tr>
-        <tr>
-          <td><code>mastodon</code></td>
-          <td><code>instance/@user</code></td>
-          <td>Status ID</td>
-          <td>No</td>
-        </tr>
-        <tr>
-          <td><code>telegram</code></td>
-          <td>Username</td>
-          <td><code>channel/messageId</code></td>
-          <td>No</td>
-        </tr>
-        <tr>
-          <td><code>discord</code></td>
-          <td>Username</td>
-          <td>Message link (needs <code>DISCORD_BOT_TOKEN</code>)</td>
-          <td>No</td>
-        </tr>
-        ${ytTableRow}
-        ${ttTableRow}
-      </table>
-    </section>
-
-    <section id="single-verify">
-      <h2>POST /api/verify &mdash; Single Claim Verification</h2>
-      <p>Verify a single identity claim.</p>
-
-      <h4>Request</h4>
-      <pre>POST ${origin}/api/verify
-Content-Type: application/json
-
-{
-  "platform": "github",
-  "identity": "octocat",
-  "proof": "aa5a315d61ae9438b18d",
-  "pubkey": "7e7e9c42a91bfef19fa929e5fda1b72e0ebc1a4c1141673e2794234d86addf4e"
-}</pre>
-
-      <table>
-        <tr><th>Field</th><th>Type</th><th>Description</th></tr>
-        <tr><td><code>platform</code></td><td>string</td><td>One of: <code>github</code>, <code>twitter</code>, <code>bluesky</code>, <code>mastodon</code>, <code>telegram</code>, <code>discord</code>${extraPlatformCodes}</td></tr>
-        <tr><td><code>identity</code></td><td>string</td><td>Username or handle on the platform</td></tr>
-        <tr><td><code>proof</code></td><td>string</td><td>ID of the proof post</td></tr>
-        <tr><td><code>pubkey</code></td><td>string</td><td>64-character lowercase hex Nostr public key</td></tr>
-      </table>
-
-      <h4>Response (200 OK)</h4>
-      <pre>{
-  "platform": "github",
-  "identity": "octocat",
-  "verified": true,
-  "checked_at": 1709571048,
-  "cached": false
-}</pre>
-
-      <table>
-        <tr><th>Field</th><th>Type</th><th>Description</th></tr>
-        <tr><td><code>verified</code></td><td>boolean</td><td><code>true</code> if proof post contains the npub and the author matches</td></tr>
-        <tr><td><code>error</code></td><td>string?</td><td>Error message (only when <code>verified</code> is <code>false</code>)</td></tr>
-        <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable reason the claim isn't verified. <code>temporarily_unavailable</code> means the claim couldn't be checked right now (the platform didn't answer, or the per-person or per-platform check limit was hit), not that it was rejected: try again in a few minutes. <code>signin_expired</code> means no sign-in currently counts for an account linked by signing in (proof <code>oauth</code>): it lapsed, was unlinked, was never confirmed, or never happened. On Bluesky it also means no identity-link record was found on the account. <code>signin_account_changed</code> means the handle no longer points to the account that signed in (it was deleted, or now points to another account). Apps can offer sign-in for either, where <code>GET /platforms</code> reports <code>oauth: true</code> for that platform. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.</td></tr>
-        <tr><td><code>canonical_proof</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the proof was resolved to a simpler stable form: a pasted post link was reduced to the part the check uses, or a TikTok link or share link to its post number. Publish this instead of the proof you sent.</td></tr>
-        <tr><td><code>canonical_identity</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the account as sent was tidied (for example a leading @ removed, or a Mastodon handle sent as <code>@user@server</code> returned as <code>server/@user</code>), or confirmed on a different host from the one in the claim (Mastodon: a server whose handles use another domain from its website). Publish this instead of the account you sent; links to the post use it.</td></tr>
-        <tr><td><code>checked_at</code></td><td>number</td><td>Unix timestamp (seconds)</td></tr>
-        <tr><td><code>cached</code></td><td>boolean</td><td><code>true</code> if served from cache</td></tr>
-      </table>
-    </section>
-
-    <section id="batch-verify">
-      <h2>POST /verify &mdash; Batch Verification</h2>
-      <p>Verify up to 10 claims in a single request. Results come back in the same order as the claims. A malformed claim, or one for an unsupported platform, comes back in its place as <code>"verified": false</code> with an <code>error</code>; it does not affect the other claims. The whole request is rejected with 400 only when the body itself is malformed, the claims list is empty, or it has more than 10 claims.</p>
-
-      <h4>Request</h4>
-      <pre>POST ${origin}/verify
-Content-Type: application/json
-
-{
-  "claims": [
-    { "platform": "github", "identity": "octocat", "proof": "aa5a315d61ae9438b18d", "pubkey": "7e7e..." },
-    { "platform": "twitter", "identity": "example", "proof": "1234567890", "pubkey": "7e7e..." }
-  ]
-}</pre>
-
-      <h4>Response (200 OK)</h4>
-      <pre>{
-  "results": [
-    { "platform": "github", "identity": "octocat", "verified": true, "checked_at": 1709571048, "cached": false },
-    { "platform": "twitter", "identity": "example", "verified": false, "error": "Tweet not found", "checked_at": 1709571048, "cached": false }
-  ]
-}</pre>
-    </section>
-
-    <section id="get-verify">
-      <h2>GET /verify/:platform/:identity/:proof &mdash; URL-Based Verification</h2>
-      <p>Verify via URL. Returns HTML for browsers, JSON for API clients. Add <code>?format=json</code> to force JSON.</p>
-
-      <h4>Examples</h4>
-      <pre>GET ${origin}/verify/github/octocat/aa5a315d61ae9438b18d?pubkey=7e7e9c42...4e
-GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e...4e</pre>
-    </section>
-
-    <section id="nip05">
-      <h2>GET /nip05/verify &mdash; NIP-05 Verification</h2>
-      <p>Check that a NIP-05 identifier resolves to a given pubkey.</p>
-
-      <pre>GET ${origin}/nip05/verify?name=_@divine.video&amp;pubkey=7e7e9c42...4e</pre>
-
-      <h4>Response</h4>
-      <pre>{ "name": "_", "domain": "divine.video", "pubkey": "7e7e...", "verified": true, "checked_at": 1709571048, "cached": false }</pre>
-    </section>
-
-    <section id="oauth">
-      <h2>OAuth Verification (${oauthPlatformNames.join(', ')})</h2>
-      <p>Users can verify by logging in instead of posting a proof.</p>
-      <p>The verifier page only reports sign-ins it started itself. A client starting its own sign-in keeps a random start secret (32 random bytes written as 43 base64url characters), sends its hash as <code>start_check</code>, and gets back the provider page to open. The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>. The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.</p>
-      <p>The new claim's tag carries a fourth value, <code>base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))</code>. Both hashes in this flow (the start check and the binding) are SHA-256 over the UTF-8 text shown, meaning the 43-character strings and not the raw bytes, written as base64url without padding.</p>
-
-      <h3>Start OAuth</h3>
-      <pre>POST ${origin}/auth/bluesky/start
-Content-Type: application/json
-
-{"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}${otherOAuthStartExamples ? `\n\n${otherOAuthStartExamples}` : ''}</pre>
-      <p>The answer is <code>{"url":"https://…"}</code>, the provider page to open.</p>
-      <h3>Back from the sign-in</h3>
-      <p>The sign-in returns to <code>return_url</code> with these added (any of them already there are replaced):</p>
-      <ul>
-        <li><code>platform</code> and <code>identity</code>: the account that signed in;</li>
-        <li><code>oauth_confirm</code>: the one-time code, after the <code>#</code>, valid for 10 minutes;</li>
-        <li><code>oauth_verified</code> (<code>true</code>): sent only while confirmation is optional, for app versions that can't confirm. Don't rely on it.</li>
-      </ul>
-      <p>A sign-in that didn't finish returns with <code>oauth_error</code>, a readable reason kept for older app versions (don't parse it), and <code>oauth_error_code</code>, a fixed value to branch on:</p>
-      <ul>
-        <li><code>cancelled</code>: the person cancelled or declined at the platform;</li>
-        <li><code>provider_error</code>: the platform reported another error;</li>
-        <li><code>failed</code>: the verifier couldn't check the account with the platform;</li>
-        <li><code>update_required</code>: the sign-in was started with <code>GET /auth/:platform/start</code>, as older app versions do, which is no longer accepted.</li>
-      </ul>
-      <p>Treat a code you don't know as <code>failed</code>. When the verifier can't tell where a sign-in started, or the sign-in fails unexpectedly, it returns to this page instead.</p>
-      <h3>Confirm the sign-in</h3>
-      <pre>POST ${origin}/auth/confirm
-Content-Type: application/json
-
-{"code":"&lt;code&gt;","start_secret":"&lt;secret&gt;","event":{…signed kind 10011…}}</pre>
-      <p>The answer is <code style="overflow-wrap:anywhere;">{"linked":true,"platform":"bluesky","identity":"example.bsky.social"}</code>. The client then publishes the same event to relays. Errors carry a <code>code</code>:</p>
-      <ul>
-        <li><code>invalid_request</code> (400: a malformed <code>code</code> or <code>start_secret</code>);</li>
-        <li><code>signin_not_found</code> (expired or not visible yet; retry briefly);</li>
-        <li><code>signin_used</code>;</li>
-        <li><code>signin_wrong_account</code>;</li>
-        <li><code>signin_not_yours</code>;</li>
-        <li><code>signin_claim_mismatch</code>;</li>
-        <li><code>invalid_event</code>.</li>
-      </ul>
-
-      <h3>Check OAuth Status</h3>
-      <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
-
-      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A sign-in counts only after you confirm it by publishing, and for ${FIXED_SIGNIN_LIFETIME_DAYS} days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting. A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.${tiktokOAuthHistoryNote}</div>
-    </section>
-
-    <section id="other">
-      <h2>Other Endpoints</h2>
-      <div class="endpoint">
-        <h3><span class="method get">GET</span> <code>/platforms</code></h3>
-        <p>List platforms currently available to clients. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field: <code>true</code> when sign-in is set up for that platform, <code>false</code> when only a proof post works. Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token. Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts.</p>
-      </div>
-      <div class="endpoint">
-        <h3><span class="method get">GET</span> <code>/health</code></h3>
-        <p>Health check. Returns <code>{"status":"ok", ...}</code>, including <code>signin_confirmation</code>: <code>"optional"</code> or <code>"required"</code>, the sign-in confirmation mode in effect.</p>
-      </div>
-    </section>
-
-    <section id="rate-limits">
-      <h2>Rate Limits &amp; Caching</h2>
-      <table>
-        <tr><th>Scope</th><th>Limit</th><th>Window</th></tr>
-        <tr><td>Per IP</td><td>60 requests</td><td>1 minute</td></tr>
-        <tr><td>Per pubkey</td><td>20 verifications</td><td>1 minute</td></tr>
-        <tr><td>Per platform</td><td>30 outbound fetches</td><td>1 minute</td></tr>
-        <tr><td>Batch max</td><td>10 claims</td><td>per request</td></tr>
-      </table>
-      <p style="margin-top:0.75rem;">Verified claims are cached for 24 hours, failures for 15 minutes, and platform outages (<code>temporarily_unavailable</code>) for 5 minutes. Answers to the verifier's own rate limits aren't cached.</p>
+    <!-- API REFERENCE LINK -->
+    <section id="api-link">
+      <p>Building on this service? The API reference is at <a href="/docs">/docs</a>.</p>
     </section>
 
     <script nonce="${cspNonce}">
@@ -3142,6 +2554,21 @@ Content-Type: application/json
   </div>
 </body>
 </html>`)
+})
+
+// The API reference. It reads the same platform setup as the landing page, so
+// its table and sign-in copy match what the picker there offers.
+app.get('/docs', (c) => {
+  const requestUrl = new URL(c.req.url)
+  // The TikTok review cookie is set by the landing page; /docs only reads it.
+  // TODO(#39): Remove cookie variance when the OAuth reviewer override is retired.
+  const tiktokOAuthReviewEnabled = getCookie(c, 'tiktok_oauth_review') === '1'
+  setPagePolicy(c)
+  c.header('Vary', 'Cookie')
+  return c.html(renderDocsPage({
+    origin: requestUrl.origin,
+    ...platformFlags(c.env, tiktokOAuthReviewEnabled),
+  }))
 })
 
 export default { fetch: app.fetch }
