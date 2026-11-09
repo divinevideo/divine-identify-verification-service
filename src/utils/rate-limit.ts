@@ -7,6 +7,8 @@ interface RateLimitConfig {
 
 export const RATE_LIMITS = {
   ip: { limit: 60, prefix: 'rl:ip' } as RateLimitConfig,
+  // Counted per check, unlike `ip`, because one request can make many checks.
+  address: { limit: 15, prefix: 'rl:ipchk' } as RateLimitConfig,
   pubkey: { limit: 20, prefix: 'rl:pk' } as RateLimitConfig,
   platform: { limit: 30, prefix: 'rl:plat' } as RateLimitConfig,
 }
@@ -40,7 +42,7 @@ export async function checkRateLimit(
   return { allowed: true, remaining: config.limit - current - 1 }
 }
 
-export type CheckCounter = 'pubkey' | 'platform'
+export type CheckCounter = 'address' | 'pubkey' | 'platform'
 
 export interface CheckWant {
   pubkey: string
@@ -59,7 +61,7 @@ export interface CheckReservation {
   written: Promise<void>
 }
 
-const CHECK_COUNTERS: readonly CheckCounter[] = ['pubkey', 'platform']
+const CHECK_COUNTERS: readonly CheckCounter[] = ['address', 'pubkey', 'platform']
 
 /**
  * Only the error's kind is safe to log: a storage error's message can carry the
@@ -70,14 +72,16 @@ function errorKind(err: unknown): string {
 }
 
 /**
- * Counts every check in a request against the pubkey and platform limits in one
- * pass: each counter is read once, units are handed out in input order, and each
- * counter is written once with its final value. A check is allowed only when
- * every counter it touches has a unit left, and then spends one on each.
+ * Counts every check in a request against the address, pubkey and platform
+ * limits in one pass: each counter is read once, units are handed out in input
+ * order, and each counter is written once with its final value. A check is
+ * allowed only when every counter it touches has a unit left, and then spends
+ * one on each.
  */
 export async function reserveChecks(
   kv: KVNamespace,
-  wants: readonly CheckWant[]
+  wants: readonly CheckWant[],
+  address: string
 ): Promise<CheckReservation> {
   if (wants.length === 0) return { refusals: [], written: Promise.resolve() }
 
@@ -85,7 +89,7 @@ export async function reserveChecks(
   const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS)
   const keyFor = (counter: CheckCounter, want: CheckWant): string => {
     const config = RATE_LIMITS[counter]
-    const id = counter === 'pubkey' ? want.pubkey : want.platform
+    const id = counter === 'address' ? address : counter === 'pubkey' ? want.pubkey : want.platform
     return `${config.prefix}:${id}:${window}`
   }
 

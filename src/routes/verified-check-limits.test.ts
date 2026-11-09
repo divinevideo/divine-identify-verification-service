@@ -144,4 +144,51 @@ describe('/verified counts its checks against the limits', () => {
     const logged = vi.mocked(console.error).mock.calls.flat().map(String).join(' ')
     expect(logged).not.toContain(OTHER_PK)
   })
+  // Fifteen checks from one address, spread over two pubkeys. Relays must be
+  // stubbed first so these checks are recorded and never leave the test.
+  async function spendAddressBudget(env: Bindings) {
+    const batch = (pubkey: string, proofs: string[]) => worker.fetch(new Request('https://verifier.divine.video/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'cf-connecting-ip': '203.0.113.9' },
+      body: JSON.stringify({ claims: proofs.map(proof => ({ platform: 'github', identity: 'octocat', proof, pubkey })) }),
+    }), env)
+    const first = await batch(OTHER_PK, Array.from({ length: 10 }, (_, i) => `spenda${i}x`))
+    expect(first.status).toBe(200)
+    await batch(OTHER_PK, Array.from({ length: 5 }, (_, i) => `spendb${i}x`))
+  }
+  const getFrom = (env: Bindings, path: string, address: string) =>
+    worker.fetch(new Request(`https://verifier.divine.video${path}`, { headers: { 'cf-connecting-ip': address } }), env)
+
+  it('/verified/<pubkey> spends the same address budget as /verify', async () => {
+    const { env } = envWith()
+    const tags = Array.from({ length: 10 }, (_, i) => ['i', `github:user${i}`, `proof${i}x`])
+    relaysWith([await signedList(tags)])
+    const verify = await worker.fetch(new Request('https://verifier.divine.video/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'cf-connecting-ip': '203.0.113.9' },
+      body: JSON.stringify({ claims: Array.from({ length: 10 }, (_, i) => ({ platform: 'github', identity: 'octocat', proof: `spenda${i}x`, pubkey: OTHER_PK })) }),
+    }), env)
+    expect(verify.status).toBe(200)
+
+    const res = await getFrom(env, `/verified/${PK}`, '203.0.113.9')
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as { unchecked: unknown[] }
+    const proofs = tags.map(tag => tag[2])
+    expect(proofs.filter(checked)).toEqual(proofs.slice(0, 5))
+    expect(body.unchecked).toHaveLength(5)
+  })
+
+  it('a lookup refuses checks from an address that has spent its budget, and not from another address', async () => {
+    const { env } = envWith()
+    relaysWith([await signedList([['i', 'github:alice', 'lookupproofx']])])
+    await spendAddressBudget(env)
+
+    const refused = await getFrom(env, '/verified?platform=github&identity=alice', '203.0.113.9')
+    expect(checked('lookupproofx')).toBe(false)
+    expect(refused.status).toBe(503)
+
+    await getFrom(env, '/verified?platform=github&identity=alice', '198.51.100.7')
+    expect(checked('lookupproofx')).toBe(true)
+  })
 })

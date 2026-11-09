@@ -222,9 +222,11 @@ function refusedAnswer(check: PendingCheck, refusal: CheckRefusal): VerifyResult
     // longer in use.
     error: refusal.unreadable
       ? 'Rate limit exceeded: the limits could not be checked right now'
-      : refusal.counter === 'pubkey'
-        ? 'Rate limit exceeded for this pubkey'
-        : `Rate limit exceeded for ${claim.platform}`,
+      : refusal.counter === 'address'
+        ? 'Rate limit exceeded for this IP address'
+        : refusal.counter === 'pubkey'
+          ? 'Rate limit exceeded for this pubkey'
+          : `Rate limit exceeded for ${claim.platform}`,
     code: 'temporarily_unavailable',
     checked_at: check.now,
     cached: false,
@@ -318,8 +320,8 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
 /**
  * Answers a request's claims, one promise per claim in input order. Claims a
  * sign-in record or the cache answers settle on their own; the rest share one
- * reservation against the pubkey and platform limits, so every platform check
- * the request makes is counted.
+ * reservation against the address, pubkey and platform limits, so every
+ * platform check the request makes is counted.
  */
 export function verifyClaims(claims: readonly VerifyClaim[], env: Bindings, clientIp: string): Array<Promise<VerifyResult>> {
   const looks = claims.map(claim => lookFirst(claim, env))
@@ -335,7 +337,7 @@ export function verifyClaims(claims: readonly VerifyClaim[], env: Bindings, clie
         wants.push({ pubkey, platform })
       }
     })
-    const { refusals, written } = await reserveChecks(env.RATE_LIMIT_KV, wants)
+    const { refusals, written } = await reserveChecks(env.RATE_LIMIT_KV, wants, clientIp)
     const refusalAt = new Map<number, CheckRefusal>()
     refusals.forEach((refusal, j) => {
       if (refusal) refusalAt.set(indices[j], refusal)

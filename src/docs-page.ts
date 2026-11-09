@@ -337,9 +337,10 @@ Content-Type: application/json
       <table>
         <tr><th>Scope</th><th>Limit</th><th>Window</th></tr>
         <tr><td>Per IP</td><td>60 requests</td><td>1 minute</td></tr>
+        <tr><td>Per IP</td><td>15 platform checks</td><td>1 minute</td></tr>
         <tr><td><code>/verified</code></td><td>Per IP, shared with the other endpoints</td><td>1 minute</td></tr>
         <tr><td>Per pubkey</td><td>20 verifications</td><td>1 minute</td></tr>
-        <tr><td>Per platform</td><td>30 outbound fetches</td><td>1 minute</td></tr>
+        <tr><td>Per platform</td><td>30 platform checks</td><td>1 minute</td></tr>
         <tr><td>Batch max</td><td>10 claims</td><td>per request</td></tr>
       </table>
       <p style="margin-top:0.75rem;">Verified claims are cached for 24 hours, failures for 15 minutes, and platform outages (<code>temporarily_unavailable</code>) for 5 minutes. Answers to the verifier's own rate limits aren't cached.</p>

@@ -49,10 +49,10 @@ const proofs = (n: number) => Array.from({ length: n }, (_, i) => `proof${i}x`)
 let fetchedUrls: string[]
 const checked = (proof: string) => fetchedUrls.some(url => url.includes(proof))
 
-async function postBatch(env: Bindings, body: unknown) {
+async function postBatch(env: Bindings, body: unknown, address?: string) {
   return app.request('/verify', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(address ? { 'cf-connecting-ip': address } : {}) },
     body: JSON.stringify(body),
   }, env)
 }
@@ -71,7 +71,8 @@ function expectLogsCarryNoIdentifiers() {
   for (const line of logged) {
     expect(line).not.toContain(PUBKEY)
     expect(line).not.toContain(OTHER_PUBKEY)
-    expect(line).not.toMatch(/rl:(pk|plat):/)
+    expect(line).not.toMatch(/rl:(pk|plat|ipchk):/)
+    expect(line).not.toContain('203.0.113.9')
   }
 }
 
@@ -142,7 +143,7 @@ describe('POST /verify counts every platform check against the limits', () => {
     const out = await results(res)
     expect(out[0]).toMatchObject({ verified: true, cached: true })
     expect(out[1]).toMatchObject({ verified: true, cached: true })
-    const limitReads = rateLimitKV.get.mock.calls.map(([key]) => key).filter(key => key.startsWith('rl:pk') || key.startsWith('rl:plat'))
+    const limitReads = rateLimitKV.get.mock.calls.map(([key]) => key).filter(key => key.startsWith('rl:pk') || key.startsWith('rl:plat') || key.startsWith('rl:ipchk'))
     expect(limitReads).toEqual([])
     expect(fetchedUrls).toEqual([])
   })
@@ -318,5 +319,64 @@ describe('POST /verify counts every platform check against the limits', () => {
     expect(out.filter(r => r.error === 'Rate limit exceeded for this pubkey')).toHaveLength(1)
     expect(out.filter(r => !r.error?.startsWith('Rate limit exceeded'))).toHaveLength(1)
     expect(fetchedUrls.filter(url => url.includes('prooftwicex'))).toHaveLength(1)
+  })
+
+  it('gives one address 15 checks a minute across requests', async () => {
+    const { env } = createEnv()
+    const first = proofs(10)
+    const second = Array.from({ length: 10 }, (_, i) => `proofb${i}x`)
+    const third = 'proofcthirdx'
+
+    await postBatch(env, { claims: first.map(id => githubClaim(id)) }, '203.0.113.9')
+    const out = await results(await postBatch(env, { claims: second.map(id => githubClaim(id, OTHER_PUBKEY)) }, '203.0.113.9'))
+
+    expect(second.slice(0, 5).map(checked)).toEqual([true, true, true, true, true])
+    expect(second.slice(5).map(checked)).toEqual([false, false, false, false, false])
+    for (const result of out.slice(5)) {
+      expect(result).toMatchObject({ error: 'Rate limit exceeded for this IP address', code: 'temporarily_unavailable', cached: false })
+    }
+
+    await postBatch(env, { claims: [githubClaim(third)] }, '198.51.100.7')
+    expect(checked(third)).toBe(true)
+    expectLogsCarryNoIdentifiers()
+  })
+
+  describe('the single-claim routes spend the same address budget', () => {
+    // Fifteen checks from one address, spread over two pubkeys.
+    async function spendAddressBudget(env: Bindings) {
+      await postBatch(env, { claims: proofs(10).map(id => githubClaim(id)) }, '203.0.113.9')
+      await postBatch(env, { claims: Array.from({ length: 5 }, (_, i) => githubClaim(`proofs${i}x`, OTHER_PUBKEY)) }, '203.0.113.9')
+    }
+    const single = (env: Bindings, claim: unknown, address: string) => app.request('/verify/single', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'cf-connecting-ip': address },
+      body: JSON.stringify(claim),
+    }, env)
+    const byPath = (env: Bindings, proof: string, address: string) =>
+      app.request(`/verify/github/octocat/${proof}?pubkey=${PUBKEY}&format=json`, { headers: { 'cf-connecting-ip': address } }, env)
+
+    it('POST /verify/single refuses a check from an address that has spent its budget', async () => {
+      const { env } = createEnv()
+      await spendAddressBudget(env)
+
+      const refused = await single(env, githubClaim('proofsinglex'), '203.0.113.9')
+      expect(await refused.json()).toMatchObject({ error: 'Rate limit exceeded for this IP address', code: 'temporarily_unavailable', cached: false })
+      expect(checked('proofsinglex')).toBe(false)
+
+      await single(env, githubClaim('proofsingley'), '198.51.100.7')
+      expect(checked('proofsingley')).toBe(true)
+    })
+
+    it('GET /verify/:platform/... refuses a check from an address that has spent its budget', async () => {
+      const { env } = createEnv()
+      await spendAddressBudget(env)
+
+      const refused = await byPath(env, 'proofpathx', '203.0.113.9')
+      expect(await refused.json()).toMatchObject({ error: 'Rate limit exceeded for this IP address', code: 'temporarily_unavailable', cached: false })
+      expect(checked('proofpathx')).toBe(false)
+
+      await byPath(env, 'proofpathy', '198.51.100.7')
+      expect(checked('proofpathy')).toBe(true)
+    })
   })
 })

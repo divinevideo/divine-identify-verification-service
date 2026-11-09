@@ -3,11 +3,13 @@ import { reserveChecks } from './rate-limit'
 
 const PK_A = 'a'.repeat(64)
 const PK_B = 'b'.repeat(64)
+const ADDRESS = '203.0.113.9'
 
 const MINUTE_START = 28_333_333 * 60_000
 const WINDOW = Math.floor(MINUTE_START / 60_000)
 
 const pkKey = (pk: string) => `rl:pk:${pk}:${WINDOW}`
+const addrKey = () => `rl:ipchk:${ADDRESS}:${WINDOW}`
 const platKey = (platform: string) => `rl:plat:${platform}:${WINDOW}`
 
 function fakeKv(seed: Record<string, string> = {}) {
@@ -43,7 +45,7 @@ describe('reserveChecks', () => {
     const { kv, store, put } = fakeKv({ [pkKey(PK_A)]: '15' })
     const wants = Array.from({ length: 10 }, () => ({ pubkey: PK_A, platform: 'github' }))
 
-    const { refusals, written } = await reserveChecks(kv, wants)
+    const { refusals, written } = await reserveChecks(kv, wants, ADDRESS)
     await written
 
     expect(refusals.slice(0, 5)).toEqual([null, null, null, null, null])
@@ -52,14 +54,15 @@ describe('reserveChecks', () => {
     )
     expect(store.get(pkKey(PK_A))).toBe('20')
     expect(store.get(platKey('github'))).toBe('5')
-    expect(put).toHaveBeenCalledTimes(2)
+    expect(store.get(addrKey())).toBe('5')
+    expect(put).toHaveBeenCalledTimes(3)
   })
 
   it('counts the platform counter once per check', async () => {
     const { kv, store } = fakeKv({ [platKey('github')]: '28' })
     const wants = Array.from({ length: 3 }, () => ({ pubkey: PK_A, platform: 'github' }))
 
-    const { refusals, written } = await reserveChecks(kv, wants)
+    const { refusals, written } = await reserveChecks(kv, wants, ADDRESS)
     await written
 
     expect(refusals).toEqual([null, null, { counter: 'platform', unreadable: false }])
@@ -76,11 +79,12 @@ describe('reserveChecks', () => {
       { pubkey: PK_A, platform: 'github' },
     ]
 
-    const { written } = await reserveChecks(kv, wants)
+    const { written } = await reserveChecks(kv, wants, ADDRESS)
     await written
 
-    expect(get).toHaveBeenCalledTimes(4)
-    expect(put).toHaveBeenCalledTimes(4)
+    expect(get).toHaveBeenCalledTimes(5)
+    expect(put).toHaveBeenCalledTimes(5)
+    expect(store.get(addrKey())).toBe('4')
     expect(store.get(pkKey(PK_A))).toBe('3')
     expect(store.get(pkKey(PK_B))).toBe('1')
     expect(store.get(platKey('github'))).toBe('3')
@@ -95,12 +99,12 @@ describe('reserveChecks', () => {
       { pubkey: PK_A, platform: 'github' },
     ]
 
-    const { written } = await reserveChecks(kv, wants)
+    const { written } = await reserveChecks(kv, wants, ADDRESS)
     await written
     expect(put).not.toHaveBeenCalled()
 
     get.mockClear()
-    const empty = await reserveChecks(kv, [])
+    const empty = await reserveChecks(kv, [], ADDRESS)
     expect(get).not.toHaveBeenCalled()
     expect(empty.refusals).toEqual([])
   })
@@ -115,11 +119,11 @@ describe('reserveChecks', () => {
       { pubkey: PK_B, platform: 'twitter' },
     ]
 
-    const pending = reserveChecks(kv, wants)
+    const pending = reserveChecks(kv, wants, ADDRESS)
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(get).toHaveBeenCalledTimes(4)
+    expect(get).toHaveBeenCalledTimes(5)
     expect(put).not.toHaveBeenCalled()
 
     gate.resolve(null)
@@ -135,7 +139,7 @@ describe('reserveChecks', () => {
     const put = vi.fn(async (_key: string, _value: string, _opts?: unknown) => {})
     const kv = { get, put } as unknown as KVNamespace
 
-    const pending = reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }])
+    const pending = reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }], ADDRESS)
     vi.setSystemTime(MINUTE_START + 60_900)
     gate.resolve(null)
     const { written } = await pending
@@ -159,7 +163,7 @@ describe('reserveChecks', () => {
     const { refusals, written } = await reserveChecks(kv, [
       { pubkey: PK_A, platform: 'github' },
       { pubkey: PK_B, platform: 'github' },
-    ])
+    ], ADDRESS)
     await written
 
     expect(refusals).toEqual([null, { counter: 'pubkey', unreadable: true }])
@@ -172,7 +176,7 @@ describe('reserveChecks', () => {
   it('reports the pubkey counter when both counters are full', async () => {
     const { kv } = fakeKv({ [pkKey(PK_A)]: '20', [platKey('github')]: '30' })
 
-    const { refusals } = await reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }])
+    const { refusals } = await reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }], ADDRESS)
 
     expect(refusals).toEqual([{ counter: 'pubkey', unreadable: false }])
   })
@@ -185,7 +189,7 @@ describe('reserveChecks', () => {
       return store.get(key) ?? null
     })
 
-    const { refusals } = await reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }])
+    const { refusals } = await reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }], ADDRESS)
 
     expect(refusals).toEqual([{ counter: 'pubkey', unreadable: true }])
   })
@@ -195,7 +199,7 @@ describe('reserveChecks', () => {
     const { kv, get } = fakeKv()
     get.mockRejectedValue(new Error('failed for rl:ipchk:203.0.113.9 and rl:pk:' + PK_B))
 
-    await reserveChecks(kv, [{ pubkey: PK_B, platform: 'github' }])
+    await reserveChecks(kv, [{ pubkey: PK_B, platform: 'github' }], ADDRESS)
 
     expect(errorSpy).toHaveBeenCalled()
     const logged = JSON.stringify(errorSpy.mock.calls)
@@ -208,7 +212,7 @@ describe('reserveChecks', () => {
     const { kv, put } = fakeKv()
     put.mockRejectedValue(new Error('write failed for ' + PK_A))
 
-    const { refusals, written } = await reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }])
+    const { refusals, written } = await reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }], ADDRESS)
     await expect(written).resolves.toBeUndefined()
 
     expect(refusals).toEqual([null])
@@ -223,7 +227,7 @@ describe('reserveChecks', () => {
     const { written } = await reserveChecks(kv, [
       { pubkey: PK_A, platform: 'github' },
       { pubkey: PK_A, platform: 'github' },
-    ])
+    ], ADDRESS)
     await written
 
     expect(warnSpy).toHaveBeenCalledTimes(1)
@@ -234,5 +238,73 @@ describe('reserveChecks', () => {
       granted: 1,
     })
     expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(PK_A)
+  })
+
+  it('refuses checks past the address budget before the pubkey and platform counters', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { kv, store, put } = fakeKv()
+    const pubkeys = Array.from({ length: 20 }, (_, i) => String(i).padStart(2, '0').repeat(32))
+    const wants = pubkeys.map((pubkey) => ({ pubkey, platform: 'github' }))
+
+    const { refusals, written } = await reserveChecks(kv, wants, ADDRESS)
+    await written
+
+    expect(refusals.slice(0, 15)).toEqual(Array.from({ length: 15 }, () => null))
+    expect(refusals.slice(15)).toEqual(
+      Array.from({ length: 5 }, () => ({ counter: 'address', unreadable: false }))
+    )
+    expect(store.get(addrKey())).toBe('15')
+    for (const pubkey of pubkeys.slice(15)) expect(put.mock.calls.map((c) => c[0])).not.toContain(pkKey(pubkey))
+    expect(warnSpy).toHaveBeenCalledWith('Check limit reached:', {
+      counter: 'address',
+      platform: 'github',
+      asked: 20,
+      granted: 15,
+    })
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(ADDRESS)
+  })
+
+  it('refuses every check when the address counter cannot be read', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { kv, store, get, put } = fakeKv()
+    get.mockImplementation(async (key: string) => {
+      if (key.startsWith('rl:ipchk:')) throw new Error('kv down')
+      return store.get(key) ?? null
+    })
+
+    const { refusals, written } = await reserveChecks(kv, [
+      { pubkey: PK_A, platform: 'github' },
+      { pubkey: PK_B, platform: 'twitter' },
+    ], ADDRESS)
+    await written
+
+    expect(refusals).toEqual([
+      { counter: 'address', unreadable: true },
+      { counter: 'address', unreadable: true },
+    ])
+    expect(put).not.toHaveBeenCalled()
+    expect(errorSpy).toHaveBeenCalled()
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(ADDRESS)
+  })
+
+  it('reports the address counter when the pubkey counter is also full', async () => {
+    const { kv } = fakeKv({ [addrKey()]: '15', [pkKey(PK_A)]: '20' })
+
+    const { refusals } = await reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }], ADDRESS)
+
+    expect(refusals).toEqual([{ counter: 'address', unreadable: false }])
+  })
+
+  it('reports an unreadable address counter ahead of a full pubkey counter', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { kv, store, get } = fakeKv({ [pkKey(PK_A)]: '20' })
+    get.mockImplementation(async (key: string) => {
+      if (key.startsWith('rl:ipchk:')) throw new Error('kv down')
+      return store.get(key) ?? null
+    })
+
+    const { refusals } = await reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }], ADDRESS)
+
+    expect(refusals).toEqual([{ counter: 'address', unreadable: true }])
   })
 })
