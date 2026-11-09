@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
-import type { Bindings, VerifyClaim, VerifyResult, CachedResult, Platform } from '../types'
+import type { Bindings, VerifyClaim, VerifyResult, CachedResult, Platform, OAuthVerification } from '../types'
 import { validateClaim, normalizePubkey, fitsStorageKeys, VALID_PLATFORMS } from '../utils/validation'
 import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
-import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
+import { checkRateLimit, reserveChecks, RATE_LIMITS, type CheckRefusal, type CheckWant } from '../utils/rate-limit'
 import { getVerifier } from '../platforms/registry'
 import { PLATFORM_CHECK_TIME_BUDGET_MS, PlatformUnavailableError, withinTimeBudget } from '../platforms/base'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
@@ -62,11 +62,61 @@ async function rememberResult(env: Bindings, key: string, platform: string, entr
   }
 }
 
-async function verifySingleClaim(
-  claim: VerifyClaim,
+// What a claim that needs its platform asked carries from the first look to the check.
+interface PendingCheck {
+  claim: VerifyClaim
+  tidy: { identity: string; proof: string }
+  tidied: { canonical_identity?: string; canonical_proof?: string }
+  key: string
+  isSignInLink: boolean
+  now: number
+}
+
+type FirstLook = { answer: Promise<VerifyResult> } | { check: PendingCheck }
+
+// A counted sign-in answers without a platform check. The account lookup it
+// may need stays in its own promise so the claims beside it are not held up.
+async function signInAnswer(
   env: Bindings,
-  clientIp: string
+  oauthResult: OAuthVerification,
+  claim: VerifyClaim,
+  tidy: { identity: string; proof: string },
+  tidied: { canonical_identity?: string; canonical_proof?: string },
+  now: number,
 ): Promise<VerifyResult> {
+  if (!(await signInAccountStillMatches(env, oauthResult, tidy.identity))) {
+    return {
+      platform: claim.platform,
+      identity: claim.identity,
+      verified: false,
+      // Not "expired": the record is intact, but the handle was deleted or
+      // now points to another account. Apps offer the same "Sign in again"
+      // for both codes, where the platform offers sign-in.
+      error: 'This handle no longer points to the account that signed in, so the link no longer counts.',
+      code: 'signin_account_changed',
+      checked_at: now,
+      cached: false,
+    }
+  }
+  return {
+    platform: claim.platform,
+    identity: claim.identity,
+    verified: true,
+    method: 'oauth',
+    provenance: {
+      method: 'oauth',
+      evidence: ['oauth_verification_cache'],
+    },
+    // A sign-in claim can carry a pasted proof too, so both clean values apply.
+    ...cleanValues({}, tidied),
+    checked_at: oauthResult.checked_at,
+    cached: true,
+  }
+}
+
+// Everything that can answer a claim without asking its platform. Only what is
+// left over needs a unit from the limits.
+async function lookFirst(claim: VerifyClaim, env: Bindings): Promise<FirstLook> {
   const now = Math.floor(Date.now() / 1000)
   // Normalize pubkey to lowercase for consistent cache keys. Validation treats a
   // Bluesky proof that is only whitespace as no proof, so make it no proof here
@@ -99,34 +149,7 @@ async function verifySingleClaim(
   if (SIGNIN_PLATFORMS.has(normalizedClaim.platform)) {
     const oauthResult = await getCountedSignIn(env, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey)
     if (oauthResult) {
-      if (!(await signInAccountStillMatches(env, oauthResult, tidy.identity))) {
-        return {
-          platform: normalizedClaim.platform,
-          identity: normalizedClaim.identity,
-          verified: false,
-          // Not "expired": the record is intact, but the handle was deleted or
-          // now points to another account. Apps offer the same "Sign in again"
-          // for both codes, where the platform offers sign-in.
-          error: 'This handle no longer points to the account that signed in, so the link no longer counts.',
-          code: 'signin_account_changed',
-          checked_at: now,
-          cached: false,
-        }
-      }
-      return {
-        platform: normalizedClaim.platform,
-        identity: normalizedClaim.identity,
-        verified: true,
-        method: 'oauth',
-        provenance: {
-          method: 'oauth',
-          evidence: ['oauth_verification_cache'],
-        },
-        // A sign-in claim can carry a pasted proof too, so both clean values apply.
-        ...cleanValues({}, tidied),
-        checked_at: oauthResult.checked_at,
-        cached: true,
-      }
+      return { answer: signInAnswer(env, oauthResult, normalizedClaim, tidy, tidied, now) }
     }
   }
 
@@ -136,7 +159,7 @@ async function verifySingleClaim(
   // without asking the platform. This comes before the result cache, so an
   // answer cached for this claim before can't stand in for it.
   if (isSignInLink && normalizedClaim.platform !== 'bluesky') {
-    return lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, now, false)
+    return { answer: Promise.resolve(lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, now, false)) }
   }
 
   // Then the result cache
@@ -144,54 +167,55 @@ async function verifySingleClaim(
   if (cached) {
     // A failure Bluesky gave this sign-in link earlier; an outage stays "try again".
     if (isSignInLink && !cached.verified && cached.code !== 'temporarily_unavailable') {
-      return lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, cached.checked_at, true)
+      return { answer: Promise.resolve(lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, cached.checked_at, true)) }
     }
     return {
-      platform: normalizedClaim.platform,
-      identity: normalizedClaim.identity,
-      verified: cached.verified,
-      error: cached.error,
-      code: cached.code,
-      method: cached.method,
-      provenance: cached.provenance,
-      // The entry may have been written for the clean form, so the tidy values
-      // of this claim fill in what the platform didn't supply.
-      ...(cached.verified ? cleanValues({ canonicalProof: cached.canonical_proof, canonicalIdentity: cached.canonical_identity }, tidied) : {}),
-      checked_at: cached.checked_at,
-      cached: true,
+      answer: Promise.resolve({
+        platform: normalizedClaim.platform,
+        identity: normalizedClaim.identity,
+        verified: cached.verified,
+        error: cached.error,
+        code: cached.code,
+        method: cached.method,
+        provenance: cached.provenance,
+        // The entry may have been written for the clean form, so the tidy values
+        // of this claim fill in what the platform didn't supply.
+        ...(cached.verified ? cleanValues({ canonicalProof: cached.canonical_proof, canonicalIdentity: cached.canonical_identity }, tidied) : {}),
+        checked_at: cached.checked_at,
+        cached: true,
+      }),
     }
   }
 
-  // Check rate limits (pubkey + platform) — checkRateLimit increments in one step
-  const pubkeyLimit = await checkRateLimit(env.RATE_LIMIT_KV, RATE_LIMITS.pubkey, normalizedClaim.pubkey)
-  if (!pubkeyLimit.allowed) {
-    return {
-      platform: normalizedClaim.platform,
-      identity: normalizedClaim.identity,
-      verified: false,
-      // TODO(#115): Divine apps built before divine-mobile#9999 recognise rate
-      // limiting by the "Rate limit exceeded" prefix of this and the
-      // per-platform answer below; newer builds read `code`. Keep both texts
-      // until those older versions are no longer in use.
-      error: 'Rate limit exceeded for this pubkey',
-      code: 'temporarily_unavailable',
-      checked_at: now,
-      cached: false,
-    }
-  }
+  return { check: { claim: normalizedClaim, tidy, tidied, key, isSignInLink, now } }
+}
 
-  const platformLimit = await checkRateLimit(env.RATE_LIMIT_KV, RATE_LIMITS.platform, normalizedClaim.platform)
-  if (!platformLimit.allowed) {
-    return {
-      platform: normalizedClaim.platform,
-      identity: normalizedClaim.identity,
-      verified: false,
-      error: `Rate limit exceeded for ${normalizedClaim.platform}`,
-      code: 'temporarily_unavailable',
-      checked_at: now,
-      cached: false,
-    }
+// A claim the limits had no unit for. It is not remembered: the next request
+// with units left checks it.
+function refusedAnswer(check: PendingCheck, refusal: CheckRefusal): VerifyResult {
+  const { claim } = check
+  return {
+    platform: claim.platform,
+    identity: claim.identity,
+    verified: false,
+    // TODO(#115): Divine apps built before divine-mobile#9999 recognise rate
+    // limiting by the "Rate limit exceeded" prefix every one of these texts
+    // starts with; newer builds read `code`. Keep that prefix, and the pubkey
+    // and per-platform texts as they are, until those older versions are no
+    // longer in use.
+    error: refusal.unreadable
+      ? 'Rate limit exceeded: the limits could not be checked right now'
+      : refusal.counter === 'pubkey'
+        ? 'Rate limit exceeded for this pubkey'
+        : `Rate limit exceeded for ${claim.platform}`,
+    code: 'temporarily_unavailable',
+    checked_at: check.now,
+    cached: false,
   }
+}
+
+async function checkPlatform(check: PendingCheck, env: Bindings): Promise<VerifyResult> {
+  const { claim: normalizedClaim, tidy, tidied, key, isSignInLink, now } = check
 
   // Convert hex pubkey to npub for content search
   const npub = hexToNpub(normalizedClaim.pubkey)
@@ -274,6 +298,49 @@ async function verifySingleClaim(
   }
 }
 
+/**
+ * Answers a request's claims, one promise per claim in input order. Claims a
+ * sign-in record or the cache answers settle on their own; the rest share one
+ * reservation against the pubkey and platform limits, so every platform check
+ * the request makes is counted.
+ */
+export function verifyClaims(claims: readonly VerifyClaim[], env: Bindings, clientIp: string): Array<Promise<VerifyResult>> {
+  const looks = claims.map(claim => lookFirst(claim, env))
+  // allSettled: one claim whose first look fails must not keep the others
+  // from their units.
+  const reservation = Promise.allSettled(looks).then(async settled => {
+    const indices: number[] = []
+    const wants: CheckWant[] = []
+    settled.forEach((outcome, index) => {
+      if (outcome.status === 'fulfilled' && 'check' in outcome.value) {
+        indices.push(index)
+        const { pubkey, platform } = outcome.value.check.claim
+        wants.push({ pubkey, platform })
+      }
+    })
+    const { refusals, written } = await reserveChecks(env.RATE_LIMIT_KV, wants)
+    const refusalAt = new Map<number, CheckRefusal>()
+    refusals.forEach((refusal, j) => {
+      if (refusal) refusalAt.set(indices[j], refusal)
+    })
+    return { refusalAt, written }
+  })
+
+  return looks.map((look, index) => look.then(async first => {
+    if ('answer' in first) return first.answer
+    const { refusalAt, written } = await reservation
+    const refusal = refusalAt.get(index)
+    if (refusal) return refusedAnswer(first.check, refusal)
+    const [result] = await Promise.all([checkPlatform(first.check, env), written])
+    return result
+  }))
+}
+
+// TODO(#179): remove once /verified calls verifyClaims.
+export async function verifySingleClaim(claim: VerifyClaim, env: Bindings, clientIp: string): Promise<VerifyResult> {
+  return verifyClaims([claim], env, clientIp)[0]
+}
+
 type InvalidClaimResult = {
   platform: string
   identity: string
@@ -331,13 +398,21 @@ verify.post('/', async (c) => {
   // results of the valid claims beside it (#35). Invalid claims become
   // verified:false results in place, and never reach rate limits or platforms.
   const now = Math.floor(Date.now() / 1000)
-  const results: BatchResult[] = await Promise.all(
-    body.claims.map((claim, index) => {
-      const invalid = validateClaim(claim, index)
-      if (invalid) return invalidClaimResult(claim, invalid.error, now)
-      return verifySingleClaim(claim as VerifyClaim, c.env, clientIp)
-    })
-  )
+  const results: BatchResult[] = new Array(body.claims.length)
+  const valid: VerifyClaim[] = []
+  const validAt: number[] = []
+  body.claims.forEach((claim, index) => {
+    const invalid = validateClaim(claim, index)
+    if (invalid) {
+      results[index] = invalidClaimResult(claim, invalid.error, now)
+    } else {
+      valid.push(claim as VerifyClaim)
+      validAt.push(index)
+    }
+  })
+  // One call for every valid claim, so they share one reservation against the limits.
+  const answers = await Promise.all(verifyClaims(valid, c.env, clientIp))
+  answers.forEach((answer, j) => { results[validAt[j]] = answer })
 
   return c.json({ results })
 })
@@ -362,7 +437,7 @@ verify.post('/single', async (c) => {
   const invalid = validateClaim(body, 0)
   if (invalid) return c.json({ error: invalid.error }, 400)
 
-  const result = await verifySingleClaim(body as VerifyClaim, c.env, clientIp)
+  const result = await verifyClaims([body as VerifyClaim], c.env, clientIp)[0]
   return c.json(result)
 })
 
@@ -405,7 +480,7 @@ verify.get('/:platform/*', async (c) => {
   const invalid = validateClaim(claim, 0)
   if (invalid) return c.json({ error: invalid.error }, 400)
   const validatedClaim = claim as VerifyClaim
-  const result = await verifySingleClaim(validatedClaim, c.env, clientIp)
+  const result = await verifyClaims([validatedClaim], c.env, clientIp)[0]
 
   // Content negotiation: HTML for browsers, JSON for API clients
   const accept = c.req.header('accept') || ''
