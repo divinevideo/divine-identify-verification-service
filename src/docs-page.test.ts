@@ -82,6 +82,7 @@ describe('GET /docs', () => {
     expect(rowStart).toBeGreaterThan(-1)
     const row = section.slice(rowStart, section.indexOf('</tr>', rowStart))
     expect(row).toContain('repeating the request may not change the answer')
+    expect(row).toContain('verifier storage failed while counting the request or reading records')
     expect(row).not.toContain('Try again shortly.')
   })
 

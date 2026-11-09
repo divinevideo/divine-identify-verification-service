@@ -257,7 +257,7 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
         <tr><td><code>invalid_request</code></td><td>400</td><td><code>platform</code> or <code>identity</code> is missing, or <code>platform</code> is not a platform name either host knows</td></tr>
         <tr><td><code>not_found</code></td><td>404</td><td>No one verifies this account right now, the identity can't be checked, or the platform is one verify.divine.video listed that this verifier doesn't check (<code>instagram</code>, <code>snapchat</code>)</td></tr>
         <tr><td><code>rate_limited</code></td><td>429</td><td>The per-IP limit is spent; see Rate Limits below</td></tr>
-        <tr><td><code>temporarily_unavailable</code></td><td>503</td><td>For <code>/verified/:pubkey</code>, Divine's relay or verifier storage could not be read; try again shortly. For the lookup, no owner checked out and something could not be checked, including candidates or tags left out by search and check limits; repeating the request may not change the answer.</td></tr>
+        <tr><td><code>temporarily_unavailable</code></td><td>503</td><td>For <code>/verified/:pubkey</code>, Divine's relay or verifier storage could not be read; try again shortly. For the lookup, verifier storage failed while counting the request or reading records, or no owner checked out and something could not be checked, including candidates or tags left out by search and check limits; repeating the request may not change the answer.</td></tr>
       </table>
     </section>
 
