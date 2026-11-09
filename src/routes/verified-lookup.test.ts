@@ -82,7 +82,7 @@ const get = (env: Bindings, path: string, headers: Record<string, string> = {}) 
   worker.fetch(new Request(`https://verifier.divine.video${path}`, { headers }), env)
 
 const UNAVAILABLE = {
-  error: { code: 'temporarily_unavailable', message: 'this platform identity could not be checked right now, try again shortly' },
+  error: { code: 'temporarily_unavailable', message: 'this platform identity could not be fully checked; the result is unknown' },
 }
 const NOT_FOUND = { error: { code: 'not_found', message: 'no live verification for this platform identity' } }
 const INVALID = { error: { code: 'invalid_request', message: 'platform and identity are required' } }
@@ -595,6 +595,31 @@ describe('GET /verified?platform=&identity=', () => {
       expect(res.status).toBe(503)
       expect(await res.json()).toEqual(UNAVAILABLE)
       // Both endpoints agree: the person's own answer lists the tag as not checked.
+      const person = await (await get(env, `/verified/${PK}`)).json() as { verifications: unknown[]; unchecked: unknown[] }
+      expect(person.verifications).toEqual([])
+      expect(person.unchecked).toContainEqual({ platform: 'github', identity: 'alice' })
+    })
+
+    it('does not spend a check on a repeated tag', async () => {
+      const { env, kv } = envWith()
+      await seedProof(kv, 'github', 'alice', 'p1', PK, { verified: false, type: 'failed', code: 'proof_not_found' })
+      const checkedAt = await seedProof(kv, 'github', 'alice', 'p2')
+      relaysWith([await signedList([['i', 'github:alice', 'p1'], ['i', 'github:alice', 'p1'], ['i', 'github:alice', 'p2']])])
+      const res = await get(env, '/verified?platform=github&identity=alice')
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ platform: 'github', identity: 'alice', pubkey: PK, method: 'proof-post', verified_at: checkedAt })
+    })
+
+    it('is not found when the only tag past the checked ones repeats a failed tag', async () => {
+      const { env, kv } = envWith()
+      await seedProof(kv, 'github', 'alice', 'p1', PK, { verified: false, type: 'failed', code: 'proof_not_found' })
+      const others = Array.from({ length: MAX_LIST_CLAIMS - 1 }, (_, i) => ['i', `github:other${i}`, `q${i}`])
+      relaysWith([await signedList([['i', 'github:alice', 'p1'], ...others, ['i', 'github:alice', 'p1']])])
+      const res = await get(env, '/verified?platform=github&identity=alice')
+      expect(res.status).toBe(404)
+      expect(await res.json()).toEqual(NOT_FOUND)
+      // The person's own answer still lists the repeat as not checked: it does not dedupe
+      // a tag past its cap against a tag that failed.
       const person = await (await get(env, `/verified/${PK}`)).json() as { verifications: unknown[]; unchecked: unknown[] }
       expect(person.verifications).toEqual([])
       expect(person.unchecked).toContainEqual({ platform: 'github', identity: 'alice' })

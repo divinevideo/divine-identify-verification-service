@@ -318,7 +318,7 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
 
 verified.get('/', async (c) => {
   const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
-  const unavailable = () => oldError(503, 'temporarily_unavailable', 'this platform identity could not be checked right now, try again shortly')
+  const unavailable = () => oldError(503, 'temporarily_unavailable', 'this platform identity could not be fully checked; the result is unknown')
   const notFound = () => oldError(404, 'not_found', 'no live verification for this platform identity')
   // Storage failing at any step must still answer in the old shape, not the app-wide 500.
   let ipAllowed: boolean
