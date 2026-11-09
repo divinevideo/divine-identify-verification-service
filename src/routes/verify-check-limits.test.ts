@@ -2,8 +2,8 @@
 // ABOUTME: per-platform limits, and answers that need no check never read them.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Hono } from 'hono'
-import type { Bindings, CachedResult } from '../types'
-import verify from './verify'
+import type { Bindings, CachedResult, VerifyClaim } from '../types'
+import verify, { verifyClaims } from './verify'
 import { cacheKey } from '../utils/cache'
 import { oauthVerificationKey } from '../oauth/state'
 
@@ -321,13 +321,15 @@ describe('POST /verify counts every platform check against the limits', () => {
     expect(fetchedUrls.filter(url => url.includes('prooftwicex'))).toHaveLength(1)
   })
 
-  it('gives one address 15 checks a minute across requests', async () => {
+  it('gives one address 20 checks a minute across requests', async () => {
     const { env } = createEnv()
     const first = proofs(10)
+    const filler = Array.from({ length: 5 }, (_, i) => `proofa${i}x`)
     const second = Array.from({ length: 10 }, (_, i) => `proofb${i}x`)
     const third = 'proofcthirdx'
 
     await postBatch(env, { claims: first.map(id => githubClaim(id)) }, '203.0.113.9')
+    await postBatch(env, { claims: filler.map(id => githubClaim(id)) }, '203.0.113.9')
     const out = await results(await postBatch(env, { claims: second.map(id => githubClaim(id, OTHER_PUBKEY)) }, '203.0.113.9'))
 
     expect(second.slice(0, 5).map(checked)).toEqual([true, true, true, true, true])
@@ -342,10 +344,10 @@ describe('POST /verify counts every platform check against the limits', () => {
   })
 
   describe('the single-claim routes spend the same address budget', () => {
-    // Fifteen checks from one address, spread over two pubkeys.
+    // Twenty checks from one address, spread over two pubkeys.
     async function spendAddressBudget(env: Bindings) {
       await postBatch(env, { claims: proofs(10).map(id => githubClaim(id)) }, '203.0.113.9')
-      await postBatch(env, { claims: Array.from({ length: 5 }, (_, i) => githubClaim(`proofs${i}x`, OTHER_PUBKEY)) }, '203.0.113.9')
+      await postBatch(env, { claims: Array.from({ length: 10 }, (_, i) => githubClaim(`proofs${i}x`, OTHER_PUBKEY)) }, '203.0.113.9')
     }
     const single = (env: Bindings, claim: unknown, address: string) => app.request('/verify/single', {
       method: 'POST',
@@ -378,5 +380,29 @@ describe('POST /verify counts every platform check against the limits', () => {
       await byPath(env, 'proofpathy', '198.51.100.7')
       expect(checked('proofpathy')).toBe(true)
     })
+  })
+
+  it('settles a cached answer without waiting for the limits to be read', async () => {
+    const { env, rateLimitKV, rateLimitStore } = createEnv()
+    const cachedEntry: CachedResult = { verified: true, checked_at: 1_700_000_000, type: 'verified' }
+    await env.CACHE_KV.put(cacheKey('github', 'octocat', 'proofcachedx', PUBKEY), JSON.stringify(cachedEntry))
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    rateLimitKV.get.mockImplementation(async (key: string) => {
+      await held
+      return rateLimitStore.get(key) ?? null
+    })
+
+    const [cached, uncached] = verifyClaims([githubClaim('proofcachedx'), githubClaim('prooffreshx')] as VerifyClaim[], env, '203.0.113.9')
+    let uncachedSettled = false
+    void uncached.then(() => { uncachedSettled = true })
+
+    await expect(cached).resolves.toMatchObject({ verified: true, cached: true })
+    expect(uncachedSettled).toBe(false)
+    expect(rateLimitKV.get).toHaveBeenCalled()
+
+    release()
+    await expect(uncached).resolves.toMatchObject({ verified: false, cached: false })
+    expect(checked('prooffreshx')).toBe(true)
   })
 })

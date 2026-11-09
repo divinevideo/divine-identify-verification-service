@@ -62,7 +62,7 @@ describe('GET /docs', () => {
     }
     expect(html).toContain('<tr><td><code>/verified</code></td>')
     expect(html).toContain('<tr><td>Per platform</td><td>30 platform checks</td><td>1 minute</td></tr>')
-    expect(html).toContain('<tr><td>Per IP</td><td>15 platform checks</td><td>1 minute</td></tr>')
+    expect(html).toContain('<tr><td>Per IP</td><td>20 platform checks</td><td>1 minute</td></tr>')
     expect(html).not.toContain('outbound fetches')
   })
 

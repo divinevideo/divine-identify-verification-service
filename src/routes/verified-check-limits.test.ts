@@ -144,9 +144,9 @@ describe('/verified counts its checks against the limits', () => {
     const logged = vi.mocked(console.error).mock.calls.flat().map(String).join(' ')
     expect(logged).not.toContain(OTHER_PK)
   })
-  // Fifteen checks from one address, spread over two pubkeys. Relays must be
+  // A batch of 10 checks, then `second` more, from one address. Relays must be
   // stubbed first so these checks are recorded and never leave the test.
-  async function spendAddressBudget(env: Bindings) {
+  async function spendAddressBudget(env: Bindings, second = 10) {
     const batch = (pubkey: string, proofs: string[]) => worker.fetch(new Request('https://verifier.divine.video/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'cf-connecting-ip': '203.0.113.9' },
@@ -154,7 +154,7 @@ describe('/verified counts its checks against the limits', () => {
     }), env)
     const first = await batch(OTHER_PK, Array.from({ length: 10 }, (_, i) => `spenda${i}x`))
     expect(first.status).toBe(200)
-    await batch(OTHER_PK, Array.from({ length: 5 }, (_, i) => `spendb${i}x`))
+    await batch(OTHER_PK, Array.from({ length: second }, (_, i) => `spendb${i}x`))
   }
   const getFrom = (env: Bindings, path: string, address: string) =>
     worker.fetch(new Request(`https://verifier.divine.video${path}`, { headers: { 'cf-connecting-ip': address } }), env)
@@ -163,12 +163,7 @@ describe('/verified counts its checks against the limits', () => {
     const { env } = envWith()
     const tags = Array.from({ length: 10 }, (_, i) => ['i', `github:user${i}`, `proof${i}x`])
     relaysWith([await signedList(tags)])
-    const verify = await worker.fetch(new Request('https://verifier.divine.video/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'cf-connecting-ip': '203.0.113.9' },
-      body: JSON.stringify({ claims: Array.from({ length: 10 }, (_, i) => ({ platform: 'github', identity: 'octocat', proof: `spenda${i}x`, pubkey: OTHER_PK })) }),
-    }), env)
-    expect(verify.status).toBe(200)
+    await spendAddressBudget(env, 5)
 
     const res = await getFrom(env, `/verified/${PK}`, '203.0.113.9')
 

@@ -243,23 +243,23 @@ describe('reserveChecks', () => {
   it('refuses checks past the address budget before the pubkey and platform counters', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { kv, store, put } = fakeKv()
-    const pubkeys = Array.from({ length: 20 }, (_, i) => String(i).padStart(2, '0').repeat(32))
+    const pubkeys = Array.from({ length: 25 }, (_, i) => String(i).padStart(2, '0').repeat(32))
     const wants = pubkeys.map((pubkey) => ({ pubkey, platform: 'github' }))
 
     const { refusals, written } = await reserveChecks(kv, wants, ADDRESS)
     await written
 
-    expect(refusals.slice(0, 15)).toEqual(Array.from({ length: 15 }, () => null))
-    expect(refusals.slice(15)).toEqual(
+    expect(refusals.slice(0, 20)).toEqual(Array.from({ length: 20 }, () => null))
+    expect(refusals.slice(20)).toEqual(
       Array.from({ length: 5 }, () => ({ counter: 'address', unreadable: false }))
     )
-    expect(store.get(addrKey())).toBe('15')
-    for (const pubkey of pubkeys.slice(15)) expect(put.mock.calls.map((c) => c[0])).not.toContain(pkKey(pubkey))
+    expect(store.get(addrKey())).toBe('20')
+    for (const pubkey of pubkeys.slice(20)) expect(put.mock.calls.map((c) => c[0])).not.toContain(pkKey(pubkey))
     expect(warnSpy).toHaveBeenCalledWith('Check limit reached:', {
       counter: 'address',
       platform: 'github',
-      asked: 20,
-      granted: 15,
+      asked: 25,
+      granted: 20,
     })
     expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(ADDRESS)
   })
@@ -288,7 +288,7 @@ describe('reserveChecks', () => {
   })
 
   it('reports the address counter when the pubkey counter is also full', async () => {
-    const { kv } = fakeKv({ [addrKey()]: '15', [pkKey(PK_A)]: '20' })
+    const { kv } = fakeKv({ [addrKey()]: '20', [pkKey(PK_A)]: '20' })
 
     const { refusals } = await reserveChecks(kv, [{ pubkey: PK_A, platform: 'github' }], ADDRESS)
 

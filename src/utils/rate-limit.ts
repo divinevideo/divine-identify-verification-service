@@ -8,7 +8,8 @@ interface RateLimitConfig {
 export const RATE_LIMITS = {
   ip: { limit: 60, prefix: 'rl:ip' } as RateLimitConfig,
   // Counted per check, unlike `ip`, because one request can make many checks.
-  address: { limit: 15, prefix: 'rl:ipchk' } as RateLimitConfig,
+  // 20 lets one full list of linked accounts be checked from one address.
+  address: { limit: 20, prefix: 'rl:ipchk' } as RateLimitConfig,
   pubkey: { limit: 20, prefix: 'rl:pk' } as RateLimitConfig,
   platform: { limit: 30, prefix: 'rl:plat' } as RateLimitConfig,
 }
