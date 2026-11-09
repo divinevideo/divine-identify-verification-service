@@ -171,7 +171,8 @@ async function relayCandidates(platform: Platform, identities: string[], known: 
   let incomplete = answers.some(answer => answer !== null && answer.length >= MAX_RELAY_EVENTS)
   for (const event of events) {
     if (known.includes(event.pubkey) || found.includes(event.pubkey)) continue
-    // Signatures are checked newest first and only until there are enough candidates.
+    // Signatures are checked newest first. Once there are enough candidates, checking goes
+    // on only until one more valid author turns up, which marks the search incomplete.
     if ((await verifyEventSignature(event)).ok) {
       if (found.length >= room) {
         incomplete = true
@@ -206,8 +207,8 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
   function matchingUnits(pubkey: string, event: SignedNostrEvent | null): VerifyClaim[][] {
     const units: VerifyClaim[][] = []
     const seen = new Set<string>()
-    // Only check tags /verified/<pubkey> checks; later matching tags still make a
-    // missed owner unknown, as that page lists them as not checked.
+    // Only check tags /verified/<pubkey> checks; later matching tags that are not repeats
+    // still make a missed owner unknown, as that page lists them as not checked.
     for (const [index, claim] of linkedAccountClaims(event, pubkey).entries()) {
       const key = accountKey(platform, claim.identity)
       if (claim.platform !== platform || !sameAccount.has(key)) continue
@@ -220,6 +221,8 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
       if (key !== requestKey && storageForm(swapped) === null) continue
       const unit = key === requestKey ? [claim] : [claim, swapped]
       const unitKey = `${unit.length}|${claim.identity}|${claim.proof}`
+      // A repeat is the same check as the earlier tag with this key, which was either
+      // planned or already left the answer unknown, so skipping it cannot hide an owner.
       if (seen.has(unitKey)) continue
       seen.add(unitKey)
       if (index >= MAX_LIST_CLAIMS || units.length >= MAX_LOOKUP_UNITS_PER_CANDIDATE) {

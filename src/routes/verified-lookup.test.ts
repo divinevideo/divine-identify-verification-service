@@ -517,6 +517,17 @@ describe('GET /verified?platform=&identity=', () => {
       expect(await res.json()).toEqual(UNAVAILABLE)
     })
 
+    it('reports unknown when sign-in records fill the candidate room', async () => {
+      const { env, store } = envWith()
+      // Ten sign-in owners leave no room to search relays, so a miss among them is a guess.
+      const secrets = Array.from({ length: MAX_LOOKUP_CANDIDATES }, (_, i) => secretFor(0x31 + i))
+      for (const secret of secrets) seedSignIn(store, 'twitter', 'jack', pubkeyOf(secret))
+      relaysWith(await Promise.all(secrets.map(secret => signedList([], secret))))
+      const res = await get(env, '/verified?platform=twitter&identity=jack')
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual(UNAVAILABLE)
+    })
+
     it('reports unknown when a relay fills its event cap', async () => {
       const { env, kv } = envWith()
       const events = await Promise.all(Array.from({ length: MAX_RELAY_EVENTS }, (_, i) =>
@@ -572,7 +583,7 @@ describe('GET /verified?platform=&identity=', () => {
       expect(MAX_LOOKUP_UNITS_PER_CANDIDATE).toBe(2)
       const res = await get(env, '/verified?platform=github&identity=alice')
       expect(res.status).toBe(503)
-      expect(await res.json()).toMatchObject({ error: { code: 'temporarily_unavailable' } })
+      expect(await res.json()).toEqual(UNAVAILABLE)
     })
 
     it("does not verify a tag past the ones the person's own answer checks", async () => {
@@ -582,7 +593,7 @@ describe('GET /verified?platform=&identity=', () => {
       relaysWith([await signedList([...others, ['i', 'github:alice', 'p1']])])
       const res = await get(env, '/verified?platform=github&identity=alice')
       expect(res.status).toBe(503)
-      expect(await res.json()).toMatchObject({ error: { code: 'temporarily_unavailable' } })
+      expect(await res.json()).toEqual(UNAVAILABLE)
       // Both endpoints agree: the person's own answer lists the tag as not checked.
       const person = await (await get(env, `/verified/${PK}`)).json() as { verifications: unknown[]; unchecked: unknown[] }
       expect(person.verifications).toEqual([])

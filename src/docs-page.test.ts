@@ -75,6 +75,14 @@ describe('GET /docs', () => {
     expect(section).toContain('not a complete account index')
     expect(section).toContain('repeating the same request need not resolve it')
     expect(section).toContain('Clients should use bounded retries')
+    expect(section).toContain('Search and check limits can leave an owner unchecked')
+    expect(section).toContain('When no checked owner verifies and something was left unchecked')
+    expect(section).not.toContain('Relay activity')
+    const rowStart = section.indexOf('<tr><td><code>temporarily_unavailable</code></td><td>503</td>')
+    expect(rowStart).toBeGreaterThan(-1)
+    const row = section.slice(rowStart, section.indexOf('</tr>', rowStart))
+    expect(row).toContain('repeating the request may not change the answer')
+    expect(row).not.toContain('Try again shortly.')
   })
 
   it('says how letter case affects finding a proof-post owner', async () => {
