@@ -12,7 +12,23 @@ export interface DocsPageOptions extends PlatformFlags {
 
 export function renderDocsPage(opts: DocsPageOptions): string {
   const { origin, hasYouTube, hasTikTok, twitterOAuthEnabled, blueskyLinksOff, youtubeOAuthEnabled, tiktokOAuthEnabled, tiktokLinksOff } = opts
-  const oauthPlatformNames = oauthPlatformsFor(opts).map(platform => platform.name)
+  const oauthPlatforms = oauthPlatformsFor(opts)
+  const oauthPlatformNames = oauthPlatforms.map(platform => platform.name)
+  // The start example stays on Bluesky while it is offered, otherwise it shows
+  // the first platform a client can actually sign in with. The request shape is
+  // the same for every platform except Bluesky's handle, which no other platform
+  // takes. With none offered it keeps the Bluesky example: the API shape does
+  // not change.
+  const exampleValue = oauthPlatforms.some(p => p.value === 'bluesky') ? 'bluesky' : oauthPlatforms[0]?.value ?? 'bluesky'
+  const exampleBody = exampleValue === 'bluesky'
+    ? `{"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}`
+    : `{"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}`
+  const oauthIntro = oauthPlatforms.length
+    ? 'Users can verify by logging in instead of posting a proof.'
+    : 'No platform offers sign-in right now, so new links need a proof post.'
+  const oauthCheckedFor = oauthPlatforms.length
+    ? listInProse(oauthPlatformNames)
+    : "every sign-in platform whose links aren't switched off"
   // Names read "none right now" when the operator has withdrawn every sign-in.
   const oauthNamesText = oauthPlatformNames.length ? oauthPlatformNames.join(', ') : 'none right now'
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
@@ -23,9 +39,9 @@ export function renderDocsPage(opts: DocsPageOptions): string {
     : ''
   const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
   const otherOAuthStartExamples = [
-    twitterOAuthEnabled ? `POST ${origin}/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}` : '',
-    youtubeOAuthEnabled ? `POST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : '',
-    hasTikTok && tiktokOAuthEnabled ? `POST ${origin}/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    twitterOAuthEnabled && exampleValue !== 'twitter' ? `POST ${origin}/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    youtubeOAuthEnabled && exampleValue !== 'youtube' ? `POST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    hasTikTok && tiktokOAuthEnabled && exampleValue !== 'tiktok' ? `POST ${origin}/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}` : '',
   ].filter(Boolean).join('\n')
 
   return `<!DOCTYPE html>
@@ -275,15 +291,15 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
 
     <section id="oauth">
       <h2>OAuth Verification (${oauthNamesText})</h2>
-      <p>Users can verify by logging in instead of posting a proof.</p>
+      <p>${oauthIntro}</p>
       <p>The verifier page only reports sign-ins it started itself. A client starting its own sign-in keeps a random start secret (32 random bytes written as 43 base64url characters), sends its hash as <code>start_check</code>, and gets back the provider page to open. The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>. The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.</p>
       <p>The new claim's tag carries a fourth value, <code>base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))</code>. Both hashes in this flow (the start check and the binding) are SHA-256 over the UTF-8 text shown, meaning the 43-character strings and not the raw bytes, written as base64url without padding.</p>
 
       <h3>Start OAuth</h3>
-      <pre>POST ${origin}/auth/bluesky/start
+      <pre>POST ${origin}/auth/${exampleValue}/start
 Content-Type: application/json
 
-{"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}${otherOAuthStartExamples ? `\n\n${otherOAuthStartExamples}` : ''}</pre>
+${exampleBody}${otherOAuthStartExamples ? `\n\n${otherOAuthStartExamples}` : ''}</pre>
       <p>The answer is <code>{"url":"https://…"}</code>, the provider page to open.</p>
       <h3>Back from the sign-in</h3>
       <p>The sign-in returns to <code>return_url</code> with these added (any of them already there are replaced):</p>
@@ -320,7 +336,7 @@ Content-Type: application/json
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
 
-      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${oauthPlatformNames.length ? listInProse(oauthPlatformNames) : 'no platform right now'}. A sign-in counts only after you confirm it by publishing, and for ${FIXED_SIGNIN_LIFETIME_DAYS} days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting. A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.${tiktokOAuthHistoryNote}</div>
+      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${oauthCheckedFor}. A sign-in counts only after you confirm it by publishing, and for ${FIXED_SIGNIN_LIFETIME_DAYS} days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting. A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">

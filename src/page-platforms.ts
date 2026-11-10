@@ -49,10 +49,10 @@ export function platformFlags(env: Bindings, tiktokOAuthReviewEnabled: boolean):
   }
 }
 
-// Sign-in platforms, in picker order. Leaves out switched-off platforms and Twitter, YouTube and TikTok
-// while their sign-in is unavailable. The picker and every list of sign-in
-// platforms in the copy are built from this one list, so the copy never
-// advertises a path the picker omits.
+// Sign-in platforms, in picker order. Leaves out switched-off platforms and
+// Twitter, YouTube and TikTok while their sign-in is unavailable. The picker
+// and every list of sign-in platforms in the copy are built from this one
+// list, so the copy never advertises a path the picker omits.
 export function oauthPlatformsFor(flags: PlatformFlags): OAuthPlatform[] {
   return [
     ...(flags.twitterOAuthEnabled ? [{ value: 'twitter', name: 'Twitter', shortLabel: 'Twitter/X', optionLabel: 'Twitter / X' }] : []),

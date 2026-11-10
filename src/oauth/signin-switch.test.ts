@@ -30,6 +30,22 @@ describe('SIGNIN_LINKS_OFF', () => {
     expect(vi.mocked(console.warn).mock.calls[1][0]).toContain('"github"')
   })
 
+  // Each memo test uses values no other test uses, so the module-level memo
+  // never carries a warning count between tests (no test-only reset export).
+  it('warns once for a repeated unknown name', () => {
+    signInLinksOff(env('memo-once'))
+    signInLinksOff(env('memo-once'))
+    expect(console.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('parses afresh, and warns once, when the value changes', () => {
+    expect(signInLinksOff(env('memo-a,tiktok'))).toEqual(['tiktok'])
+    expect(signInLinksOff(env('memo-b,twitter'))).toEqual(['twitter'])
+    expect(signInLinksOff(env('memo-b,twitter'))).toEqual(['twitter'])
+    expect(console.warn).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(console.warn).mock.calls[1][0]).toContain('"memo-b"')
+  })
+
   it('answers per platform', () => {
     const e = env('twitter')
     expect(signInLinksAreOff(e, 'twitter')).toBe(true)

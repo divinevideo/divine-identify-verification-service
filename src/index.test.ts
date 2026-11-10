@@ -418,8 +418,28 @@ describe('verifier Bluesky sign-in shutoff', () => {
     const html = await docsHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'bluesky' })
     expect(html).toContain('OAuth login</strong> (none right now)')
     expect(html).toContain('OAuth Verification (none right now)')
-    expect(html).toContain('for no platform right now.')
     expect(html).not.toContain('OAuth login</strong> ()')
+  })
+
+  it('/docs words the empty case without claiming records are ignored', async () => {
+    const html = await docsHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'bluesky' })
+    expect(html).toContain("for every sign-in platform whose links aren't switched off")
+    expect(html).toContain('No platform offers sign-in right now, so new links need a proof post.')
+    expect(html).not.toContain('for no platform right now')
+    expect(html).not.toContain('Users can verify by logging in instead of posting a proof.')
+  })
+
+  it('/docs starts its example with the first offered platform', async () => {
+    const html = await docsHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, SIGNIN_LINKS_OFF: 'bluesky' })
+    expect(html).toContain('/auth/twitter/start')
+    expect(html).not.toContain('/auth/bluesky/start')
+    expect(html).not.toContain('"handle":"example.bsky.social"')
+  })
+
+  it('/docs by default keeps the Bluesky example and intro', async () => {
+    const html = await docsHtml()
+    expect(html).toContain('POST https://verifier.divine.video/auth/bluesky/start')
+    expect(html).toContain('Users can verify by logging in instead of posting a proof.')
   })
 })
 
