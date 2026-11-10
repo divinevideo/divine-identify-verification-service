@@ -362,6 +362,29 @@ describe('confirm refusal for switched-off sign-in links', () => {
   })
 })
 
+describe('verifier Bluesky sign-in shutoff', () => {
+  it('hides switched-off Bluesky sign-in without hiding proof posts', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'bluesky' })
+    expect(sliceSelect(html, 'oauth-platform-select')).not.toContain('value="bluesky"')
+    expect(sliceSelect(html, 'proof-platform-select')).toContain('value="bluesky"')
+    expect(html).not.toContain('aria-label="Link Bluesky by signing in"')
+    expect(html).toContain('aria-label="Link Bluesky with a post"')
+  })
+
+  it('offers Bluesky sign-in again when its switch is cleared', async () => {
+    expect(sliceSelect(await homeHtml(), 'oauth-platform-select')).toContain('value="bluesky"')
+  })
+
+  it('does not advertise switched-off Bluesky OAuth in the docs table', async () => {
+    const html = await docsHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'bluesky' })
+    const marker = html.indexOf('<code>bluesky</code>')
+    expect(marker).toBeGreaterThan(-1)
+    const row = html.slice(html.lastIndexOf('<tr>', marker), html.indexOf('</tr>', marker))
+    expect(row).toContain('<td>No</td>')
+    expect(row).not.toContain('<td>Yes</td>')
+  })
+})
+
 describe('verifier twitter oauth gating', () => {
   it('hides Twitter from the sign-in picker when Twitter sign-in is not configured', async () => {
     const oauthSelect = sliceSelect(await homeHtml(), 'oauth-platform-select')

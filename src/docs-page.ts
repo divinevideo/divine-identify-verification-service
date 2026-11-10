@@ -11,7 +11,7 @@ export interface DocsPageOptions extends PlatformFlags {
 }
 
 export function renderDocsPage(opts: DocsPageOptions): string {
-  const { origin, hasYouTube, hasTikTok, twitterOAuthEnabled, youtubeOAuthEnabled, tiktokOAuthEnabled, tiktokLinksOff } = opts
+  const { origin, hasYouTube, hasTikTok, twitterOAuthEnabled, blueskyLinksOff, youtubeOAuthEnabled, tiktokOAuthEnabled, tiktokLinksOff } = opts
   const oauthPlatformNames = oauthPlatformsFor(opts).map(platform => platform.name)
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
   const ytTableRow = hasYouTube ? `<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>${youtubeOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
@@ -87,7 +87,7 @@ ${PAGE_STYLES}
           <td><code>bluesky</code></td>
           <td>Handle (e.g., <code>example.bsky.social</code>)</td>
           <td>Post rkey</td>
-          <td>Yes</td>
+          <td>${blueskyLinksOff ? 'No' : 'Yes'}</td>
         </tr>
         <tr>
           <td><code>mastodon</code></td>

@@ -100,15 +100,16 @@ app.get('/', (c) => {
   const tiktokOAuthReviewEnabled = tiktokOAuthReviewRequested
     || getCookie(c, 'tiktok_oauth_review') === '1'
   const flags = platformFlags(c.env, tiktokOAuthReviewEnabled)
-  const { hasYouTube, hasTikTok, twitterOAuthEnabled, youtubeOAuthEnabled, tiktokOAuthEnabled } = flags
+  const { hasYouTube, hasTikTok, twitterOAuthEnabled, blueskyLinksOff, youtubeOAuthEnabled, tiktokOAuthEnabled } = flags
 
   // Sign-in platforms, in picker order (see oauthPlatformsFor).
   const oauthPlatforms = oauthPlatformsFor(flags)
   const quickConnectPlatformList = listInProse(oauthPlatforms.map(platform => platform.shortLabel))
   // Platforms verified only by pasting a post link: the always post-only ones,
-  // plus Twitter, YouTube and TikTok while their sign-in is unavailable.
+  // plus platforms whose sign-in is unavailable.
   const proofPostOnlyPlatformList = listInProse([
     ...(twitterOAuthEnabled ? [] : ['Twitter']),
+    ...(blueskyLinksOff ? ['Bluesky'] : []),
     'GitHub', 'Mastodon', 'Telegram', 'Discord',
     ...(hasYouTube && !youtubeOAuthEnabled ? ['YouTube'] : []),
     ...(hasTikTok && !tiktokOAuthEnabled ? ['TikTok'] : []),
