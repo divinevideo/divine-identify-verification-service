@@ -4,11 +4,16 @@ import { YOUTUBE_CHANNEL_ID } from '../utils/youtube-identity'
 import { discardBody, readJson } from './base'
 
 // How long YouTube's answer to "which channel does this handle belong to" is
-// reused. Only the lookup is cached, never the verified result, so a proof post
-// is still checked against the live video on every check.
+// reused. A handle its channel gives up is held for that channel for 14 days
+// before anyone else can take it (support.google.com/youtube/answer/15920820),
+// so a day-old answer still names the right channel. This module caches only
+// the lookup; the verify route caches each claim's result on its own, and a
+// verified proof post isn't checked against its video again for 24 hours.
 const HANDLE_LOOKUP_TTL = 24 * 60 * 60
 // A handle that doesn't exist yet may be claimed soon, so that answer is
-// reused only for a few minutes.
+// reused only for a few minutes. That helps a new claim of the handle; a claim
+// already answered "YouTube handle not found" keeps that answer for the verify
+// route's 15 minutes.
 const HANDLE_NOT_FOUND_TTL = 5 * 60
 const HANDLE_LOOKUP_TIMEOUT_MS = 3000
 
