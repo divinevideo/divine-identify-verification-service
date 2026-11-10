@@ -2320,6 +2320,9 @@ app.get('/docs', (c) => {
 // "Look up someone": check which accounts a profile has verified, with no signer.
 app.get('/lookup', (c) => {
   const nonce = setPagePolicy(c)
+  // The lookup fetches a NIP-05 from whatever domain the address names; send
+  // that site no Referer, as the main page did when the lookup lived there.
+  c.header('Referrer-Policy', 'no-referrer')
   // The lookup checks claims for every platform the verifier supports, whoever
   // is asking; only sign-in depends on the TikTok review cookie. So the cookie
   // is never read here, and the page does not vary by it.

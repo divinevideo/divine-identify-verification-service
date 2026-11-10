@@ -38,6 +38,12 @@ describe('GET /lookup', () => {
     expect(lookup.headers.get('cache-control')).toBe(home.headers.get('cache-control'))
   })
 
+  // The lookup fetches a NIP-05 from whatever domain the address names, so the
+  // page tells the browser to send that site no Referer, as the main page does.
+  it('sends no referrer to the sites it reads from', async () => {
+    expect((await get('/lookup')).headers.get('referrer-policy')).toBe('no-referrer')
+  })
+
   it('needs no signer: no embed bridge, Divine login or nostr-tools', async () => {
     const html = await (await get('/lookup')).text()
     for (const text of ['installDivineEmbedBridge', 'KEYCAST_', 'NOSTR_TOOLS_URL']) expect(html).not.toContain(text)

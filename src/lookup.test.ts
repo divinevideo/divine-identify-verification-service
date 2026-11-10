@@ -79,7 +79,7 @@ function harness(opts: {
   return { env, statuses, rendered, verifyBatches, requests }
 }
 
-describe('the lookup page "Look up someone"', () => {
+describe('"Look up someone" on /lookup', () => {
   it('shows the results for a profile that has linked accounts, with its NIP-05 check', async () => {
     const doLookup = await loadDoLookup()
     const h = harness({ iTags: [iTag('github', 'octocat', 'abc123')], nip05: 'alice@divine.video' })
@@ -153,7 +153,7 @@ describe('the lookup page "Look up someone"', () => {
   })
 })
 
-describe('the lookup page "Look up someone" with entries that are not well-formed', () => {
+describe('"Look up someone" on /lookup with entries that are not well-formed', () => {
   it('skips them and shows the other linked accounts', async () => {
     const doLookup = await loadDoLookup()
     const h = harness({
@@ -180,7 +180,7 @@ describe('the lookup page "Look up someone" with entries that are not well-forme
   })
 })
 
-describe('the lookup page "Look up someone" with a NIP-05 that isn\'t text', () => {
+describe('"Look up someone" on /lookup with a NIP-05 that isn\'t text', () => {
   it('leaves it out of the results, without checking it', async () => {
     const doLookup = await loadDoLookup()
     const h = harness({ iTags: [iTag('github', 'octocat', 'abc123')], nip05Raw: 42 })
@@ -202,7 +202,7 @@ describe('the lookup page "Look up someone" with a NIP-05 that isn\'t text', () 
   })
 })
 
-describe('the lookup page batch size', () => {
+describe('"Look up someone" on /lookup: batch size', () => {
   it('comes from the server\'s MAX_BATCH_SIZE, not a copy of the number', async () => {
     vi.resetModules()
     vi.doMock('./routes/verify', async (importOriginal) => ({
