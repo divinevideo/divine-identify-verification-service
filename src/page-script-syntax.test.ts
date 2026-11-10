@@ -63,6 +63,8 @@ afterEach(() => vi.unstubAllGlobals())
 const PAGES: Array<[string, string, Partial<Bindings>]> = [
   ['the main page', '/', {}],
   ['the main page with every optional platform on', '/', ALL_PLATFORMS_ON],
+  ['the lookup page', '/lookup', {}],
+  ['the lookup page with every optional platform on', '/lookup', ALL_PLATFORMS_ON],
   ['a verified link page', `/verify/github/synthetic-user/abc123?pubkey=${PUBKEY}`, {}],
   ['a failed Mastodon link page', `/verify/mastodon/social.example%2F%40synthetic/123?pubkey=${PUBKEY}`, {}],
 ]

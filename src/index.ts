@@ -16,6 +16,7 @@ import { listInProse, oauthPlatformsFor, platformFlags } from './page-platforms'
 import { PAGE_STYLES } from './page-styles'
 import { SHARED_PAGE_SCRIPT } from './page-script-shared'
 import { renderDocsPage } from './docs-page'
+import { renderLookupPage } from './lookup-page'
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -2528,6 +2529,21 @@ app.get('/docs', (c) => {
   return c.html(renderDocsPage({
     origin: requestUrl.origin,
     ...platformFlags(c.env, tiktokOAuthReviewEnabled),
+  }))
+})
+
+// "Look up someone": check which accounts a profile has verified, with no signer.
+app.get('/lookup', (c) => {
+  const nonce = setPagePolicy(c)
+  // The lookup checks claims for every platform the verifier supports, whoever
+  // is asking; only sign-in depends on the TikTok review cookie. So the cookie
+  // is never read here, and the page does not vary by it.
+  const { hasYouTube, hasTikTok } = platformFlags(c.env, false)
+  return c.html(renderLookupPage({
+    origin: new URL(c.req.url).origin,
+    nonce,
+    hasYouTube,
+    hasTikTok,
   }))
 })
 

@@ -50,6 +50,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 const HTML_PAGES: Array<[string, string]> = [
   ['the main page', '/'],
+  ['the lookup page', '/lookup'],
   ['a verification-link page', VERIFY_PATH],
 ]
 

@@ -16,7 +16,7 @@ describe('the helpers both pages share', () => {
     expect(PROFILE_RELAYS).toEqual(['wss://relay.divine.video', 'wss://relay.damus.io', 'wss://relay.primal.net'])
     expect(DIVINE_RELAY).toBe(PROFILE_RELAYS[0])
   })
-  it.each(['/'])('are on %s exactly once', async (path) => {
+  it.each(['/', '/lookup'])('are on %s exactly once', async (path) => {
     const html = await page(path)
     expect(html.split(SHARED_PAGE_SCRIPT).length - 1).toBe(1)
     expect(html.split('function npubToHex(').length - 1).toBe(1)
