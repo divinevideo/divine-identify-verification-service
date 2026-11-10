@@ -9,7 +9,7 @@ import { DiscordVerifier } from './discord'
 import { YouTubeVerifier } from './youtube'
 import { TikTokVerifier } from './tiktok'
 
-export function getVerifier(platform: Platform, githubToken?: string, youtubeApiKey?: string, discordBotToken?: string, discordVerifyChannelId?: string): PlatformVerifier {
+export function getVerifier(platform: Platform, githubToken?: string, youtubeApiKey?: string, discordBotToken?: string, discordVerifyChannelId?: string, cacheKv?: KVNamespace): PlatformVerifier {
   switch (platform) {
     case 'github': return new GitHubVerifier(githubToken)
     case 'twitter': return new TwitterVerifier()
@@ -17,7 +17,7 @@ export function getVerifier(platform: Platform, githubToken?: string, youtubeApi
     case 'telegram': return new TelegramVerifier()
     case 'bluesky': return new BlueskyVerifier()
     case 'discord': return new DiscordVerifier(discordBotToken, discordVerifyChannelId)
-    case 'youtube': return new YouTubeVerifier(youtubeApiKey)
+    case 'youtube': return new YouTubeVerifier(youtubeApiKey, cacheKv)
     case 'tiktok': return new TikTokVerifier()
     default: {
       // A platform added to Platform without a case here fails the typecheck:

@@ -4,6 +4,7 @@
 import type { VerificationMethod } from '../identity-link'
 import type { Platform, VerifyResult } from '../types'
 import { tidyClaim } from '../utils/tidy-claim'
+import { YOUTUBE_CHANNEL_ID } from '../utils/youtube-identity'
 import { VALID_PLATFORMS } from '../utils/validation'
 
 // Platforms the old site listed but this service doesn't verify. They are named
@@ -35,8 +36,6 @@ export function couldNotCheck(result: VerifyResult): boolean {
 }
 
 // YouTube channel IDs are case-sensitive, so they are the one identity kept as sent.
-const YOUTUBE_CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/
-
 function keepsCase(platform: Platform, tidied: string): boolean {
   return platform === 'youtube' && YOUTUBE_CHANNEL_ID.test(tidied)
 }

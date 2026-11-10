@@ -18,7 +18,7 @@ const CLAIMS = {
   mastodon: { identity: 'mastodon.social/@synthetic', proof: '109876543210' },
   telegram: { identity: 'syntheticchannel', proof: '123' },
   discord: { identity: 'synthetic', proof: '99887766554433221' },
-  youtube: { identity: 'UCxxxxxxxxxxxxxxxxxxxxxxxx', proof: 'dQw4w9WgXcQ' },
+  youtube: { identity: 'UCaaaaaaaaaaaaaaaaaaaaaa', proof: 'dQw4w9WgXcQ' },
   tiktok: { identity: 'synthetic', proof: '7123456789012345678' },
 } as const
 

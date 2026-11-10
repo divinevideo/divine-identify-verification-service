@@ -32,7 +32,7 @@ export function renderDocsPage(opts: DocsPageOptions): string {
   // Names read "none right now" when the operator has withdrawn every sign-in.
   const oauthNamesText = oauthPlatformNames.length ? oauthPlatformNames.join(', ') : 'none right now'
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
-  const ytTableRow = hasYouTube ? `<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>${youtubeOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
+  const ytTableRow = hasYouTube ? `<tr><td><code>youtube</code></td><td>Channel ID (<code>UC</code> followed by 22 characters) or handle (<code>@user</code>, or without the <code>@</code>). <code>c/</code> and <code>user/</code> links aren't accepted.</td><td>Video ID (11 chars)</td><td>${youtubeOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
   const ttTableRow = hasTikTok ? `<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video or photo link, share link, or post number</td><td>${tiktokOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
   const tiktokOAuthHistoryNote = hasTikTok && !tiktokOAuthEnabled && !tiktokLinksOff
     ? ' Existing TikTok OAuth verifications remain recognized.'

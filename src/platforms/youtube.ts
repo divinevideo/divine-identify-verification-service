@@ -1,4 +1,6 @@
-import { fetchFromPlatform, readJson, throwIfUnanswered, type PlatformVerifier } from './base'
+import { fetchFromPlatform, PlatformUnavailableError, readJson, throwIfUnanswered, type PlatformVerifier } from './base'
+import { parseYouTubeIdentity } from '../utils/youtube-identity'
+import { lookUpYouTubeHandle } from './youtube-handle'
 
 interface YouTubeVideoSnippet {
   snippet?: {
@@ -16,15 +18,26 @@ export class YouTubeVerifier implements PlatformVerifier {
   readonly name = 'youtube'
   readonly label = 'YouTube'
   private apiKey?: string
+  private cache?: KVNamespace
 
-  constructor(apiKey?: string) {
+  constructor(apiKey?: string, cache?: KVNamespace) {
     this.apiKey = apiKey
+    this.cache = cache
   }
 
   async verify(identity: string, proof: string, npub: string): Promise<{ verified: boolean; error?: string }> {
     // Validate video ID format (11 chars, alphanumeric + - _)
     if (!/^[a-zA-Z0-9_-]{11}$/.test(proof)) {
       return { verified: false, error: 'Invalid YouTube video ID format' }
+    }
+
+    // Only a channel id or a handle names a channel; anything else is refused before YouTube is asked.
+    const parsed = parseYouTubeIdentity(identity)
+    if (!parsed) {
+      return {
+        verified: false,
+        error: "Invalid YouTube channel. Use the channel's @handle or its channel ID (UC followed by 22 characters).",
+      }
     }
 
     if (!this.apiKey) {
@@ -56,30 +69,33 @@ export class YouTubeVerifier implements PlatformVerifier {
       return { verified: false, error: 'Video snippet not available' }
     }
 
-    // Verify channel matches identity
-    // Identity can be a channel ID (UCxxxxxx) or a channel handle (@username)
     const channelId = snippet.channelId || ''
-    if (identity.startsWith('UC')) {
-      // Channel ID comparison
-      if (channelId !== identity) {
-        return { verified: false, error: 'Video channel does not match claimed identity' }
-      }
-    } else {
-      // Handle-based — we can't directly verify handle from video snippet,
-      // so we accept if the channelId is present (the user claimed the handle)
-      // A stricter check could resolve the handle to channelId via channels API,
-      // but that costs an extra API call. For now, we verify the npub is in the description.
-      if (!channelId) {
-        return { verified: false, error: 'Unable to determine video channel' }
-      }
+    if (!channelId) {
+      return { verified: false, error: 'Unable to determine video channel' }
     }
 
-    // Search description for npub
+    const MISMATCH = 'Video channel does not match claimed identity'
+    if (parsed.kind === 'channel' && channelId !== parsed.channelId) {
+      return { verified: false, error: MISMATCH }
+    }
+
+    // The handle is resolved only after the npub is found: a claim whose video
+    // doesn't carry the npub then costs one API quota unit (the video fetch), not two.
     const description = snippet.description || ''
-    if (description.includes(npub)) {
+    if (!description.includes(npub)) {
+      return { verified: false, error: 'npub not found in video description' }
+    }
+    if (parsed.kind === 'channel') {
       return { verified: true }
     }
 
-    return { verified: false, error: 'npub not found in video description' }
+    const lookup = await lookUpYouTubeHandle({ CACHE_KV: this.cache, YOUTUBE_API_KEY: this.apiKey }, parsed.handle)
+    if (lookup === null) {
+      throw new PlatformUnavailableError("YouTube handle lookup didn't answer")
+    }
+    if ('notFound' in lookup) {
+      return { verified: false, error: 'YouTube handle not found' }
+    }
+    return lookup.channelId === channelId ? { verified: true } : { verified: false, error: MISMATCH }
   }
 }

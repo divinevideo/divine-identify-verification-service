@@ -95,6 +95,11 @@ describe('GET /docs', () => {
     expect(html).toContain('Owners who linked by signing in are found in any letter case. YouTube channel IDs (<code>UC…</code>) are case-sensitive either way.')
   })
 
+  it('says which YouTube channel forms are accepted', async () => {
+    const html = await (await get('/docs', { YOUTUBE_API_KEY: 'synthetic-key' })).text()
+    expect(html).toContain('Channel ID (<code>UC</code> followed by 22 characters) or handle (<code>@user</code>, or without the <code>@</code>). <code>c/</code> and <code>user/</code> links aren\'t accepted.')
+  })
+
   it('says a check limit can leave a link unchecked', async () => {
     const html = await (await get('/docs')).text()
     expect(html).toContain('a platform outage or time limit, the per-person or per-platform check limit, or the limit of 20 links checked per list')
