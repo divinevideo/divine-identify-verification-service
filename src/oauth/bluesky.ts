@@ -120,7 +120,7 @@ export async function startBlueskyOAuth(
   startCheck: string | undefined,
 ): Promise<Response> {
   if (!isBlueskyOAuthUsable(env)) {
-    return new Response(JSON.stringify({ error: 'OAuth not configured' }), {
+    return new Response(JSON.stringify({ error: signInLinksAreOff(env, 'bluesky') ? 'Sign-in for Bluesky is switched off right now.' : 'OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
     })

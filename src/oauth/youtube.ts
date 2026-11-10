@@ -27,7 +27,7 @@ export async function startYouTubeOAuth(
 ): Promise<Response> {
   // The explicit checks after isYouTubeOAuthUsable let TypeScript see both values are set.
   if (!isYouTubeOAuthUsable(env) || !env.GOOGLE_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
-    return new Response(JSON.stringify({ error: 'YouTube OAuth not configured' }), {
+    return new Response(JSON.stringify({ error: signInLinksAreOff(env, 'youtube') ? 'Sign-in for YouTube is switched off right now.' : 'YouTube OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
     })

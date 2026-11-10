@@ -57,7 +57,8 @@ The service backs Divine's identity and trust surface: divine-web and Divine mob
    - `cancelled`: the person cancelled or declined at the platform;
    - `provider_error`: the platform reported another error;
    - `failed`: the verifier couldn't check the account with the platform;
-   - `update_required`: the sign-in was started with `GET /auth/:platform/start`, as older app versions do, which is no longer accepted.
+   - `update_required`: the sign-in was started with `GET /auth/:platform/start`, as older app versions do, which is no longer accepted;
+   - `signin_unavailable`: sign-in links for this platform are switched off, so nothing was linked.
 
    Treat a code you don't know as `failed`. When the verifier can't tell where a sign-in started, or the sign-in fails unexpectedly, it returns to its own page instead.
 3. The owner signs their linked-accounts list (kind 10011). The new claim's tag carries a fourth value, `base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))`. The client sends:

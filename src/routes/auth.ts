@@ -301,7 +301,8 @@ async function startSignIn(c: Context<{ Bindings: Bindings }>, req: StartRequest
     case 'tiktok': {
       const allowSandbox = getCookie(c, 'tiktok_oauth_review') === '1'
       if (!isTikTokOAuthUsable(c.env, allowSandbox)) {
-        return c.json({ error: 'TikTok OAuth not configured' }, 503)
+        // The reason differs: withdrawn links are not a configuration problem.
+        return c.json({ error: signInLinksAreOff(c.env, 'tiktok') ? 'Sign-in for TikTok is switched off right now.' : 'TikTok OAuth not configured' }, 503)
       }
       return startTikTokOAuth(c.env, normalizedPubkey, returnUrl, req.startCheck)
     }
@@ -385,15 +386,19 @@ const SIGN_IN_LABELS: Record<OAuthPlatform, string> = {
 // told apart so the share of installed-app sign-ins can be read from the logs.
 function finishSignIn(c: Context<{ Bindings: Bindings }>, platform: OAuthPlatform, result: SignInCallbackResult): Response {
   if (!result.success) return c.redirect(buildReturnUrl(result.returnUrl, SIGN_IN_FAILED))
-  console.info(`${platform} sign-in finished: ${result.confirmCode ? 'awaiting confirmation' : 'installed app, unconfirmed'}`)
+  // A sign-in that began before its platform's links were switched off saved
+  // nothing in optional mode, so it gets its own line rather than counting as
+  // a finished installed-app sign-in.
+  const refusedWhileOff = signInConfirmationMode(c.env) === 'optional' && signInLinksAreOff(c.env, platform)
+  console.info(`${platform} sign-in finished: ${refusedWhileOff ? 'refused, links switched off' : result.confirmCode ? 'awaiting confirmation' : 'installed app, unconfirmed'}`)
   const params: Record<string, string> = { platform, identity: result.identity || '' }
   // Apps that can't confirm read this as "linked"; once confirmation is
   // required nothing is linked until the owner confirms.
   // TODO(#113): remove once SIGNIN_CONFIRMATION is "required".
   if (signInConfirmationMode(c.env) === 'optional') {
-    // The sign-in began before its platform's links were switched off, so
-    // holdSignIn saved nothing; say so instead of reporting it linked.
-    if (signInLinksAreOff(c.env, platform)) Object.assign(params, unfinishedSignIn('signin_unavailable', 'Sign-in links for this platform are switched off right now.'))
+    // holdSignIn saved nothing for a switched-off platform; say so instead of
+    // reporting it linked.
+    if (refusedWhileOff) Object.assign(params, unfinishedSignIn('signin_unavailable', 'Sign-in links for this platform are switched off right now.'))
     else params.oauth_verified = 'true'
   }
   const confirm = result.confirmCode ? { code: result.confirmCode, placement: confirmCodePlacement(c.env) } : undefined

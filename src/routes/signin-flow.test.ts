@@ -18,7 +18,7 @@ function createMockKV(): KVNamespace {
     get: async (key: string) => store.get(key) ?? null,
     put: async (key: string, value: string) => { store.set(key, value) },
     delete: async (key: string) => { store.delete(key) },
-    list: async () => ({ keys: [], list_complete: true, caches_used: 0 }),
+    list: async () => ({ keys: [...store.keys()].map((name) => ({ name })), list_complete: true, caches_used: 0 }),
   } as unknown as KVNamespace
 }
 
@@ -305,11 +305,24 @@ describe('a finished sign-in started with a start check', () => {
   // A sign-in started before the switch was set can come back after it.
   it('optional mode: a sign-in returning while its platform is switched off saves no record and is not reported as linked', async () => {
     const env = baseEnv({ SIGNIN_LINKS_OFF: 'twitter' })
-    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN })
+    const { location, info } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN })
     for (const key of recordKeysFor('twitter', PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
     expect(location.searchParams.get('oauth_verified')).toBeNull()
     expect(location.searchParams.get('oauth_error_code')).toBe('signin_unavailable')
     expect(location.searchParams.get('oauth_error')).toBe('Sign-in links for this platform are switched off right now.')
+    // Logged on its own line, so it doesn't count as a finished installed-app sign-in.
+    expect(info.mock.calls).toEqual([['twitter sign-in finished: refused, links switched off']])
+  })
+
+  it('optional mode: a switched-off return that began with a start check holds nothing and hands out no code', async () => {
+    const env = baseEnv({ SIGNIN_LINKS_OFF: 'twitter' })
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
+    for (const key of recordKeysFor('twitter', PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
+    expect(location.searchParams.get('oauth_error_code')).toBe('signin_unavailable')
+    expect(location.searchParams.get('oauth_verified')).toBeNull()
+    expect(location.hash).not.toContain('oauth_confirm')
+    // Nothing is held either: clearing the switch must not revive this sign-in.
+    expect((await env.CACHE_KV.list()).keys.map((k) => k.name).filter((n) => n.startsWith('oauth_pending:'))).toEqual([])
   })
 
   it('optional mode: another platform being switched off changes nothing', async () => {
@@ -451,6 +464,15 @@ describe('POST /auth/:platform/start', () => {
     const env = platformEnv(platform, { SIGNIN_LINKS_OFF: platform })
     const res = await postStart(platform, env, startBody(platform, PUBKEY, START_CHECK))
     expect(res.status).toBe(503)
+    // The refusal says why: the platform's links are withdrawn, not misconfigured.
+    const label = { twitter: 'Twitter', youtube: 'YouTube', tiktok: 'TikTok', bluesky: 'Bluesky' }[platform]
+    expect(((await res.json()) as { error: string }).error).toBe(`Sign-in for ${label} is switched off right now.`)
+  })
+
+  it('missing credentials still answer 503 with the not-configured text', async () => {
+    const res = await postStart('twitter', platformEnv('twitter', { TWITTER_CLIENT_ID: undefined }), startBody('twitter', PUBKEY, START_CHECK))
+    expect(res.status).toBe(503)
+    expect(((await res.json()) as { error: string }).error).toBe('Twitter OAuth not configured')
   })
 
   it('starts on any verifier host without redirecting (a redirect would drop the body)', async () => {

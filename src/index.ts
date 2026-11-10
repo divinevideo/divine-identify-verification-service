@@ -1719,6 +1719,7 @@ ${SHARED_PAGE_SCRIPT}
       if (reasonCode === 'cancelled') return 'Sign-in was not completed: ' + (label ? 'cancelled or declined at ' + label : 'it was cancelled or declined.');
       if (reasonCode === 'provider_error') return 'Sign-in was not completed: ' + (label ? 'could not be completed at ' + label : 'it could not be completed.');
       if (reasonCode === 'failed') return 'Sign-in was not completed: the account could not be verified.';
+      if (reasonCode === 'signin_unavailable') return 'Sign-in links for this platform are switched off right now.';
       return 'Sign-in was not completed.';
     }
 

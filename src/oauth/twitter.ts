@@ -27,7 +27,7 @@ export async function startTwitterOAuth(
 ): Promise<Response> {
   // The explicit checks after isTwitterOAuthUsable let TypeScript see both values are set.
   if (!isTwitterOAuthUsable(env) || !env.TWITTER_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
-    return new Response(JSON.stringify({ error: 'Twitter OAuth not configured' }), {
+    return new Response(JSON.stringify({ error: signInLinksAreOff(env, 'twitter') ? 'Sign-in for Twitter is switched off right now.' : 'Twitter OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
     })

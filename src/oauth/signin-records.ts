@@ -102,9 +102,14 @@ export async function getCountedSignIn(env: Bindings, platform: string, identity
  */
 export async function holdSignIn(env: Bindings, state: OAuthState, account: SignedInAccount): Promise<SignInCallbackResult> {
   // TODO(#113): remove once SIGNIN_CONFIRMATION is "required".
-  // A sign-in that began before its platform's links were switched off must not
-  // leave a record behind; the confirm step already refuses it in the same way.
-  if (signInConfirmationMode(env) === 'optional' && !signInLinksAreOff(env, state.platform)) await saveSignIn(env, state.pubkey, account, null)
+  if (signInConfirmationMode(env) === 'optional') {
+    // A sign-in that began before its platform's links were switched off must
+    // leave nothing behind, neither a record nor a held sign-in with a code:
+    // the return reports it as not completed, and a code that revives if the
+    // switch is cleared would contradict that.
+    if (signInLinksAreOff(env, state.platform)) return { success: true, returnUrl: state.returnUrl, identity: account.identity }
+    await saveSignIn(env, state.pubkey, account, null)
+  }
   let confirmCode: string | undefined
   if (state.startCheck) {
     confirmCode = newConfirmCode()
