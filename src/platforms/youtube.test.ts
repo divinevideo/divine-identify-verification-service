@@ -192,9 +192,11 @@ describe('YouTubeVerifier', () => {
       ['a quota 403', channelsAnswer({ error: { errors: [{ reason: 'quotaExceeded' }] } }, 403)],
       ['an unreadable body', channelsAnswer('not json')],
     ])("reports a handle lookup YouTube didn't answer as couldn't check: %s", async (_name, channels) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       stubYouTube({ video: videoOf(CHANNEL_A), channels })
       await expect(handleVerifier.verify('@alice', 'dQw4w9WgXcQ', npub)).rejects.toBeInstanceOf(PlatformUnavailableError)
       expect([...kv.store.keys()].some(k => k.startsWith('yt_handle_channel:'))).toBe(false)
+      expect(warn.mock.calls.flat().some(arg => String(arg).includes(apiKey))).toBe(false)
     })
 
     it.each([
@@ -234,6 +236,12 @@ describe('YouTubeVerifier', () => {
       const result = await handleVerifier.verify(CHANNEL_A, 'dQw4w9WgXcQ', npub)
       expect(result).toEqual({ verified: false, error: 'Video channel does not match claimed identity' })
       expect(youtube.channels()).toHaveLength(0)
+    })
+
+    it('checks a channel id against the video channel before looking for the npub', async () => {
+      stubYouTube({ video: videoOf(CHANNEL_B, 'No key here') })
+      const result = await handleVerifier.verify(CHANNEL_A, 'dQw4w9WgXcQ', npub)
+      expect(result).toEqual({ verified: false, error: 'Video channel does not match claimed identity' })
     })
 
     it('resolves a handle once within the cache time', async () => {

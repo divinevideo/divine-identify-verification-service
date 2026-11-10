@@ -240,7 +240,7 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
   const npub = hexToNpub(normalizedClaim.pubkey)
 
   // Perform verification
-  const verifier = getVerifier(normalizedClaim.platform, env.GITHUB_TOKEN, env.YOUTUBE_API_KEY, env.DISCORD_BOT_TOKEN, env.DISCORD_VERIFY_CHANNEL_ID)
+  const verifier = getVerifier(normalizedClaim.platform, env.GITHUB_TOKEN, env.YOUTUBE_API_KEY, env.DISCORD_BOT_TOKEN, env.DISCORD_VERIFY_CHANNEL_ID, env.CACHE_KV)
   let result: Awaited<ReturnType<typeof verifier.verify>>
   try {
     result = await withinTimeBudget(
