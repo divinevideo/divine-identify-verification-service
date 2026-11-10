@@ -19,9 +19,9 @@ function createTestEnv() {
   }
 }
 
-async function getServedHtml() {
+async function getServedHtml(path = '/') {
   const env = createTestEnv()
-  const req = new Request('http://localhost/')
+  const req = new Request(`http://localhost${path}`)
   const res = await workerModule.default.fetch(req, env)
   return res.text()
 }
@@ -33,13 +33,13 @@ describe('kind 10011 migration', () => {
     expect(html).not.toMatch(/unsignedEvent\s*=\s*\{[^}]*kind:\s*0/)
   })
 
-  it('fetchIdentityEvent queries kind 10011', async () => {
-    const html = await getServedHtml()
+  it('the lookup page fetches the identity event with fetchIdentityEvent', async () => {
+    const html = await getServedHtml('/lookup')
     expect(html).toContain('fetchIdentityEvent')
   })
 
-  it('doLookup reads from both kind 10011 and kind 0', async () => {
-    const html = await getServedHtml()
+  it('the lookup page reads from both kind 10011 and kind 0', async () => {
+    const html = await getServedHtml('/lookup')
     expect(html).toContain('fetchIdentityEvent')
     expect(html).toContain('fetchProfileLegacy')
   })

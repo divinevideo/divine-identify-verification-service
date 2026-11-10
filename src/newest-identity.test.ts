@@ -40,11 +40,11 @@ const DEPS = ['document', 'fetch', 'API', 'DIVINE_RELAY', 'PROFILE_RELAYS', 'Web
 async function loadPage() {
   const html = await pageHtml()
   const source = [
-    scriptBetween(html, 'function fetchIdentityEvent(relayUrl, pubkey)', '// --- Manage / Remove linked verifications ---'),
+    scriptBetween(html, "// Shown instead of publishing when the current list couldn't be read", '// --- Manage / Remove linked verifications ---'),
     scriptBetween(html, 'async function publishIdentityTagToNostr()', 'const PENDING_SIGN_IN_KEY'),
     scriptBetween(html, 'async function loadLinkedVerifications()', '// Renders manage table'),
     scriptBetween(html, 'const pendingRemovalRetries = new Map();', '// A platform pill links to the card'),
-    scriptBetween(html, "document.getElementById('remove-confirm-btn').addEventListener", "document.getElementById('lookup-btn').addEventListener"),
+    scriptBetween(html, "document.getElementById('remove-confirm-btn').addEventListener", '// Start-up: a returning sign-in is handled first'),
   ].join('\n')
   return (env: Record<string, unknown>) => {
     const actualSetStatus = new Function('document', `${scriptBetween(html, 'function setStatus(elId, msg, type)', 'function clearStatus(elId)')}\nreturn setStatus;`)(env.document)

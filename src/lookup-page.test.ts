@@ -60,3 +60,26 @@ describe('GET /lookup', () => {
     expect(withCookie.headers.get('vary') ?? '').not.toMatch(/cookie/i)
   })
 })
+
+describe('main page after the move', () => {
+  const LOOKUP_IDS = ['check', 'lookup-input', 'lookup-btn', 'lookup-status', 'lookup-results']
+  it('has no lookup section or hero button', async () => {
+    const html = await (await get('/')).text()
+    for (const id of LOOKUP_IDS) expect(html, id).not.toContain(`id="${id}"`)
+    expect(html).not.toContain('href="#check"')
+    expect(html).not.toContain('class="btn btn-outline">Look up someone</a>')
+  })
+  it('links to /lookup from the top bar and beside the API link', async () => {
+    const html = await (await get('/')).text()
+    expect(html).toContain('<a class="nav-link" href="/lookup">Look up</a>')
+    const apiLink = html.slice(html.indexOf('<section id="api-link">'), html.indexOf('</section>', html.indexOf('<section id="api-link">')))
+    expect(apiLink).toContain('href="/lookup"')
+    expect(apiLink).toContain('href="/docs"')
+  })
+  it('has a script that reaches for no lookup element and carries no lookup code', async () => {
+    const html = await (await get('/')).text()
+    const script = html.slice(html.indexOf('<script nonce='), html.indexOf('</script>'))
+    for (const id of LOOKUP_IDS) expect(script, id).not.toMatch(new RegExp(`getElementById\\(\\s*['"]${id}['"]`))
+    for (const name of ['doLookup', 'showStatus', 'renderResults', 'fetchEventByKind', 'fetchIdentityEvent', 'fetchProfileLegacy', 'VERIFY_BATCH_SIZE']) expect(script, name).not.toContain(name)
+  })
+})

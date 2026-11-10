@@ -42,7 +42,6 @@ const BUTTONS: Array<[string, string]> = [
   ['remove-cancel-btn', 'cancelRemove'],
   ['remove-confirm-btn', 'executeRemoveVerification'],
   ['retry-revoke-btn', 'retryRemoveVerification'],
-  ['lookup-btn', 'doLookup'],
 ]
 
 // Runs the page's real button-wiring lines against stand-in buttons, so a
@@ -158,7 +157,7 @@ describe('pages carry no inline handlers', () => {
     const html = await mainPage()
     const startUp = html.indexOf('// Start-up: a returning sign-in is handled first')
     expect(startUp).toBeGreaterThan(-1)
-    for (const id of ['load-links-btn', 'remove-cancel-btn', 'remove-confirm-btn', 'lookup-btn']) {
+    for (const id of ['load-links-btn', 'remove-cancel-btn', 'remove-confirm-btn']) {
       const wired = html.indexOf(`getElementById('${id}').addEventListener(`)
       expect(wired).toBeGreaterThan(-1)
       expect(wired).toBeLessThan(startUp)

@@ -5,7 +5,7 @@ import type { Bindings } from './types'
 import health from './routes/health'
 import platforms from './routes/platforms'
 import { verified } from './routes/verified'
-import verify, { MAX_BATCH_SIZE } from './routes/verify'
+import verify from './routes/verify'
 import nip05 from './routes/nip05'
 import auth from './routes/auth'
 import { EMBED_BRIDGE_SCRIPT } from './embed-bridge'
@@ -134,7 +134,6 @@ app.get('/', (c) => {
   // Every confirmed sign-in link lasts the same time, so the sign-in card says
   // it once, before the person starts.
   const signInLifetimeCardNote = `<p class="field-help">Links made by signing in last ${FIXED_SIGNIN_LIFETIME_DAYS} days. After that, sign in again to keep them verified.</p>`
-  const extraLookupPlatforms = (hasYouTube ? ",'youtube'" : '') + (hasTikTok ? ",'tiktok'" : '')
   const oauthPlatformOptions = oauthPlatforms.map(platform => `<option value="${platform.value}">${platform.optionLabel}</option>`).join('')
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
@@ -169,7 +168,7 @@ ${PAGE_STYLES}
     <nav class="topbar">
       <a class="brand" href="/"><span class="logomark" aria-hidden="true"></span><span>Divine Identity</span></a>
       <div class="nav-actions">
-        <a class="nav-link" href="#check">Look up</a>
+        <a class="nav-link" href="/lookup">Look up</a>
         <a class="nav-link" href="#how-to-verify">Get verified</a>
         <a class="nav-link" href="https://divine.video">divine.video</a>
       </div>
@@ -182,7 +181,6 @@ ${PAGE_STYLES}
       <div class="cta-row">
         <a href="#how-to-verify" class="btn btn-primary">Get verified</a>
         <a href="#manage" class="btn btn-outline">Manage my links</a>
-        <a href="#check" class="btn btn-outline">Look up someone</a>
       </div>
     </div>
 
@@ -372,21 +370,9 @@ ${PAGE_STYLES}
       </div>
     </section>
 
-    <!-- CHECK TOOL -->
-    <section id="check" style="box-shadow: 6px 6px 0 var(--pink);">
-      <h2>Look up someone</h2>
-      <p>Want to know if a profile is real? Enter their Divine address (like <code>example@divine.video</code>) or their public key to see which accounts they've verified.</p>
-
-      <div style="display:flex;gap:10px;margin-bottom:1rem;flex-wrap:wrap;">
-        <input id="lookup-input" type="text" class="lookup-input" placeholder="example@divine.video or npub1...">
-        <button id="lookup-btn" class="lookup-btn" type="button">Check</button>
-      </div>
-      <div id="lookup-status" class="lookup-status"></div>
-      <div id="lookup-results"></div>
-    </section>
-
     <!-- API REFERENCE LINK -->
     <section id="api-link">
+      <p>Checking whether a profile is real? <a href="/lookup">Look up someone</a>.</p>
       <p>Building on this service? The API reference is at <a href="/docs">/docs</a>.</p>
     </section>
 
@@ -408,7 +394,6 @@ ${PAGE_STYLES}
     const KEYCAST_HASH_KEY = 'verifyer_keycast_hash_v1';
     // The verifier serves this itself (public/vendor), built from the pinned nostr-tools.
     const NOSTR_TOOLS_URL = '${NOSTR_TOOLS_MODULE_PATH}';
-    const VERIFY_BATCH_SIZE = ${MAX_BATCH_SIZE};
     // NIP-46 traffic needs relays that accept kind 24133 events.
     const REMOTE_SIGNER_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.snort.social', 'wss://relay.primal.net'];
     let signerPubkeyHex = null;
@@ -1854,187 +1839,6 @@ ${SHARED_PAGE_SCRIPT}
       platformEl.addEventListener('change', onChange);
     }
 
-    function showStatus(msg, type) {
-      const el = document.getElementById('lookup-status');
-      el.style.display = 'block';
-      el.textContent = msg;
-      // brand-aligned status palette
-      el.style.background = type === 'error' ? 'rgba(255,127,175,0.18)' : type === 'loading' ? 'rgba(208,251,203,0.5)' : 'rgba(39,197,139,0.18)';
-      el.style.color = type === 'error' ? '#7a1133' : type === 'loading' ? '#07241B' : '#0a4f37';
-      el.style.borderColor = type === 'error' ? 'rgba(255,127,175,0.55)' : type === 'loading' ? 'rgba(7,36,27,0.18)' : 'rgba(39,197,139,0.45)';
-    }
-
-    function hideStatus() { clearStatus('lookup-status'); }
-
-    function renderResults(results, pubkey) {
-      const el = document.getElementById('lookup-results');
-      if (!results || results.length === 0) {
-        el.innerHTML = '<p style="color:rgba(7,36,27,0.65);font-size:0.92rem;">No identity claims found on this profile.</p>';
-        return;
-      }
-      let html = '<table><tr><th>Platform</th><th>Identity</th><th>Status</th><th>Details</th></tr>';
-      for (const r of results) {
-        const icon = r.verified ? '&#9989;' : '&#10060;';
-        const status = r.verified ? '<span style="color:#0a4f37;font-weight:700;">Verified</span>' : '<span style="color:#7a1133;font-weight:700;">Not verified</span>';
-        const detail = r.error || (r.cached ? 'cached' : 'fresh check');
-        html += '<tr><td><code>' + esc(r.platform) + '</code></td><td>' + esc(r.identity) + '</td><td>' + icon + ' ' + status + '</td><td style="font-size:0.82rem;color:rgba(7,36,27,0.6);">' + esc(detail) + '</td></tr>';
-      }
-      html += '</table>';
-      el.innerHTML = html;
-    }
-
-    function esc(s) {
-      const d = document.createElement('div');
-      d.textContent = s || '';
-      return d.innerHTML;
-    }
-
-    async function doLookup() {
-      const input = document.getElementById('lookup-input').value.trim();
-      if (!input) return;
-
-      const resultsEl = document.getElementById('lookup-results');
-      resultsEl.innerHTML = '';
-      showStatus('Looking up...', 'loading');
-
-      try {
-        // Determine if npub or NIP-05
-        let pubkey, nip05Name;
-        if (input.startsWith('npub1')) {
-          pubkey = npubToHex(input);
-        } else if (input.includes('@')) {
-          nip05Name = input;
-          // First resolve NIP-05 to get the pubkey
-          const parts = input.split('@');
-          const domain = parts[1];
-          const local = parts[0] || '_';
-          const nip05Resp = await fetch('https://' + domain + '/.well-known/nostr.json?name=' + encodeURIComponent(local));
-          if (!nip05Resp.ok) throw new Error('Could not fetch NIP-05 from ' + domain);
-          const nip05Data = await nip05Resp.json();
-          pubkey = nip05Data.names && nip05Data.names[local];
-          if (!pubkey) throw new Error('NIP-05 name "' + local + '" not found at ' + domain);
-        } else {
-          // Try as raw hex pubkey
-          if (/^[0-9a-f]{64}$/i.test(input)) {
-            pubkey = input.toLowerCase();
-          } else {
-            throw new Error('Enter an npub, NIP-05 (user@domain), or 64-char hex pubkey');
-          }
-        }
-
-        showStatus('Found pubkey: ' + pubkey.slice(0, 8) + '...' + pubkey.slice(-8) + '. Fetching identity claims from relays...', 'loading');
-
-        // Fetch identity event (kind 10011) from Nostr relays, fall back to kind 0
-        const relays = PROFILE_RELAYS;
-        let identityEvent = null;
-        let legacyProfile = null;
-
-        for (const relay of relays) {
-          try {
-            if (!identityEvent) identityEvent = await fetchIdentityEvent(relay, pubkey);
-            if (!legacyProfile) legacyProfile = await fetchProfileLegacy(relay, pubkey);
-            // Keep going until both are found: the claims live in the identity
-            // event, but the NIP-05 lives in the kind 0 profile.
-            if (identityEvent && legacyProfile) break;
-          } catch { /* try next relay */ }
-        }
-
-        const source = identityEvent || legacyProfile;
-        if (!source) {
-          showStatus('Could not find identity claims on relays.', 'error');
-          return;
-        }
-
-        // Extract i-tags (NIP-39 identity claims). Events come from relays, so
-        // skip anything that isn't a well-formed ['i', 'platform:identity', proof] tag.
-        const iTags = (Array.isArray(source.tags) ? source.tags : []).filter(t =>
-          Array.isArray(t) && t[0] === 'i' && typeof t[1] === 'string' && typeof t[2] === 'string' && t[1] && t[2]);
-        if (iTags.length === 0) {
-          showStatus('No linked identity claims (NIP-39 i-tags) found.', 'error');
-          // Check NIP-05 if present in kind 0 profile
-          const profileContent = legacyProfile ? tryParseJSON(legacyProfile.content) : null;
-          if (profileContent && typeof profileContent.nip05 === 'string' && profileContent.nip05) {
-            const nip05Resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(profileContent.nip05) + '&pubkey=' + pubkey);
-            const nip05Result = await nip05Resp.json();
-            showStatus('No NIP-39 claims, but found NIP-05:', 'loading');
-            renderResults([{
-              platform: 'nip05',
-              identity: profileContent.nip05,
-              verified: nip05Result.verified,
-              error: nip05Result.error,
-              cached: nip05Result.cached
-            }], pubkey);
-          }
-          return;
-        }
-
-        // Parse i-tags into claims
-        const claims = iTags.map(tag => {
-          const [platform, ...rest] = tag[1].split(':');
-          const identity = rest.join(':');
-          return { platform, identity, proof: tag[2], pubkey };
-        }).filter(c => ['github','twitter','mastodon','telegram','bluesky','discord'${extraLookupPlatforms}].includes(c.platform));
-
-        if (claims.length === 0) {
-          showStatus('Profile has identity tags but none for supported platforms.', 'error');
-          return;
-        }
-
-        showStatus('Verifying ' + claims.length + ' identity claim(s)...', 'loading');
-
-        // Batch verify, at most VERIFY_BATCH_SIZE claims per request (the server's limit).
-        let allResults = [];
-        for (let i = 0; i < claims.length; i += VERIFY_BATCH_SIZE) {
-          const verifyResp = await fetch(API + '/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ claims: claims.slice(i, i + VERIFY_BATCH_SIZE) }),
-          });
-          const verifyData = await verifyResp.json();
-
-          if (verifyData.error) {
-            showStatus('Verification error: ' + verifyData.error, 'error');
-            return;
-          }
-          allResults = allResults.concat(verifyData.results || []);
-        }
-
-        // Also check NIP-05, which lives in the kind 0 profile.
-        const content = legacyProfile ? tryParseJSON(legacyProfile.content) : null;
-        if (content && typeof content.nip05 === 'string' && content.nip05) {
-          // The NIP-05 row is extra: if its check fails, show that row as not
-          // verified rather than hiding the accounts that did verify.
-          let nip05Row;
-          try {
-            const nip05Resp = await fetch(API + '/nip05/verify?name=' + encodeURIComponent(content.nip05) + '&pubkey=' + pubkey);
-            const nip05Result = await nip05Resp.json();
-            nip05Row = { platform: 'nip05', identity: content.nip05, verified: nip05Result.verified, error: nip05Result.error, cached: nip05Result.cached };
-          } catch {
-            nip05Row = { platform: 'nip05', identity: content.nip05, verified: false, error: 'NIP-05 check failed', cached: false };
-          }
-          allResults = [nip05Row, ...allResults];
-        }
-
-        hideStatus();
-        renderResults(allResults, pubkey);
-
-      } catch (e) {
-        showStatus(e.message || 'Unknown error', 'error');
-      }
-    }
-
-    function tryParseJSON(s) {
-      try { return JSON.parse(s); } catch { return null; }
-    }
-
-    function fetchIdentityEvent(relayUrl, pubkey) {
-      return fetchEventByKind(relayUrl, pubkey, 10011);
-    }
-
-    function fetchProfileLegacy(relayUrl, pubkey) {
-      return fetchEventByKind(relayUrl, pubkey, 0);
-    }
-
     // Shown instead of publishing when the current list couldn't be read, since
     // publishing then would drop the accounts already linked.
     const LINKED_ACCOUNTS_UNREAD = "Couldn't load your current linked accounts, so nothing was published. Please try again in a moment.";
@@ -2116,36 +1920,6 @@ ${SHARED_PAGE_SCRIPT}
         }
       }
       return { read, event: identityEvent || profile };
-    }
-
-    function fetchEventByKind(relayUrl, pubkey, kind) {
-      return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 8000);
-        let ws;
-        try {
-          ws = new WebSocket(relayUrl);
-        } catch { reject(new Error('ws failed')); return; }
-        const subId = 'lookup_' + Math.random().toString(36).slice(2, 8);
-        ws.onopen = () => {
-          ws.send(JSON.stringify(['REQ', subId, { kinds: [kind], authors: [pubkey], limit: 1 }]));
-        };
-        ws.onmessage = (msg) => {
-          try {
-            const data = JSON.parse(msg.data);
-            if (data[0] === 'EVENT' && data[1] === subId) {
-              clearTimeout(timeout);
-              ws.send(JSON.stringify(['CLOSE', subId]));
-              ws.close();
-              resolve(data[2]);
-            } else if (data[0] === 'EOSE' && data[1] === subId) {
-              clearTimeout(timeout);
-              ws.close();
-              resolve(null);
-            }
-          } catch {}
-        };
-        ws.onerror = () => { clearTimeout(timeout); reject(new Error('ws error')); };
-      });
     }
 
     // --- Manage / Remove linked verifications ---
@@ -2458,7 +2232,6 @@ ${SHARED_PAGE_SCRIPT}
     document.getElementById('remove-cancel-btn').addEventListener('click', cancelRemove);
     document.getElementById('remove-confirm-btn').addEventListener('click', () => executeRemoveVerification());
     document.getElementById('retry-revoke-btn').addEventListener('click', retryRemoveVerification);
-    document.getElementById('lookup-btn').addEventListener('click', doLookup);
 
     // Start-up: a returning sign-in is handled first, before any signer is
     // restored, so its one-time code leaves the address straight away.
@@ -2486,11 +2259,6 @@ ${SHARED_PAGE_SCRIPT}
       if (!event.persisted) return;
       setButtonLoading('oauth-start-btn', false, '');
       clearStatus('oauth-status');
-    });
-
-    // Lookup tool Enter key
-    document.getElementById('lookup-input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') doLookup();
     });
 
     // When loaded inside a Divine-hosted iframe, the postMessage shim above
