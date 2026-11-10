@@ -1,6 +1,8 @@
 // ABOUTME: Tidies the account and proof people paste (a leading @, a full post
 // ABOUTME: link) into the form each platform check expects. Pure: never fetches.
 
+import { parseYouTubeIdentity, YOUTUBE_CHANNEL_ID } from './youtube-identity'
+
 export interface TidiedClaim {
   identity: string
   proof: string
@@ -150,10 +152,6 @@ function youtubeProof(proof: string): string | null {
   return on(url, YOUTUBE_HOSTS) && ['shorts', 'live', 'embed'].includes(kind ?? '') && VIDEO_ID.test(id ?? '') ? id : null
 }
 
-// A handle: letters and digits in any script, plus _ - . and the middle dot
-// (support.google.com/youtube/answer/11585688).
-const YOUTUBE_HANDLE = /^@[\p{L}\p{M}\p{N}_.·-]+$/u
-
 // A link's path is percent-encoded (/@caf%C3%A9), so the handle is read
 // decoded, the way it is typed and the way sign-in records it.
 function decodedSegment(segment: string): string | null {
@@ -168,9 +166,9 @@ function youtubeIdentity(identity: string): string | null {
   const url = link(identity)
   if (!url || !on(url, YOUTUBE_HOSTS)) return null
   const [first, second] = parts(url)
-  if (first === 'channel' && /^UC[A-Za-z0-9_-]{22}$/.test(second ?? '')) return second
+  if (first === 'channel' && YOUTUBE_CHANNEL_ID.test(second ?? '')) return second
   const handle = first?.startsWith('@') ? decodedSegment(first) : null
-  return handle && YOUTUBE_HANDLE.test(handle) ? handle : null
+  return handle && parseYouTubeIdentity(handle)?.kind === 'handle' ? handle : null
 }
 
 // A handle as Mastodon shows it, @user@server, in NIP-39's server/@user form.
