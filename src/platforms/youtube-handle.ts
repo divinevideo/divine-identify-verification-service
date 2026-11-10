@@ -22,8 +22,9 @@ export interface YouTubeLookupEnv {
 
 const NOT_FOUND = 'not-found'
 
-// Handles are case-insensitive on YouTube, so one remembered answer serves every casing.
-const lookupKey = (name: string) => `yt_handle_channel:${name.toLowerCase()}`
+// Fold ASCII case only, because YouTube documents handles as case-insensitive
+// and full Unicode lowercasing can turn different handles into one key.
+const lookupKey = (name: string) => `yt_handle_channel:${name.replace(/[A-Z]/g, (c) => c.toLowerCase())}`
 
 // Remembering a lookup only saves the next one, so a failed write never fails
 // the check it was made for.
@@ -39,7 +40,8 @@ async function remember(cache: KVNamespace | undefined, key: string, value: stri
 /**
  * The channel a handle belongs to. `null` means YouTube didn't answer usefully
  * (no key, unreachable, quota, unreadable answer); the caller decides what that
- * means. `handle` may carry a leading `@` or not.
+ * means. `handle` may carry a leading `@` or not. The caller checks the handle
+ * grammar first; this does not reject `@` or `@@x` itself.
  */
 export async function lookUpYouTubeHandle(env: YouTubeLookupEnv, handle: string): Promise<YouTubeHandleLookup> {
   const apiKey = env.YOUTUBE_API_KEY

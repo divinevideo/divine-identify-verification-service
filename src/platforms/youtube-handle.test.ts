@@ -64,6 +64,13 @@ describe('lookUpYouTubeHandle', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps handles that differ beyond ASCII case in separate remembered answers', async () => {
+    fetchMock.mockImplementation(async () => json({ items: [{ id: CHANNEL_A }] }))
+    await lookUpYouTubeHandle(ENV, '@\u212Aate') // KELVIN SIGN, not the letter K
+    await lookUpYouTubeHandle(ENV, '@kate')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('answers from the cache without asking YouTube', async () => {
     kv.store.set('yt_handle_channel:alice', CHANNEL_A)
     expect(await lookUpYouTubeHandle(ENV, '@alice')).toEqual({ channelId: CHANNEL_A })
@@ -118,11 +125,11 @@ describe('lookUpYouTubeHandle', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it.each(['@café', '@中文频道', '@한국어채널'])('sends a non-English handle percent-encoded (%s)', async (handle) => {
+  it.each(['@café', '@Café', '@中文频道', '@한국어채널'])('sends a non-English handle percent-encoded (%s)', async (handle) => {
     fetchMock.mockResolvedValue(json({ items: [{ id: CHANNEL_A }] }))
     await lookUpYouTubeHandle(ENV, handle)
     expect(String(fetchMock.mock.calls[0][0])).toContain(`forHandle=${encodeURIComponent(handle)}`)
-    expect(kv.put).toHaveBeenCalledWith(`yt_handle_channel:${handle.slice(1).toLowerCase()}`, CHANNEL_A, {
+    expect(kv.put).toHaveBeenCalledWith(`yt_handle_channel:${handle.slice(1).replace(/[A-Z]/g, (c) => c.toLowerCase())}`, CHANNEL_A, {
       expirationTtl: 86400,
     })
   })

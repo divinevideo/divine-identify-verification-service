@@ -97,7 +97,7 @@ describe('GET /docs', () => {
 
   it('says which YouTube channel forms are accepted', async () => {
     const html = await (await get('/docs', { YOUTUBE_API_KEY: 'synthetic-key' })).text()
-    expect(html).toContain('Channel ID (<code>UC</code> followed by 22 characters) or handle (<code>@user</code>). <code>c/</code> and <code>user/</code> links aren\'t accepted.')
+    expect(html).toContain('Channel ID (<code>UC</code> followed by 22 characters) or handle (<code>@user</code>, or without the <code>@</code>). <code>c/</code> and <code>user/</code> links aren\'t accepted.')
   })
 
   it('says a check limit can leave a link unchecked', async () => {
