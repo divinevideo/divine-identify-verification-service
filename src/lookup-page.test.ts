@@ -59,6 +59,19 @@ describe('GET /lookup', () => {
     expect(await body(withCookie)).toBe(await body(plain))
     expect(withCookie.headers.get('vary') ?? '').not.toMatch(/cookie/i)
   })
+
+  // The hero sits on the dark page background, and the global code style is
+  // dark text, so the example address in the subtitle needs its own colour.
+  it('shows the example address in the hero in a colour that reads on the dark background', async () => {
+    const html = await (await get('/lookup')).text()
+    const style = html.slice(html.indexOf('<style>'), html.indexOf('</style>'))
+    const rule = style.match(/\.hero \.subtitle code\s*\{([^}]*)\}/)?.[1]
+    expect(rule).toBeDefined()
+    const color = rule!.match(/(?:^|;|\s)color:\s*([^;]+)/)?.[1].trim()
+    expect(color).toBeDefined()
+    expect(color).not.toBe('var(--dark)')
+    expect(html).toContain('<p class="subtitle">Want to know if a profile is real? Enter their Divine address (like <code>example@divine.video</code>)')
+  })
 })
 
 describe('main page after the move', () => {
