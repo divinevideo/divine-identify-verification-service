@@ -50,10 +50,26 @@ describe('verifier health', () => {
     }
   })
 
+  it('reports which platforms have their sign-in links switched off', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const off = async (env: Record<string, unknown>) => {
+      const response = await worker.fetch(new Request('https://verifier.divine.video/health'), env as never)
+      return (await response.json() as { signin_links_off?: string[] }).signin_links_off
+    }
+    try {
+      expect(await off({})).toEqual([])
+      expect(await off({ SIGNIN_LINKS_OFF: 'tiktok, Twitter' })).toEqual(['twitter', 'tiktok'])
+      expect(await off({ SIGNIN_LINKS_OFF: 'x' })).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('documents the mode it reports on the page', async () => {
     const response = await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)
     const html = await response.text()
     expect(html).toContain('<code>signin_confirmation</code>')
+    expect(html).toContain('<code>signin_links_off</code>')
   })
 })
 

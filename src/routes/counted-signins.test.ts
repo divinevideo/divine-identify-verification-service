@@ -75,6 +75,21 @@ describe('sign-in records answer every check the same way', () => {
     expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required' }, { confirmed: true }))).toBe(true)
   })
 
+  it.each(CHECKS)('%s: a confirmed record does not count while its platform\'s links are switched off', async (_name, check) => {
+    expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required', SIGNIN_LINKS_OFF: 'twitter' }, { confirmed: true }))).toBe(false)
+    expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required', SIGNIN_LINKS_OFF: 'tiktok' }, { confirmed: true }))).toBe(true)
+  })
+
+  it.each(CHECKS)('%s: a TikTok link counts while TikTok sign-in is paused, and not once its links are switched off', async (_name, check) => {
+    const TIKTOK = { platform: 'tiktok', identity: 'creator' }
+    const vars = {
+      SIGNIN_CONFIRMATION: 'required', TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's',
+      OAUTH_REDIRECT_BASE: 'https://verifier.divine.video', TIKTOK_OAUTH_ENABLED: 'false',
+    }
+    expect(await check(envWith(vars, { confirmed: true }, TIKTOK), TIKTOK)).toBe(true)
+    expect(await check(envWith({ ...vars, SIGNIN_LINKS_OFF: 'tiktok' }, { confirmed: true }, TIKTOK), TIKTOK)).toBe(false)
+  })
+
   it.each(CHECKS)('%s: a confirmed X or Bluesky record past its lifetime does not count', async (_name, check) => {
     const checkedAt = Math.floor(Date.now() / 1000) - 31 * 24 * 60 * 60
     expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required' }, { confirmed: true, checked_at: checkedAt }))).toBe(false)

@@ -26,6 +26,10 @@ export type Bindings = {
   SIGNIN_CONFIRMATION?: string
   // "query" puts the sign-in's one-time code in the query instead of after the #.
   SIGNIN_CODE_PLACEMENT?: string
+  // A Worker secret listing sign-in platforms whose links are withdrawn. Listed
+  // platforms' links stop counting and new sign-ins and confirmations are
+  // refused, unlike removing credentials, which only stops new sign-ins.
+  SIGNIN_LINKS_OFF?: string
 }
 
 export type OAuthPlatform = 'twitter' | 'bluesky' | 'youtube' | 'tiktok'
