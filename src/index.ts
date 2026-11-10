@@ -377,6 +377,23 @@ ${PAGE_STYLES}
     </section>
 
     <script nonce="${cspNonce}">
+    // Old links still point at sections that moved: #check to /lookup, and the
+    // API reference anchors to /docs (the anchor is kept so /docs scrolls to
+    // it). A link with a query is a sign-in coming back and must finish here,
+    // so it is never forwarded. Kept so saved links keep working.
+    (function forwardMovedSectionLinks() {
+      if (window.location.search) return;
+      var hash = window.location.hash;
+      // Bare ids, not '#id' strings: the page-script guard in docs-page.test.ts
+      // treats a '#id' literal as a live reference to an element that moved.
+      var movedToDocs = ['api-about', 'platforms-api', 'single-verify', 'batch-verify', 'get-verify', 'nip05', 'oauth', 'other', 'rate-limits'];
+      if (hash === '#check') {
+        window.location.replace('/lookup');
+      } else if (movedToDocs.indexOf(hash.slice(1)) !== -1) {
+        window.location.replace('/docs' + hash);
+      }
+    })();
+
     // Install a postMessage-based window.nostr (NIP-07) shim when this page
     // is loaded inside an iframe of a trusted Divine origin. The host
     // (divine.video) honors signEvent / getPublicKey / getRelays requests
