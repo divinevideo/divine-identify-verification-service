@@ -419,6 +419,14 @@ describe('POST /auth/:platform/start', () => {
     expect(logged.filter((line) => line.includes(START_CHECK))).toEqual([])
   })
 
+  it.each(PLATFORMS)('%s: answers 503 while its sign-in links are switched off', async (platform) => {
+    // A provider request here would mean the switch was ignored (Bluesky's start fetches first).
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('no provider request expected') }))
+    const env = platformEnv(platform, { SIGNIN_LINKS_OFF: platform })
+    const res = await postStart(platform, env, startBody(platform, PUBKEY, START_CHECK))
+    expect(res.status).toBe(503)
+  })
+
   it('starts on any verifier host without redirecting (a redirect would drop the body)', async () => {
     const res = await postStart('twitter', baseEnv(), startBody('twitter', PUBKEY, START_CHECK), 'https://verifyer.divine.video')
     expect(res.status).toBe(200)

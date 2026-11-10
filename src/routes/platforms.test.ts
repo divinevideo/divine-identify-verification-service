@@ -172,6 +172,15 @@ describe('GET /platforms', () => {
       expect(body.platforms[platform]).not.toHaveProperty('signin_expires_after_days')
     })
 
+    it.each(['twitter', 'bluesky', 'youtube', 'tiktok'])('reports %s sign-in off, with no link length, while its links are switched off', async platform => {
+      const body = await fetchPlatforms({ ...ALL_OAUTH_CONFIGURED, SIGNIN_LINKS_OFF: platform })
+      expect(body.platforms[platform].oauth).toBe(false)
+      expect(body.platforms[platform]).not.toHaveProperty('signin_expires_after_days')
+      for (const other of ['twitter', 'bluesky', 'youtube', 'tiktok'].filter(p => p !== platform)) {
+        expect(body.platforms[other].oauth).toBe(true)
+      }
+    })
+
     it('is absent on platforms without sign-in', async () => {
       const body = await fetchPlatforms(ALL_OAUTH_CONFIGURED)
       expect(body.platforms.github).not.toHaveProperty('signin_expires_after_days')

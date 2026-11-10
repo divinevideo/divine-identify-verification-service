@@ -609,6 +609,14 @@ describe('GET /auth/tiktok/start', () => {
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toContain('tiktok.com')
   })
+
+  it('refuses sandbox reviewers too while TikTok sign-in links are switched off', async () => {
+    const env = { ...createTestEnv(), ...configured, SIGNIN_LINKS_OFF: 'tiktok' }
+    const res = await app.request(startUrl(), {
+      headers: { Cookie: 'tiktok_oauth_review=1' },
+    }, env)
+    expect(res.status).toBe(503)
+  })
 })
 
 describe('GET /auth/twitter/callback return address', () => {

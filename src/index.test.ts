@@ -240,6 +240,14 @@ describe('verifier tiktok oauth gating', () => {
     expect(oauthSelect).toContain('value="tiktok"')
   })
 
+  it('hides TikTok sign-in from a reviewer while TikTok sign-in links are switched off', async () => {
+    const oauthSelect = sliceSelect(
+      await homeHtml('https://verifier.divine.video/?tiktok_oauth_review=1', { ...tiktokOAuthConfig, SIGNIN_LINKS_OFF: 'tiktok' }),
+      'oauth-platform-select',
+    )
+    expect(oauthSelect).not.toContain('value="tiktok"')
+  })
+
   it('exposes TikTok OAuth when the production rollout flag is enabled', async () => {
     const oauthSelect = sliceSelect(
       await homeHtml('https://verifier.divine.video/', {
@@ -344,6 +352,12 @@ describe('verifier twitter oauth gating', () => {
     const oauthSelect = sliceSelect(await homeHtml(), 'oauth-platform-select')
     expect(oauthSelect).not.toContain('value="twitter"')
     expect(oauthSelect).toContain('value="bluesky"')
+  })
+
+  it('hides Twitter sign-in while its links are switched off', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, SIGNIN_LINKS_OFF: 'twitter' })
+    expect(sliceSelect(html, 'oauth-platform-select')).not.toContain('value="twitter"')
+    expect(sliceSelect(html, 'proof-platform-select')).toContain('value="twitter"')
   })
 
   it('keeps Twitter in the proof-post picker', async () => {
