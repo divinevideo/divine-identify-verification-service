@@ -657,7 +657,7 @@ describe('POST /auth/confirm', () => {
     expect(info).toHaveBeenCalledWith(`${platform} sign-in confirmation refused: links_off`)
   })
 
-  it('keeps the code, so the owner can confirm once the switch is cleared', async () => {
+  it('keeps the code, like the other refusals', async () => {
     const env = platformEnv('twitter', { SIGNIN_CONFIRMATION: 'required' })
     const s = await startedAndFinished('twitter', env)
     env.SIGNIN_LINKS_OFF = 'twitter'

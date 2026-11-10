@@ -1,4 +1,5 @@
 import type { Bindings } from './types'
+import { signInLinksAreOff } from './oauth/signin-switch'
 import { isTikTokOAuthUsable } from './oauth/tiktok'
 import { isTwitterOAuthUsable } from './oauth/twitter'
 import { isYouTubeOAuthUsable } from './oauth/youtube'
@@ -12,6 +13,9 @@ export interface PlatformFlags {
   twitterOAuthEnabled: boolean
   youtubeOAuthEnabled: boolean
   tiktokOAuthEnabled: boolean
+  // The operator withdrew TikTok's sign-in links, so none of them count, old
+  // ones included. /docs uses it to stop saying existing links stay recognized.
+  tiktokLinksOff: boolean
 }
 
 export interface OAuthPlatform {
@@ -39,6 +43,7 @@ export function platformFlags(env: Bindings, tiktokOAuthReviewEnabled: boolean):
     // ID and secret and the redirect base (isYouTubeOAuthUsable).
     youtubeOAuthEnabled: hasYouTube && isYouTubeOAuthUsable(env),
     tiktokOAuthEnabled: isTikTokOAuthUsable(env, tiktokOAuthReviewEnabled),
+    tiktokLinksOff: signInLinksAreOff(env, 'tiktok'),
   }
 }
 

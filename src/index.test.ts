@@ -332,6 +332,11 @@ describe('verifier tiktok oauth gating', () => {
     expect(await docsHtml()).toContain('Existing TikTok OAuth verifications remain recognized.')
   })
 
+  it('does not say existing TikTok links count while the operator has switched them off', async () => {
+    expect(await docsHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'tiktok' }))
+      .not.toContain('Existing TikTok OAuth verifications remain recognized.')
+  })
+
   it('documents the platforms endpoint without a TikTok unsupported caveat', async () => {
     const html = await docsHtml()
     expect(html).not.toContain('TikTok reports unsupported')

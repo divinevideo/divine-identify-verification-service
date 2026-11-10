@@ -75,7 +75,7 @@ confirm.post('/confirm', async (c) => {
     && claims.includes(tag[1].toLowerCase()) && typeof tag[3] === 'string' && sameToken(tag[3], binding))
   if (!bound) return refuse('claim_mismatch', pending.platform)
   // Last, so every other refusal keeps its precedence. Like them it keeps the
-  // code, so the owner can confirm once the switch is cleared.
+  // code.
   if (signInLinksAreOff(c.env, pending.platform)) return refuse('links_off', pending.platform)
 
   const account = { platform: pending.platform, identity: pending.identity, account_id: pending.account_id, handle: pending.handle }
