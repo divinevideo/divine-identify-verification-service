@@ -98,7 +98,7 @@ function callbackFetchFor(platform: Platform) {
     case 'youtube':
       return vi.fn()
         .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
-        .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'UC1', snippet: { customUrl: 'creator' } }] }))
+        .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'UC1', snippet: { customUrl: '@creator' } }] }))
     case 'tiktok':
       return vi.fn()
         .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
@@ -109,6 +109,7 @@ function callbackFetchFor(platform: Platform) {
 }
 
 function identityFor(platform: Platform): string {
+  if (platform === 'youtube') return '@creator'
   return platform === 'twitter' ? 'jack' : platform === 'bluesky' ? BLUESKY_HANDLE : 'creator'
 }
 

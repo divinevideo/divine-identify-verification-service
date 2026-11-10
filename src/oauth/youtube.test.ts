@@ -140,6 +140,26 @@ describe('handleYouTubeCallback', () => {
     expect(JSON.parse(value)).toMatchObject({ platform: 'youtube', identity: 'UC123', pubkey: PUBKEY })
   })
 
+  // Claims spell a bare handle with its @, so a customUrl without one would be
+  // saved under a name no claim is checked by.
+  it.each(['creator', '@', '@two words', 'c/creator'])(
+    'saves the channel id when customUrl is not an @handle: %s',
+    async customUrl => {
+      vi.stubGlobal('fetch', vi.fn()
+        .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+        .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'UC123', snippet: { customUrl, title: 'Creator' } }] })))
+
+      const env = envWithState()
+      const result = await handleYouTubeCallback(env, 'auth-code', 'state123')
+
+      expect(result.success).toBe(true)
+      expect(result.identity).toBe('UC123')
+      const [key, value] = env.CACHE_KV.put.mock.calls[0]
+      expect(key).toBe(`oauth_verified:youtube:uc123:${PUBKEY}`)
+      expect(JSON.parse(value)).toMatchObject({ platform: 'youtube', identity: 'UC123', account_id: 'UC123' })
+    },
+  )
+
   it('fails when the account has no channel', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))

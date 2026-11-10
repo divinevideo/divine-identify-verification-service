@@ -3,6 +3,7 @@ import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState } from './state'
 import { holdSignIn } from './signin-records'
 import { signInLinksAreOff } from './signin-switch'
+import { parseYouTubeIdentity } from '../utils/youtube-identity'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -129,8 +130,12 @@ export async function handleYouTubeCallback(
     return { success: false, returnUrl: state.returnUrl, error: 'No YouTube channel found for this account' }
   }
 
-  // Use customUrl (handle) if available, otherwise channel ID
-  const identity = channel.snippet?.customUrl || channel.id
+  // The handle names the link when customUrl is one (@ and a valid handle);
+  // otherwise the channel id does. Claims spell a bare handle with its @, and
+  // Google's docs don't say customUrl always has it, so anything else would be
+  // saved under a name no claim is checked by.
+  const customUrl = channel.snippet?.customUrl
+  const identity = customUrl?.startsWith('@') && parseYouTubeIdentity(customUrl)?.kind === 'handle' ? customUrl : channel.id
 
   // The channel ID stays with the channel when its handle changes.
   return holdSignIn(env, state, { platform: 'youtube', identity, ...(typeof channel.id === 'string' ? { account_id: channel.id } : {}) })

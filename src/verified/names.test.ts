@@ -74,6 +74,10 @@ describe('accountKey', () => {
   it('lowercases a YouTube handle', () => {
     expect(accountKey('youtube', '@Alice')).toBe('@alice')
   })
+
+  it('matches a bare YouTube handle with the same handle spelled with @', () => {
+    expect(accountKey('youtube', 'Alice')).toBe('@alice')
+  })
 })
 
 describe('tagSpellings', () => {
@@ -85,6 +89,16 @@ describe('tagSpellings', () => {
 
   it('drops a spelling that repeats across identities', () => {
     expect(tagSpellings('twitter', ['jack', 'Jack'])).toEqual(['twitter:jack', 'twitter:Jack'])
+  })
+
+  it('searches a YouTube handle with and without its @, so an older bare tag is found', () => {
+    expect(tagSpellings('youtube', ['@Alice'])).toEqual(['youtube:@Alice', 'youtube:Alice', 'youtube:@alice', 'youtube:alice'])
+    expect(tagSpellings('youtube', ['alice'])).toEqual(['youtube:alice', 'youtube:@alice'])
+  })
+
+  it('does not search a handle shaped like a channel id as that channel id', () => {
+    const id = 'UCabcdefghijklmnopqrstuv'
+    expect(tagSpellings('youtube', [`@${id}`])).toEqual([`youtube:@${id}`, `youtube:@${id.toLowerCase()}`])
   })
 
   it('keeps a YouTube channel ID spelling as given only', () => {

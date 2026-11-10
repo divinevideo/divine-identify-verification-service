@@ -63,7 +63,7 @@ async function link(env: Bindings, platform: string, identity: string, proof: st
 }
 
 const ROUTES = [['single', single], ['batch', batch], ['link', link]] as const
-const ACCOUNTS = [['twitter', 'jack'], ['youtube', 'somechannel'], ['tiktok', 'someone']] as const
+const ACCOUNTS = [['twitter', 'jack'], ['youtube', '@somechannel'], ['tiktok', 'someone']] as const
 
 function confirmedRecord(store: Map<string, string>, platform: string, identity: string, ageDays = 0) {
   store.set(oauthVerificationKey(platform as 'twitter', identity, PUBKEY), JSON.stringify({
@@ -101,6 +101,14 @@ describe('a sign-in link with no counted sign-in answers signin_expired and the 
       expect(answer.verified).toBe(true)
       expect(answer.method).toBe('oauth')
       expect(answer.code).toBeUndefined()
+    })
+
+    it('youtube: a handle sent without its @ counts the confirmed record saved by @handle', async () => {
+      const { env, store } = makeEnv()
+      confirmedRecord(store, 'youtube', '@somechannel')
+      const answer = await check(env, 'youtube', 'somechannel', 'oauth')
+      expect(answer.verified).toBe(true)
+      expect(answer.method).toBe('oauth')
     })
 
     it.each(ACCOUNTS)('%s: a confirmed record on a platform whose links are switched off gives signin_expired without asking the platform', async (platform, identity) => {

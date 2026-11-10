@@ -20,6 +20,32 @@ describe('tidyClaim', () => {
     expect(tidyClaim('youtube', '@Alice', 'dQw4w9WgXcQ').identity).toBe('@Alice')
   })
 
+  it.each([
+    ['alice', '@alice'],
+    ['Alice', '@Alice'],
+    ['café', '@café'],
+    ['a_b.c-9', '@a_b.c-9'],
+    // Starts with UC but isn't a channel id, so it is a handle.
+    ['UCshort', '@UCshort'],
+  ])('spells the bare YouTube handle %s with its @', (identity, expected) => {
+    expect(tidyClaim('youtube', identity, 'dQw4w9WgXcQ').identity).toBe(expected)
+  })
+
+  it('leaves a bare YouTube channel id without an @', () => {
+    expect(tidyClaim('youtube', 'UCaaaaaaaaaaaaaaaaaaaaaa', 'dQw4w9WgXcQ').identity).toBe('UCaaaaaaaaaaaaaaaaaaaaaa')
+  })
+
+  it.each(['a b', '_alice', 'alice_', '@', 'https://example.com/@alice'])(
+    'leaves YouTube text that is not a handle as sent: %s',
+    identity => {
+      expect(tidyClaim('youtube', identity, 'dQw4w9WgXcQ').identity).toBe(identity)
+    },
+  )
+
+  it('adds the @ only for YouTube', () => {
+    expect(tidyClaim('github', 'alice', 'abc').identity).toBe('alice')
+  })
+
   it('trims spaces around both values', () => {
     expect(tidyClaim('github', '  alice ', ' abc123 ')).toEqual({ identity: 'alice', proof: 'abc123' })
   })
