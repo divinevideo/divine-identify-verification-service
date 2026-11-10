@@ -313,7 +313,8 @@ ${exampleBody}${otherOAuthStartExamples ? `\n\n${otherOAuthStartExamples}` : ''}
         <li><code>cancelled</code>: the person cancelled or declined at the platform;</li>
         <li><code>provider_error</code>: the platform reported another error;</li>
         <li><code>failed</code>: the verifier couldn't check the account with the platform;</li>
-        <li><code>update_required</code>: the sign-in was started with <code>GET /auth/:platform/start</code>, as older app versions do, which is no longer accepted.</li>
+        <li><code>update_required</code>: the sign-in was started with <code>GET /auth/:platform/start</code>, as older app versions do, which is no longer accepted;</li>
+        <li><code>signin_unavailable</code>: sign-in links for this platform are switched off, so nothing was linked.</li>
       </ul>
       <p>Treat a code you don't know as <code>failed</code>. When the verifier can't tell where a sign-in started, or the sign-in fails unexpectedly, it returns to this page instead.</p>
       <h3>Confirm the sign-in</h3>

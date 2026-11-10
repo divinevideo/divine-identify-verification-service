@@ -260,7 +260,7 @@ ${PAGE_STYLES}
 
     <section id="verify-here" class="verify-here">
       <h2>Verify Here</h2>
-      <p class="verify-lead">Sign in, link your account one of two ways, then publish.</p>
+      <p class="verify-lead">Sign in, link your account ${noSignIn ? 'with a post' : 'one of two ways'}, then publish.</p>
 
       <div class="verify-card">
         <span class="step-pill">Step 1</span>

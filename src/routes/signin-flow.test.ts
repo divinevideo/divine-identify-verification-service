@@ -302,6 +302,32 @@ describe('a finished sign-in started with a start check', () => {
     for (const key of recordKeysFor(platform, PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
   })
 
+  // A sign-in started before the switch was set can come back after it.
+  it('optional mode: a sign-in returning while its platform is switched off saves no record and is not reported as linked', async () => {
+    const env = baseEnv({ SIGNIN_LINKS_OFF: 'twitter' })
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN })
+    for (const key of recordKeysFor('twitter', PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
+    expect(location.searchParams.get('oauth_verified')).toBeNull()
+    expect(location.searchParams.get('oauth_error_code')).toBe('signin_unavailable')
+    expect(location.searchParams.get('oauth_error')).toBe('Sign-in links for this platform are switched off right now.')
+  })
+
+  it('optional mode: another platform being switched off changes nothing', async () => {
+    const env = baseEnv({ SIGNIN_LINKS_OFF: 'tiktok' })
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN })
+    expect(location.searchParams.get('oauth_verified')).toBe('true')
+    expect(location.searchParams.has('oauth_error_code')).toBe(false)
+    expect(await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', PUBKEY))).not.toBeNull()
+  })
+
+  it('required mode: a switched-off platform still holds the sign-in under a code, as before', async () => {
+    const env = baseEnv({ SIGNIN_CONFIRMATION: 'required', SIGNIN_LINKS_OFF: 'twitter' })
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
+    expect(new URLSearchParams(location.hash.slice(1)).get('oauth_confirm')).toMatch(CODE)
+    expect(location.searchParams.get('oauth_verified')).toBeNull()
+    expect(location.searchParams.has('oauth_error_code')).toBe(false)
+  })
+
   it('replaces names the return address arrived with, and a fragment that carried a code', async () => {
     const env = baseEnv()
     const returnUrl = `${BASE}/?signin=n&identity=evil&oauth_confirm=old&oauth_error=old&oauth_error_code=cancelled#oauth_confirm=old`

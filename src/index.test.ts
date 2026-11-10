@@ -393,6 +393,8 @@ describe('verifier Bluesky sign-in shutoff', () => {
     expect(html).not.toContain('For , sign in')
     expect(html).not.toContain('Pick one.')
     expect(html).toContain('Post your npub on the account you want to link, then paste the link to that post.')
+    expect(html).not.toContain('one of two ways')
+    expect(html).toContain('<p class="verify-lead">Sign in, link your account with a post, then publish.</p>')
   })
 
   it('keeps Quick Connect for the sign-ins still available', async () => {
