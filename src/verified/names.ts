@@ -53,7 +53,12 @@ export function tagSpellings(platform: Platform, identities: string[]): string[]
   for (const identity of identities) {
     const tidied = tidyClaim(platform, identity, '').identity
     const forms = [identity, tidied]
-    if (!keepsCase(platform, tidied)) forms.push(identity.toLowerCase(), tidied.toLowerCase())
+    // A YouTube handle tag written before bare handles were spelled with @ may
+    // lack it, so the bare form is searched too, unless that would read as a
+    // channel id, which names a different account.
+    const bare = tidied.slice(1)
+    if (platform === 'youtube' && tidied.startsWith('@') && !YOUTUBE_CHANNEL_ID.test(bare)) forms.push(bare)
+    if (!keepsCase(platform, tidied)) forms.push(...forms.map(form => form.toLowerCase()))
     for (const form of forms) {
       const tag = `${platform}:${form}`
       if (!spellings.includes(tag)) spellings.push(tag)

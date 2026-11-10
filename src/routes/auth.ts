@@ -682,7 +682,8 @@ auth.post('/oauth/revoke', async (c) => {
   }
 
   // The record is looked up and deleted under the tidy identity /verify counts
-  // it by (no leading @, no stray spaces), whatever form was typed.
+  // it by (for example no leading @ on Twitter, a YouTube handle given its @,
+  // no stray spaces), whatever form was typed.
   const storedIdentity = tidyClaim(platform, identity, '').identity
   // Only the signer's own records are read or deleted.
   const record = await getOAuthVerification(c.env.CACHE_KV, platform, storedIdentity, signed.pubkey)

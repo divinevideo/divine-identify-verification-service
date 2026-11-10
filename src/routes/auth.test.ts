@@ -247,6 +247,22 @@ describe('POST /auth/oauth/revoke', () => {
     expect(await env.CACHE_KV.get(key)).toBeNull()
   })
 
+  it('deletes a YouTube sign-in saved by @handle when the handle is sent without its @', async () => {
+    const env = createTestEnv()
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    const key = `oauth_verified:youtube:@creator:${event.pubkey}`
+    await env.CACHE_KV.put(key, JSON.stringify({ verified: true }))
+    forbidUpstreamFetch()
+
+    const res = await app.request('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: 'youtube', identity: 'creator', pubkey: event.pubkey, event }),
+    }, env)
+    expect(res.status).toBe(200)
+    expect(await env.CACHE_KV.get(key)).toBeNull()
+  })
+
   it('deletes the signer\'s record when the body pubkey is sent in uppercase', async () => {
     const env = createTestEnv()
     const event = await signNip98Event(schnorr.utils.randomSecretKey())

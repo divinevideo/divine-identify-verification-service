@@ -66,6 +66,11 @@ describe('listHoldsClaim', () => {
     expect(listHoldsClaim(list(tags), 'youtube', channel, youtube)).toBe(true)
   })
 
+  it('reads a bare YouTube handle as the same claim as the @handle it was saved by', () => {
+    const youtube = rec({ platform: 'youtube', identity: '@creator' })
+    expect(listHoldsClaim(list([['i', 'youtube:creator', 'oauth']]), 'youtube', '@creator', youtube)).toBe(true)
+  })
+
   it('reads an x tag as the same claim as twitter', () => {
     expect(listHoldsClaim(list([['i', 'x:alice', 'oauth']]), 'twitter', 'alice', rec())).toBe(true)
     expect(listHoldsClaim(list([['i', 'X:Alice', 'oauth']]), 'twitter', 'alice', rec())).toBe(true)

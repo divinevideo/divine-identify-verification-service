@@ -320,6 +320,17 @@ describe('GET /verified?platform=&identity=', () => {
     expect(await res.json()).toMatchObject({ platform: 'youtube', identity: channel, pubkey: PK })
   })
 
+  it.each(['%40alice', 'alice'])('finds an older bare YouTube handle tag from a lookup by %s', async identity => {
+    const { env, kv } = envWith()
+    await seedProof(kv, 'youtube', '@alice', 'dQw4w9WgXcQ')
+    const divine = relaysWith([await signedList([['i', 'youtube:alice', 'dQw4w9WgXcQ']])])
+    const res = await get(env, `/verified?platform=youtube&identity=${identity}`)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ platform: 'youtube', identity: '@alice', pubkey: PK })
+    const search = divine.seenFilters.find(filters => (filters as Array<{ '#i'?: string[] }>)[0]['#i'])
+    expect((search as Array<{ '#i': string[] }>)[0]['#i']).toEqual(expect.arrayContaining(['youtube:alice', 'youtube:@alice']))
+  })
+
   it('matches a Bluesky tag naming the DID from a lookup by handle', async () => {
     const { env, store } = envWith()
     const record = { account_id: 'did:plc:abcdefghijklmnopqrstuvwx', handle: 'alice.bsky.social' }

@@ -164,7 +164,13 @@ function decodedSegment(segment: string): string | null {
 
 function youtubeIdentity(identity: string): string | null {
   const url = link(identity)
-  if (!url || !on(url, YOUTUBE_HOSTS)) return null
+  if (!url) {
+    // A bare handle gets its @, as a pasted link and a sign-in record spell it,
+    // so one channel has one tag and one cached check.
+    const parsed = parseYouTubeIdentity(identity)
+    return parsed?.kind === 'handle' ? parsed.handle : null
+  }
+  if (!on(url, YOUTUBE_HOSTS)) return null
   const [first, second] = parts(url)
   if (first === 'channel' && YOUTUBE_CHANNEL_ID.test(second ?? '')) return second
   const handle = first?.startsWith('@') ? decodedSegment(first) : null

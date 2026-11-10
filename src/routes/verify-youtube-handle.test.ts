@@ -99,6 +99,17 @@ describe('YouTube handle claims', () => {
     expect(again).toMatchObject({ cached: true, verified: true })
   })
 
+  it('spells a bare handle with its @ and shares one check with the @handle', async () => {
+    const { env, kv } = createEnv()
+    stubYouTube(answerWith(CHANNEL_A))
+    const bare = await verify(env, 'alice')
+    expect(bare).toMatchObject({ verified: true, cached: false, canonical_identity: '@alice' })
+
+    const withAt = await verify(env, '@alice')
+    expect(withAt).toMatchObject({ verified: true, cached: true })
+    expect(resultPuts(kv)).toHaveLength(1)
+  })
+
   it('remembers the handle lookup in the shared cache', async () => {
     const { env, store } = createEnv()
     stubYouTube(answerWith(CHANNEL_A))

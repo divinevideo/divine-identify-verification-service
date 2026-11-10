@@ -92,12 +92,12 @@ describe('GET /docs', () => {
   it('says how letter case affects finding a proof-post owner', async () => {
     const html = await (await get('/docs')).text()
     expect(html).toContain('<code>?identity=Alice</code> finds a list tagged <code>Alice</code> or <code>alice</code>, but <code>?identity=alice</code> does not find <code>Alice</code>')
-    expect(html).toContain('Owners who linked by signing in are found in any letter case. YouTube channel IDs (<code>UC…</code>) are case-sensitive either way.')
+    expect(html).toContain('Owners who linked by signing in are found in any letter case. YouTube channel IDs (<code>UC…</code>) are case-sensitive either way. A YouTube handle is found with or without its @.</p>')
   })
 
   it('says which YouTube channel forms are accepted', async () => {
     const html = await (await get('/docs', { YOUTUBE_API_KEY: 'synthetic-key' })).text()
-    expect(html).toContain('Channel ID (<code>UC</code> followed by 22 characters) or handle (<code>@user</code>, or without the <code>@</code>). <code>c/</code> and <code>user/</code> links aren\'t accepted.')
+    expect(html).toContain('Channel ID (<code>UC</code> followed by 22 characters) or handle (<code>@user</code>, or without the <code>@</code>, which is added). <code>c/</code> and <code>user/</code> links aren\'t accepted.')
   })
 
   it('says a check limit can leave a link unchecked', async () => {
