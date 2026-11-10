@@ -20,6 +20,8 @@ describe('parseYouTubeIdentity', () => {
     ['@한국어채널', '@한국어채널'],
     ['@a_b.c-9', '@a_b.c-9'],
     ['@l·l', '@l·l'],
+    // A decomposed accent: the combining mark may end a handle.
+    ['@café', '@café'],
   ])('reads %s as the handle %s', (input, handle) => {
     expect(parseYouTubeIdentity(input)).toEqual({ kind: 'handle', handle })
   })
@@ -36,6 +38,20 @@ describe('parseYouTubeIdentity', () => {
     'https://www.youtube.com/user/alice',
     'https://www.youtube.com/@alice',
     'alice<b',
+    // _ - . and the middle dot can't start or end a handle.
+    '@_alice',
+    '@alice_',
+    '@-alice',
+    'alice-',
+    '@.alice',
+    '@alice.',
+    '@·alice',
+    '@alice·',
+    '@...',
+    '@-',
+    // A combining mark needs a letter before it.
+    '@́',
+    '@́alice',
   ])('refuses %j', (input) => {
     expect(parseYouTubeIdentity(input)).toBeNull()
   })

@@ -3,9 +3,11 @@
 
 export const YOUTUBE_CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/
 
-// A handle: letters and digits in any script, plus _ - . and the middle dot
-// (support.google.com/youtube/answer/11585688).
-const HANDLE_NAME = /^[\p{L}\p{M}\p{N}_.·-]+$/u
+// A handle: letters and digits in any script, plus _ - . and the middle dot,
+// which can't start or end it (support.google.com/youtube/answer/11585688). A
+// combining mark follows a letter, so it can't start a handle but can end one.
+// Length isn't checked here: YouTube's limits on it differ by script.
+const HANDLE_NAME = /^[\p{L}\p{N}](?:[\p{L}\p{M}\p{N}_.·-]*[\p{L}\p{M}\p{N}])?$/u
 
 export type YouTubeIdentity =
   | { kind: 'channel'; channelId: string }
