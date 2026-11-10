@@ -57,7 +57,8 @@ The service backs Divine's identity and trust surface: divine-web and Divine mob
    - `cancelled`: the person cancelled or declined at the platform;
    - `provider_error`: the platform reported another error;
    - `failed`: the verifier couldn't check the account with the platform;
-   - `update_required`: the sign-in was started with `GET /auth/:platform/start`, as older app versions do, which is no longer accepted.
+   - `update_required`: the sign-in was started with `GET /auth/:platform/start`, as older app versions do, which is no longer accepted;
+   - `signin_unavailable`: sign-in links for this platform are switched off, so nothing was linked.
 
    Treat a code you don't know as `failed`. When the verifier can't tell where a sign-in started, or the sign-in fails unexpectedly, it returns to its own page instead.
 3. The owner signs their linked-accounts list (kind 10011). The new claim's tag carries a fourth value, `base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))`. The client sends:
@@ -76,6 +77,7 @@ The service backs Divine's identity and trust surface: divine-web and Divine mob
    - `signin_wrong_account`;
    - `signin_not_yours`;
    - `signin_claim_mismatch`;
+   - `signin_unavailable` (403: sign-in links for this platform are switched off);
    - `invalid_event`.
 
 Return addresses are limited to `https://verifier.divine.video/`, `https://verifyer.divine.video/` and `https://divine.video/app/callback` (any query or fragment).
@@ -118,6 +120,7 @@ Configuration lives in `wrangler.toml`.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — Google OAuth 2.0 credentials, used for YouTube login. YouTube sign-in is offered only when both are set along with `OAUTH_REDIRECT_BASE` and `YOUTUBE_API_KEY`; otherwise, while `YOUTUBE_API_KEY` is set, YouTube is linked with a post.
 - `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` — TikTok Login Kit credentials.
 - `OAUTH_REDIRECT_BASE`: base URL for OAuth callbacks (for example `https://verifier.divine.video`), also used to validate return URLs against open redirects. Its origin's `/` is also accepted as a return address, for staging and local development.
+- `SIGNIN_LINKS_OFF`: optional. The sign-in platforms (`twitter`, `bluesky`, `youtube`, `tiktok`) whose sign-in links are switched off, separated by commas or spaces. While a platform is listed, its links stop counting (checks answer `signin_expired`), new sign-ins and confirmations are refused, and `/platforms` reports `oauth: false`. Links are kept, so clearing the secret restores every link still inside its 30 days. Set it with `npx wrangler secret put SIGNIN_LINKS_OFF` and clear it with `npx wrangler secret delete SIGNIN_LINKS_OFF`. `GET /health` reports the effective list as `signin_links_off`; unknown names are ignored and logged. Removing a platform's credentials (or setting `TIKTOK_OAUTH_ENABLED` to `"false"`) only stops new sign-ins, and existing links keep counting.
 
 The API reference (`GET /docs`) documents the API with request and response examples. `PRD.md` is the original product brief; its API section predates sign-in and the Discord, YouTube and TikTok verifiers.
 

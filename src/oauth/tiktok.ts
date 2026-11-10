@@ -2,6 +2,7 @@ import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState } from './state'
 import { holdSignIn } from './signin-records'
+import { signInLinksAreOff } from './signin-switch'
 
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/'
 const TIKTOK_TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/'
@@ -16,12 +17,16 @@ const TIKTOK_SCOPE = 'user.info.basic,user.info.profile'
 
 // The enable flag is the operator's assertion that the configured TikTok app is
 // approved for production. Reviewers may bypass that assertion for the sandbox
-// flow, but both paths still need everything required to complete OAuth.
+// flow, but both paths still need everything required to complete OAuth. A
+// platform whose links are switched off (signin-switch.ts) isn't offered
+// either, reviewers included.
 export function isTikTokOAuthUsable(env: Bindings, allowSandbox = false): boolean {
   const flowConfigured = !!env.TIKTOK_CLIENT_KEY
     && !!env.TIKTOK_CLIENT_SECRET
     && !!env.OAUTH_REDIRECT_BASE
-  return flowConfigured && (env.TIKTOK_OAUTH_ENABLED === 'true' || allowSandbox)
+  return flowConfigured
+    && (env.TIKTOK_OAUTH_ENABLED === 'true' || allowSandbox)
+    && !signInLinksAreOff(env, 'tiktok')
 }
 
 export async function startTikTokOAuth(

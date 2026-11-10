@@ -100,15 +100,19 @@ app.get('/', (c) => {
   const tiktokOAuthReviewEnabled = tiktokOAuthReviewRequested
     || getCookie(c, 'tiktok_oauth_review') === '1'
   const flags = platformFlags(c.env, tiktokOAuthReviewEnabled)
-  const { hasYouTube, hasTikTok, twitterOAuthEnabled, youtubeOAuthEnabled, tiktokOAuthEnabled } = flags
+  const { hasYouTube, hasTikTok, twitterOAuthEnabled, blueskyLinksOff, youtubeOAuthEnabled, tiktokOAuthEnabled } = flags
 
   // Sign-in platforms, in picker order (see oauthPlatformsFor).
   const oauthPlatforms = oauthPlatformsFor(flags)
   const quickConnectPlatformList = listInProse(oauthPlatforms.map(platform => platform.shortLabel))
+  // With no sign-in available (the operator withdrew the last one), the page
+  // offers only proof posts, so the copy built from the empty list is replaced.
+  const noSignIn = oauthPlatforms.length === 0
   // Platforms verified only by pasting a post link: the always post-only ones,
-  // plus Twitter, YouTube and TikTok while their sign-in is unavailable.
+  // plus platforms whose sign-in is unavailable.
   const proofPostOnlyPlatformList = listInProse([
     ...(twitterOAuthEnabled ? [] : ['Twitter']),
+    ...(blueskyLinksOff ? ['Bluesky'] : []),
     'GitHub', 'Mastodon', 'Telegram', 'Discord',
     ...(hasYouTube && !youtubeOAuthEnabled ? ['YouTube'] : []),
     ...(hasTikTok && !tiktokOAuthEnabled ? ['TikTok'] : []),
@@ -237,7 +241,9 @@ ${PAGE_STYLES}
         <div class="step">
           <div class="step-number">2</div>
           <h4>Link your account</h4>
-          <p>For ${quickConnectPlatformList}, sign in to it from this page. For ${proofPostOnlyPlatformList}, post your npub there, then paste the link to that post.</p>
+          <p>${noSignIn
+            ? 'Post your npub on the account you want to link, then paste the link to that post.'
+            : `For ${quickConnectPlatformList}, sign in to it from this page. For ${proofPostOnlyPlatformList}, post your npub there, then paste the link to that post.`}</p>
         </div>
         <div class="step">
           <div class="step-number">3</div>
@@ -254,7 +260,7 @@ ${PAGE_STYLES}
 
     <section id="verify-here" class="verify-here">
       <h2>Verify Here</h2>
-      <p class="verify-lead">Sign in, link your account one of two ways, then publish.</p>
+      <p class="verify-lead">Sign in, link your account ${noSignIn ? 'with a post' : 'one of two ways'}, then publish.</p>
 
       <div class="verify-card">
         <span class="step-pill">Step 1</span>
@@ -298,7 +304,7 @@ ${PAGE_STYLES}
       </div>
 
       <span class="step-pill verify-step-gap">Step 2</span>
-      <h3 style="margin-top:0;">Link your account. Pick one.</h3>
+      <h3 style="margin-top:0;">Link your account.${noSignIn ? '' : ' Pick one.'}</h3>
       <!-- Post first while Quick Connect covers only Bluesky: a post works for
            every platform. Revisit the order as other sign-ins turn on. -->
       <div class="verify-step-grid">
@@ -320,10 +326,10 @@ ${PAGE_STYLES}
           <pre id="proof-result" style="display:none;margin-top:0.75rem;"></pre>
         </div>
 
-        <div class="verify-card" id="quick-connect">
+        <div class="verify-card" id="quick-connect"${noSignIn ? ' hidden' : ''}>
           <span class="step-pill">Quick Connect</span>
           <h4>Sign in, no posting</h4>
-          <p>Works for ${quickConnectPlatformList}. Sign in to the account you want to link.</p>
+          ${noSignIn ? '' : `<p>Works for ${quickConnectPlatformList}. Sign in to the account you want to link.</p>`}
           ${signInLifetimeCardNote}
           <p id="oauth-platform-help" class="field-help">For ${proofPostOnlyPlatformList}, <a href="#link-with-post">link with a post instead</a>.</p>
           <label for="oauth-platform-select" class="field-label">Platform</label>
@@ -411,6 +417,8 @@ ${PAGE_STYLES}
     const KEYCAST_HASH_KEY = 'verifyer_keycast_hash_v1';
     // The verifier serves this itself (public/vendor), built from the pinned nostr-tools.
     const NOSTR_TOOLS_URL = '${NOSTR_TOOLS_MODULE_PATH}';
+    // The operator withdrew Bluesky's sign-in links, so a sign-in doesn't count.
+    const BLUESKY_LINKS_OFF = ${blueskyLinksOff ? 'true' : 'false'};
     // NIP-46 traffic needs relays that accept kind 24133 events.
     const REMOTE_SIGNER_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.snort.social', 'wss://relay.primal.net'];
     let signerPubkeyHex = null;
@@ -1068,7 +1076,9 @@ ${SHARED_PAGE_SCRIPT}
         identityInput.placeholder = 'example.bsky.social';
         proofLabel.textContent = 'Post link or proof ID (optional)';
         proofInput.placeholder = 'Paste full Bluesky post URL or leave blank for identity-link check';
-        helper.textContent = 'Bluesky can verify by login or identity-link record, even without a post ID.';
+        helper.textContent = BLUESKY_LINKS_OFF
+          ? 'Bluesky can verify by identity-link record, even without a post ID.'
+          : 'Bluesky can verify by login or identity-link record, even without a post ID.';
       } else if (platform === 'github') {
         identityInput.placeholder = 'octocat';
         proofLabel.textContent = 'Gist link or Gist ID';
@@ -1640,6 +1650,7 @@ ${SHARED_PAGE_SCRIPT}
       signin_wrong_account: 'Sign in with the Divine account that started this sign-in.',
       signin_not_yours: 'This sign-in was started somewhere else.',
       signin_claim_mismatch: 'This confirmation doesn\\'t match the sign-in. Sign in again.',
+      signin_unavailable: 'Sign-in links for this platform are switched off right now.',
     };
     // The sign-in and its signed event are kept, so pressing Publish again
     // resends the same event.
@@ -1708,6 +1719,7 @@ ${SHARED_PAGE_SCRIPT}
       if (reasonCode === 'cancelled') return 'Sign-in was not completed: ' + (label ? 'cancelled or declined at ' + label : 'it was cancelled or declined.');
       if (reasonCode === 'provider_error') return 'Sign-in was not completed: ' + (label ? 'could not be completed at ' + label : 'it could not be completed.');
       if (reasonCode === 'failed') return 'Sign-in was not completed: the account could not be verified.';
+      if (reasonCode === 'signin_unavailable') return 'Sign-in links for this platform are switched off right now.';
       return 'Sign-in was not completed.';
     }
 

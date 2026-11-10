@@ -6,6 +6,7 @@ import { getHandleFromDidDocument, getPdsEndpoint, resolveDidDocument, resolveHa
 import { isSafeUrl } from '../utils/validation'
 import { fetchPublic } from '../utils/safe-fetch'
 import { PlatformUnavailableError, fetchFromPlatform, throwIfUnanswered } from '../platforms/base'
+import { signInLinksAreOff } from './signin-switch'
 
 // The AT Protocol OAuth spec requires both metadata documents to answer
 // "HTTP 200 (not 2xx or redirect)", so these two fetches follow no redirect: a
@@ -105,9 +106,10 @@ async function resolveAuthServer(handle: string): Promise<{
 // request time, so the only fixed setting startBlueskyOAuth needs up front is
 // the redirect base it registers as its client_id and callback. /platforms
 // uses this so the page knows whether to offer Bluesky sign-in, and the
-// start step uses it too.
+// start step uses it too. A platform whose links are switched off
+// (signin-switch.ts) isn't offered either.
 export function isBlueskyOAuthUsable(env: Bindings): boolean {
-  return !!env.OAUTH_REDIRECT_BASE
+  return !!env.OAUTH_REDIRECT_BASE && !signInLinksAreOff(env, 'bluesky')
 }
 
 export async function startBlueskyOAuth(
@@ -118,7 +120,7 @@ export async function startBlueskyOAuth(
   startCheck: string | undefined,
 ): Promise<Response> {
   if (!isBlueskyOAuthUsable(env)) {
-    return new Response(JSON.stringify({ error: 'OAuth not configured' }), {
+    return new Response(JSON.stringify({ error: signInLinksAreOff(env, 'bluesky') ? 'Sign-in for Bluesky is switched off right now.' : 'OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
     })

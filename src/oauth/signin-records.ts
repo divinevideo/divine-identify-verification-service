@@ -5,6 +5,7 @@ import { getOAuthVerification, storeOAuthVerification, oauthVerificationKey } fr
 import { forgetHandleLookup } from './signin-account'
 import { signInConfirmationMode, newConfirmCode, storePendingSignIn, type SignedInAccount } from './confirm'
 import { signInIsCurrent } from './signin-lifetime'
+import { signInLinksAreOff } from './signin-switch'
 
 /** The event that confirmed a sign-in. */
 export interface Confirmation {
@@ -80,9 +81,12 @@ export async function saveSignIn(env: Bindings, pubkey: string, account: SignedI
 /**
  * The sign-in record for a claim, if it counts. Every reader goes through
  * here: once confirmation is required, only confirmed records count, and a
- * record counts only while its lifetime (signin-lifetime.ts) lasts.
+ * record counts only while its lifetime (signin-lifetime.ts) lasts. A record
+ * also doesn't count while its platform's links are switched off
+ * (signin-switch.ts); the record is kept, so clearing the switch restores it.
  */
 export async function getCountedSignIn(env: Bindings, platform: string, identity: string, pubkey: string): Promise<OAuthVerification | null> {
+  if (signInLinksAreOff(env, platform)) return null
   const record = await getOAuthVerification(env.CACHE_KV, platform, identity, pubkey)
   if (!record) return null
   if (signInConfirmationMode(env) === 'required' && record.confirmed !== true) return null
@@ -98,7 +102,14 @@ export async function getCountedSignIn(env: Bindings, platform: string, identity
  */
 export async function holdSignIn(env: Bindings, state: OAuthState, account: SignedInAccount): Promise<SignInCallbackResult> {
   // TODO(#113): remove once SIGNIN_CONFIRMATION is "required".
-  if (signInConfirmationMode(env) === 'optional') await saveSignIn(env, state.pubkey, account, null)
+  if (signInConfirmationMode(env) === 'optional') {
+    // A sign-in that began before its platform's links were switched off must
+    // leave nothing behind, neither a record nor a held sign-in with a code:
+    // the return reports it as not completed, and a code that revives if the
+    // switch is cleared would contradict that.
+    if (signInLinksAreOff(env, state.platform)) return { success: true, returnUrl: state.returnUrl, identity: account.identity }
+    await saveSignIn(env, state.pubkey, account, null)
+  }
   let confirmCode: string | undefined
   if (state.startCheck) {
     confirmCode = newConfirmCode()

@@ -103,6 +103,16 @@ describe('a sign-in link with no counted sign-in answers signin_expired and the 
       expect(answer.code).toBeUndefined()
     })
 
+    it.each(ACCOUNTS)('%s: a confirmed record on a platform whose links are switched off gives signin_expired without asking the platform', async (platform, identity) => {
+      const { env, store } = makeEnv({ SIGNIN_LINKS_OFF: platform })
+      confirmedRecord(store, platform, identity)
+      const answer = await check(env, platform, identity, 'oauth')
+      expect(answer.verified).toBe(false)
+      expect(answer.code).toBe('signin_expired')
+      expect(answer.error).toBe('No current sign-in verifies this account.')
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
     it.each(ACCOUNTS)('%s: a confirmed record past its lifetime gives signin_expired without asking the platform', async (platform, identity) => {
       const { env, store } = makeEnv()
       confirmedRecord(store, platform, identity, 31)
@@ -181,6 +191,18 @@ describe('Bluesky sign-in links', () => {
       value: { $type: 'video.divine.identity.link', version: 1, target: { protocol: 'nostr', id: NPUB } },
     }])
     const { env } = makeEnv()
+    const answer = await single(env, 'bluesky', 'alice.bsky.social', 'oauth')
+    expect(answer.verified).toBe(true)
+    expect(answer.method).toBe('identity_link')
+  })
+
+  it('an identity-link record still verifies a Bluesky link while Bluesky sign-in links are switched off', async () => {
+    blueskyFetch([{
+      uri: `at://${DID}/video.divine.identity.link/nostr-npub`,
+      value: { $type: 'video.divine.identity.link', version: 1, target: { protocol: 'nostr', id: NPUB } },
+    }])
+    const { env, store } = makeEnv({ SIGNIN_LINKS_OFF: 'bluesky' })
+    confirmedRecord(store, 'bluesky', 'alice.bsky.social')
     const answer = await single(env, 'bluesky', 'alice.bsky.social', 'oauth')
     expect(answer.verified).toBe(true)
     expect(answer.method).toBe('identity_link')

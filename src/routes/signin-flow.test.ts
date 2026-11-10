@@ -18,7 +18,7 @@ function createMockKV(): KVNamespace {
     get: async (key: string) => store.get(key) ?? null,
     put: async (key: string, value: string) => { store.set(key, value) },
     delete: async (key: string) => { store.delete(key) },
-    list: async () => ({ keys: [], list_complete: true, caches_used: 0 }),
+    list: async () => ({ keys: [...store.keys()].map((name) => ({ name })), list_complete: true, caches_used: 0 }),
   } as unknown as KVNamespace
 }
 
@@ -302,6 +302,45 @@ describe('a finished sign-in started with a start check', () => {
     for (const key of recordKeysFor(platform, PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
   })
 
+  // A sign-in started before the switch was set can come back after it.
+  it('optional mode: a sign-in returning while its platform is switched off saves no record and is not reported as linked', async () => {
+    const env = baseEnv({ SIGNIN_LINKS_OFF: 'twitter' })
+    const { location, info } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN })
+    for (const key of recordKeysFor('twitter', PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
+    expect(location.searchParams.get('oauth_verified')).toBeNull()
+    expect(location.searchParams.get('oauth_error_code')).toBe('signin_unavailable')
+    expect(location.searchParams.get('oauth_error')).toBe('Sign-in links for this platform are switched off right now.')
+    // Logged on its own line, so it doesn't count as a finished installed-app sign-in.
+    expect(info.mock.calls).toEqual([['twitter sign-in finished: refused, links switched off']])
+  })
+
+  it('optional mode: a switched-off return that began with a start check holds nothing and hands out no code', async () => {
+    const env = baseEnv({ SIGNIN_LINKS_OFF: 'twitter' })
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
+    for (const key of recordKeysFor('twitter', PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
+    expect(location.searchParams.get('oauth_error_code')).toBe('signin_unavailable')
+    expect(location.searchParams.get('oauth_verified')).toBeNull()
+    expect(location.hash).not.toContain('oauth_confirm')
+    // Nothing is held either: clearing the switch must not revive this sign-in.
+    expect((await env.CACHE_KV.list()).keys.map((k) => k.name).filter((n) => n.startsWith('oauth_pending:'))).toEqual([])
+  })
+
+  it('optional mode: another platform being switched off changes nothing', async () => {
+    const env = baseEnv({ SIGNIN_LINKS_OFF: 'tiktok' })
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN })
+    expect(location.searchParams.get('oauth_verified')).toBe('true')
+    expect(location.searchParams.has('oauth_error_code')).toBe(false)
+    expect(await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', PUBKEY))).not.toBeNull()
+  })
+
+  it('required mode: a switched-off platform still holds the sign-in under a code, as before', async () => {
+    const env = baseEnv({ SIGNIN_CONFIRMATION: 'required', SIGNIN_LINKS_OFF: 'twitter' })
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
+    expect(new URLSearchParams(location.hash.slice(1)).get('oauth_confirm')).toMatch(CODE)
+    expect(location.searchParams.get('oauth_verified')).toBeNull()
+    expect(location.searchParams.has('oauth_error_code')).toBe(false)
+  })
+
   it('replaces names the return address arrived with, and a fragment that carried a code', async () => {
     const env = baseEnv()
     const returnUrl = `${BASE}/?signin=n&identity=evil&oauth_confirm=old&oauth_error=old&oauth_error_code=cancelled#oauth_confirm=old`
@@ -417,6 +456,23 @@ describe('POST /auth/:platform/start', () => {
     await postStart(platform, platformEnv(platform), startBody(platform, PUBKEY, START_CHECK))
     const logged = spies.flatMap((spy) => spy.mock.calls.flat().map(String))
     expect(logged.filter((line) => line.includes(START_CHECK))).toEqual([])
+  })
+
+  it.each(PLATFORMS)('%s: answers 503 while its sign-in links are switched off', async (platform) => {
+    // A provider request here would mean the switch was ignored (Bluesky's start fetches first).
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('no provider request expected') }))
+    const env = platformEnv(platform, { SIGNIN_LINKS_OFF: platform })
+    const res = await postStart(platform, env, startBody(platform, PUBKEY, START_CHECK))
+    expect(res.status).toBe(503)
+    // The refusal says why: the platform's links are withdrawn, not misconfigured.
+    const label = { twitter: 'Twitter', youtube: 'YouTube', tiktok: 'TikTok', bluesky: 'Bluesky' }[platform]
+    expect(((await res.json()) as { error: string }).error).toBe(`Sign-in for ${label} is switched off right now.`)
+  })
+
+  it('missing credentials still answer 503 with the not-configured text', async () => {
+    const res = await postStart('twitter', platformEnv('twitter', { TWITTER_CLIENT_ID: undefined }), startBody('twitter', PUBKEY, START_CHECK))
+    expect(res.status).toBe(503)
+    expect(((await res.json()) as { error: string }).error).toBe('Twitter OAuth not configured')
   })
 
   it('starts on any verifier host without redirecting (a redirect would drop the body)', async () => {
@@ -636,6 +692,43 @@ describe('POST /auth/confirm', () => {
     expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toEqual({ status: 200, json: { linked: true, platform: 'twitter', identity: 'jack' } })
     const other = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]], event.created_at + 1)
     expect(await confirm(env, { code: s.code, start_secret: s.secret, event: other })).toMatchObject({ status: 409, json: { code: 'signin_used' } })
+  })
+
+  it.each(PLATFORMS)('%s: refuses to confirm while its sign-in links are switched off, and saves nothing', async (platform) => {
+    const env = platformEnv(platform, { SIGNIN_CONFIRMATION: 'required' })
+    const s = await startedAndFinished(platform, env)
+    env.SIGNIN_LINKS_OFF = platform
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toMatchObject({ status: 403, json: { code: 'signin_unavailable' } })
+    for (const key of recordKeysFor(platform, s.pubkey)) expect(await env.CACHE_KV.get(key)).toBeNull()
+    expect(info).toHaveBeenCalledWith(`${platform} sign-in confirmation refused: links_off`)
+  })
+
+  it('keeps the code, like the other refusals', async () => {
+    const env = platformEnv('twitter', { SIGNIN_CONFIRMATION: 'required' })
+    const s = await startedAndFinished('twitter', env)
+    env.SIGNIN_LINKS_OFF = 'twitter'
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(403)
+    delete env.SIGNIN_LINKS_OFF
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toMatchObject({ status: 200, json: { linked: true } })
+  })
+
+  it('refuses a repeat of an earlier confirmation while switched off', async () => {
+    const env = platformEnv('twitter', { SIGNIN_CONFIRMATION: 'required' })
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
+    env.SIGNIN_LINKS_OFF = 'twitter'
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toMatchObject({ status: 403, json: { code: 'signin_unavailable' } })
+  })
+
+  it('confirms as usual when another platform is switched off', async () => {
+    const env = platformEnv('twitter', { SIGNIN_CONFIRMATION: 'required', SIGNIN_LINKS_OFF: 'tiktok' })
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
   })
 
   it('answers 404 for a code it does not know', async () => {

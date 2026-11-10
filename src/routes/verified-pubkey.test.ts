@@ -86,6 +86,17 @@ describe('GET /verified/:pubkey', () => {
     })
   })
 
+  it('leaves out a confirmed sign-in while its platform\'s links are switched off', async () => {
+    const { env, store } = envWith({ SIGNIN_CONFIRMATION: 'required', SIGNIN_LINKS_OFF: 'twitter' })
+    seedSignIn(store, 'twitter', 'jack', { confirmed: true })
+    relaysWith(await signedList([['i', 'twitter:jack', 'oauth']]))
+    const res = await get(env, `/verified/${PK}`)
+    expect(res.status).toBe(200)
+    const body = await res.json() as Answer
+    expect(body.verifications).toEqual([])
+    expect(body.unchecked).toEqual([])
+  })
+
   it('answers a cached proof post with its link', async () => {
     const { env, kv } = envWith()
     const checkedAt = await seedProof(kv, 'github', 'alice', 'abc123')

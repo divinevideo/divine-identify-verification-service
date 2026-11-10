@@ -233,6 +233,14 @@ describe('which sign-in records count', () => {
     expect(await getCountedSignIn(await seeded(required, { confirmed: true }), 'twitter', 'jack', PUBKEY)).not.toBeNull()
   })
 
+  it('does not count a confirmed record while its platform is switched off, and counts it again once cleared', async () => {
+    const required = { SIGNIN_CONFIRMATION: 'required' }
+    const record = { confirmed: true }
+    expect(await getCountedSignIn(await seeded({ ...required, SIGNIN_LINKS_OFF: 'twitter' }, record), 'twitter', 'jack', PUBKEY)).toBeNull()
+    expect(await getCountedSignIn(await seeded({ ...required, SIGNIN_LINKS_OFF: 'tiktok' }, record), 'twitter', 'jack', PUBKEY)).not.toBeNull()
+    expect(await getCountedSignIn(await seeded(required, record), 'twitter', 'jack', PUBKEY)).not.toBeNull()
+  })
+
   it('finds nothing when there is no record', async () => {
     const { env } = createEnv()
     expect(await getCountedSignIn(env, 'twitter', 'jack', PUBKEY)).toBeNull()
@@ -259,6 +267,13 @@ describe('how long a sign-in record counts', () => {
   }
   const countsAt = async (vars: Partial<Bindings>, record: Record<string, unknown>) =>
     (await getCountedSignIn(seededTikTok(vars, record), 'tiktok', 'creator', PUBKEY)) !== null
+
+  it('a link switched off and back on keeps its original 30 days', async () => {
+    const at29 = { confirmed: true, checked_at: NOW - 29 * DAY }
+    expect(await countsAt(required, at29)).toBe(true)
+    expect(await countsAt({ ...required, SIGNIN_LINKS_OFF: 'tiktok' }, at29)).toBe(false)
+    expect(await countsAt(required, { confirmed: true, checked_at: NOW - 31 * DAY })).toBe(false)
+  })
 
   it.each([
     ['29 days', NOW - 29 * DAY, true],

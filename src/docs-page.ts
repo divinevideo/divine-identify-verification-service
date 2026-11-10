@@ -11,19 +11,37 @@ export interface DocsPageOptions extends PlatformFlags {
 }
 
 export function renderDocsPage(opts: DocsPageOptions): string {
-  const { origin, hasYouTube, hasTikTok, twitterOAuthEnabled, youtubeOAuthEnabled, tiktokOAuthEnabled } = opts
-  const oauthPlatformNames = oauthPlatformsFor(opts).map(platform => platform.name)
+  const { origin, hasYouTube, hasTikTok, twitterOAuthEnabled, blueskyLinksOff, youtubeOAuthEnabled, tiktokOAuthEnabled, tiktokLinksOff } = opts
+  const oauthPlatforms = oauthPlatformsFor(opts)
+  const oauthPlatformNames = oauthPlatforms.map(platform => platform.name)
+  // The start example stays on Bluesky while it is offered, otherwise it shows
+  // the first platform a client can actually sign in with. The request shape is
+  // the same for every platform except Bluesky's handle, which no other platform
+  // takes. With none offered it keeps the Bluesky example: the API shape does
+  // not change.
+  const exampleValue = oauthPlatforms.some(p => p.value === 'bluesky') ? 'bluesky' : oauthPlatforms[0]?.value ?? 'bluesky'
+  const exampleBody = exampleValue === 'bluesky'
+    ? `{"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}`
+    : `{"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}`
+  const oauthIntro = oauthPlatforms.length
+    ? 'Users can verify by logging in instead of posting a proof.'
+    : 'No platform offers sign-in right now, so new links need a proof post.'
+  const oauthCheckedFor = oauthPlatforms.length
+    ? listInProse(oauthPlatformNames)
+    : "every sign-in platform whose links aren't switched off"
+  // Names read "none right now" when the operator has withdrawn every sign-in.
+  const oauthNamesText = oauthPlatformNames.length ? oauthPlatformNames.join(', ') : 'none right now'
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
   const ytTableRow = hasYouTube ? `<tr><td><code>youtube</code></td><td>Channel ID (<code>UCxxxx</code>) or handle (<code>@user</code>)</td><td>Video ID (11 chars)</td><td>${youtubeOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
   const ttTableRow = hasTikTok ? `<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video or photo link, share link, or post number</td><td>${tiktokOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
-  const tiktokOAuthHistoryNote = hasTikTok && !tiktokOAuthEnabled
+  const tiktokOAuthHistoryNote = hasTikTok && !tiktokOAuthEnabled && !tiktokLinksOff
     ? ' Existing TikTok OAuth verifications remain recognized.'
     : ''
   const extraPlatformCodes = (hasYouTube ? ', <code>youtube</code>' : '') + (hasTikTok ? ', <code>tiktok</code>' : '')
   const otherOAuthStartExamples = [
-    twitterOAuthEnabled ? `POST ${origin}/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}` : '',
-    youtubeOAuthEnabled ? `POST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : '',
-    hasTikTok && tiktokOAuthEnabled ? `POST ${origin}/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    twitterOAuthEnabled && exampleValue !== 'twitter' ? `POST ${origin}/auth/twitter/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    youtubeOAuthEnabled && exampleValue !== 'youtube' ? `POST ${origin}/auth/youtube/start  {"pubkey":"hex64","start_check":"…"}` : '',
+    hasTikTok && tiktokOAuthEnabled && exampleValue !== 'tiktok' ? `POST ${origin}/auth/tiktok/start  {"pubkey":"hex64","start_check":"…"}` : '',
   ].filter(Boolean).join('\n')
 
   return `<!DOCTYPE html>
@@ -63,7 +81,7 @@ ${PAGE_STYLES}
       <p>Two verification methods are supported:</p>
       <ul>
         <li><strong>Proof posts</strong> &mdash; User publishes a post containing their <code>npub</code> on the external platform. The service fetches the post and checks that the npub is present and the author matches.</li>
-        <li><strong>OAuth login</strong> (${oauthPlatformNames.join(', ')}) &mdash; User authenticates directly. No proof post needed.</li>
+        <li><strong>OAuth login</strong> (${oauthNamesText}) &mdash; User authenticates directly. No proof post needed.</li>
       </ul>
     </section>
 
@@ -87,7 +105,7 @@ ${PAGE_STYLES}
           <td><code>bluesky</code></td>
           <td>Handle (e.g., <code>example.bsky.social</code>)</td>
           <td>Post rkey</td>
-          <td>Yes</td>
+          <td>${blueskyLinksOff ? 'No' : 'Yes'}</td>
         </tr>
         <tr>
           <td><code>mastodon</code></td>
@@ -148,7 +166,7 @@ Content-Type: application/json
         <tr><th>Field</th><th>Type</th><th>Description</th></tr>
         <tr><td><code>verified</code></td><td>boolean</td><td><code>true</code> if proof post contains the npub and the author matches</td></tr>
         <tr><td><code>error</code></td><td>string?</td><td>Error message (only when <code>verified</code> is <code>false</code>)</td></tr>
-        <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable reason the claim isn't verified. <code>temporarily_unavailable</code> means the claim couldn't be checked right now (the platform didn't answer, or the per-person or per-platform check limit was hit), not that it was rejected: try again in a few minutes. <code>signin_expired</code> means no sign-in currently counts for an account linked by signing in (proof <code>oauth</code>): it lapsed, was unlinked, was never confirmed, or never happened. On Bluesky it also means no identity-link record was found on the account. <code>signin_account_changed</code> means the handle no longer points to the account that signed in (it was deleted, or now points to another account). Apps can offer sign-in for either, where <code>GET /platforms</code> reports <code>oauth: true</code> for that platform. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.</td></tr>
+        <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable reason the claim isn't verified. <code>temporarily_unavailable</code> means the claim couldn't be checked right now (the platform didn't answer, or the per-person or per-platform check limit was hit), not that it was rejected: try again in a few minutes. <code>signin_expired</code> means no sign-in currently counts for an account linked by signing in (proof <code>oauth</code>): it lapsed, was unlinked, was never confirmed, never happened, or sign-in links for that platform are switched off. On Bluesky it also means no identity-link record was found on the account. <code>signin_account_changed</code> means the handle no longer points to the account that signed in (it was deleted, or now points to another account). Apps can offer sign-in for either, where <code>GET /platforms</code> reports <code>oauth: true</code> for that platform. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.</td></tr>
         <tr><td><code>canonical_proof</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the proof was resolved to a simpler stable form: a pasted post link was reduced to the part the check uses, or a TikTok link or share link to its post number. Publish this instead of the proof you sent.</td></tr>
         <tr><td><code>canonical_identity</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the account as sent was tidied (for example a leading @ removed, or a Mastodon handle sent as <code>@user@server</code> returned as <code>server/@user</code>), or confirmed on a different host from the one in the claim (Mastodon: a server whose handles use another domain from its website). Publish this instead of the account you sent; links to the post use it.</td></tr>
         <tr><td><code>checked_at</code></td><td>number</td><td>Unix timestamp (seconds)</td></tr>
@@ -272,16 +290,16 @@ GET ${origin}/verify/mastodon/mastodon.social/@example/109876543210?pubkey=7e7e.
     </section>
 
     <section id="oauth">
-      <h2>OAuth Verification (${oauthPlatformNames.join(', ')})</h2>
-      <p>Users can verify by logging in instead of posting a proof.</p>
+      <h2>OAuth Verification (${oauthNamesText})</h2>
+      <p>${oauthIntro}</p>
       <p>The verifier page only reports sign-ins it started itself. A client starting its own sign-in keeps a random start secret (32 random bytes written as 43 base64url characters), sends its hash as <code>start_check</code>, and gets back the provider page to open. The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>. The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.</p>
       <p>The new claim's tag carries a fourth value, <code>base64url(sha256('divine-signin-confirm:' + code + ':' + start_check))</code>. Both hashes in this flow (the start check and the binding) are SHA-256 over the UTF-8 text shown, meaning the 43-character strings and not the raw bytes, written as base64url without padding.</p>
 
       <h3>Start OAuth</h3>
-      <pre>POST ${origin}/auth/bluesky/start
+      <pre>POST ${origin}/auth/${exampleValue}/start
 Content-Type: application/json
 
-{"pubkey":"&lt;64 hex&gt;","return_url":"${origin}/?signin=&lt;id&gt;","handle":"example.bsky.social","start_check":"&lt;base64url(sha256('divine-signin-start:' + secret))&gt;"}${otherOAuthStartExamples ? `\n\n${otherOAuthStartExamples}` : ''}</pre>
+${exampleBody}${otherOAuthStartExamples ? `\n\n${otherOAuthStartExamples}` : ''}</pre>
       <p>The answer is <code>{"url":"https://…"}</code>, the provider page to open.</p>
       <h3>Back from the sign-in</h3>
       <p>The sign-in returns to <code>return_url</code> with these added (any of them already there are replaced):</p>
@@ -295,7 +313,8 @@ Content-Type: application/json
         <li><code>cancelled</code>: the person cancelled or declined at the platform;</li>
         <li><code>provider_error</code>: the platform reported another error;</li>
         <li><code>failed</code>: the verifier couldn't check the account with the platform;</li>
-        <li><code>update_required</code>: the sign-in was started with <code>GET /auth/:platform/start</code>, as older app versions do, which is no longer accepted.</li>
+        <li><code>update_required</code>: the sign-in was started with <code>GET /auth/:platform/start</code>, as older app versions do, which is no longer accepted;</li>
+        <li><code>signin_unavailable</code>: sign-in links for this platform are switched off, so nothing was linked.</li>
       </ul>
       <p>Treat a code you don't know as <code>failed</code>. When the verifier can't tell where a sign-in started, or the sign-in fails unexpectedly, it returns to this page instead.</p>
       <h3>Confirm the sign-in</h3>
@@ -311,24 +330,25 @@ Content-Type: application/json
         <li><code>signin_wrong_account</code>;</li>
         <li><code>signin_not_yours</code>;</li>
         <li><code>signin_claim_mismatch</code>;</li>
+        <li><code>signin_unavailable</code> (403: sign-in links for this platform are switched off);</li>
         <li><code>invalid_event</code>.</li>
       </ul>
 
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
 
-      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${listInProse(oauthPlatformNames)}. A sign-in counts only after you confirm it by publishing, and for ${FIXED_SIGNIN_LIFETIME_DAYS} days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting. A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.${tiktokOAuthHistoryNote}</div>
+      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${oauthCheckedFor}. A sign-in counts only after you confirm it by publishing, and for ${FIXED_SIGNIN_LIFETIME_DAYS} days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting. A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">
       <h2>Other Endpoints</h2>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/platforms</code></h3>
-        <p>List platforms currently available to clients. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field: <code>true</code> when sign-in is set up for that platform, <code>false</code> when only a proof post works. Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token. Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts.</p>
+        <p>List platforms currently available to clients. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field: <code>true</code> when sign-in is set up and switched on for that platform, <code>false</code> when only a proof post works. Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token. Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts.</p>
       </div>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/health</code></h3>
-        <p>Health check. Returns <code>{"status":"ok", ...}</code>, including <code>signin_confirmation</code>: <code>"optional"</code> or <code>"required"</code>, the sign-in confirmation mode in effect.</p>
+        <p>Health check. Returns <code>{"status":"ok", ...}</code>, including <code>signin_confirmation</code>: <code>"optional"</code> or <code>"required"</code>, the sign-in confirmation mode in effect, and <code>signin_links_off</code>: the sign-in platforms whose links are switched off.</p>
       </div>
     </section>
 

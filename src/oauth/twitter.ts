@@ -2,6 +2,7 @@ import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState } from './state'
 import { holdSignIn } from './signin-records'
+import { signInLinksAreOff } from './signin-switch'
 
 const TWITTER_AUTH_URL = 'https://twitter.com/i/oauth2/authorize'
 const TWITTER_TOKEN_URL = 'https://api.twitter.com/2/oauth2/token'
@@ -11,9 +12,11 @@ const TWITTER_USER_URL = 'https://api.twitter.com/2/users/me'
 // needs the client ID and redirect base, and the callback's token exchange
 // also needs the client secret. The page uses this to decide whether to offer
 // Twitter sign-in at all, and the start step uses it so nobody is sent to
-// Twitter for a sign-in that cannot finish.
+// Twitter for a sign-in that cannot finish. A platform whose links are
+// switched off (signin-switch.ts) isn't offered either.
 export function isTwitterOAuthUsable(env: Bindings): boolean {
   return !!env.TWITTER_CLIENT_ID && !!env.TWITTER_CLIENT_SECRET && !!env.OAUTH_REDIRECT_BASE
+    && !signInLinksAreOff(env, 'twitter')
 }
 
 export async function startTwitterOAuth(
@@ -24,7 +27,7 @@ export async function startTwitterOAuth(
 ): Promise<Response> {
   // The explicit checks after isTwitterOAuthUsable let TypeScript see both values are set.
   if (!isTwitterOAuthUsable(env) || !env.TWITTER_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
-    return new Response(JSON.stringify({ error: 'Twitter OAuth not configured' }), {
+    return new Response(JSON.stringify({ error: signInLinksAreOff(env, 'twitter') ? 'Sign-in for Twitter is switched off right now.' : 'Twitter OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
     })

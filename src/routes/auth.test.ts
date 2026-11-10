@@ -229,6 +229,24 @@ describe('POST /auth/oauth/revoke', () => {
     expect(after).toBeNull()
   })
 
+  it('still unlinks while the platform\'s sign-in links are switched off', async () => {
+    const env = { ...createTestEnv(), SIGNIN_LINKS_OFF: 'twitter' }
+    const event = await signNip98Event(schnorr.utils.randomSecretKey())
+    const key = `oauth_verified:twitter:alice:${event.pubkey}`
+    await env.CACHE_KV.put(key, JSON.stringify({ verified: true }))
+    const fetchSpy = forbidUpstreamFetch()
+
+    const res = await app.request('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: 'twitter', identity: 'alice', pubkey: event.pubkey, event }),
+    }, env)
+    expect(res.status).toBe(200)
+    expect((await res.json() as { revoked: boolean }).revoked).toBe(true)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(await env.CACHE_KV.get(key)).toBeNull()
+  })
+
   it('deletes the signer\'s record when the body pubkey is sent in uppercase', async () => {
     const env = createTestEnv()
     const event = await signNip98Event(schnorr.utils.randomSecretKey())
@@ -590,6 +608,14 @@ describe('GET /auth/tiktok/start', () => {
     }, env)
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toContain('tiktok.com')
+  })
+
+  it('refuses sandbox reviewers too while TikTok sign-in links are switched off', async () => {
+    const env = { ...createTestEnv(), ...configured, SIGNIN_LINKS_OFF: 'tiktok' }
+    const res = await app.request(startUrl(), {
+      headers: { Cookie: 'tiktok_oauth_review=1' },
+    }, env)
+    expect(res.status).toBe(503)
   })
 })
 

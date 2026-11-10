@@ -153,6 +153,15 @@ describe('GET /verified?platform=&identity=', () => {
     expect(await res.json()).toEqual(NOT_FOUND)
   })
 
+  it('not found for a sign-in whose platform\'s links are switched off', async () => {
+    const { env, store } = envWith({ SIGNIN_LINKS_OFF: 'twitter' })
+    seedSignIn(store, 'twitter', 'jack')
+    relaysWith([await signedList([['i', 'twitter:jack', 'oauth']])])
+    const res = await get(env, '/verified?platform=twitter&identity=jack')
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual(NOT_FOUND)
+  })
+
   it("try later when the only candidate's platform could not be checked", async () => {
     const { env } = envWith()
     relaysWith([await signedList([['i', 'twitter:alice', '1234567890']])], {}, async () => { throw new Error('no network in tests') })

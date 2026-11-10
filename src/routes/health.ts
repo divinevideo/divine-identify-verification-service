@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import type { Bindings } from '../types'
 import { signInConfirmationMode } from '../oauth/confirm'
+import { signInLinksOff } from '../oauth/signin-switch'
 
 const health = new Hono<{ Bindings: Bindings }>()
 
@@ -12,6 +13,8 @@ health.get('/', (c) => {
     timestamp: Math.floor(Date.now() / 1000),
     // The sign-in confirmation mode in effect, so a deploy can be checked.
     signin_confirmation: signInConfirmationMode(c.env),
+    // Which platforms' links are switched off, so a change to the secret can be checked.
+    signin_links_off: signInLinksOff(c.env),
   })
 })
 

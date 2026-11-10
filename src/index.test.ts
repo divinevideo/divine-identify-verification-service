@@ -50,10 +50,26 @@ describe('verifier health', () => {
     }
   })
 
+  it('reports which platforms have their sign-in links switched off', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const off = async (env: Record<string, unknown>) => {
+      const response = await worker.fetch(new Request('https://verifier.divine.video/health'), env as never)
+      return (await response.json() as { signin_links_off?: string[] }).signin_links_off
+    }
+    try {
+      expect(await off({})).toEqual([])
+      expect(await off({ SIGNIN_LINKS_OFF: 'tiktok, Twitter' })).toEqual(['twitter', 'tiktok'])
+      expect(await off({ SIGNIN_LINKS_OFF: 'x' })).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('documents the mode it reports on the page', async () => {
     const response = await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)
     const html = await response.text()
     expect(html).toContain('<code>signin_confirmation</code>')
+    expect(html).toContain('<code>signin_links_off</code>')
   })
 })
 
@@ -224,6 +240,14 @@ describe('verifier tiktok oauth gating', () => {
     expect(oauthSelect).toContain('value="tiktok"')
   })
 
+  it('hides TikTok sign-in from a reviewer while TikTok sign-in links are switched off', async () => {
+    const oauthSelect = sliceSelect(
+      await homeHtml('https://verifier.divine.video/?tiktok_oauth_review=1', { ...tiktokOAuthConfig, SIGNIN_LINKS_OFF: 'tiktok' }),
+      'oauth-platform-select',
+    )
+    expect(oauthSelect).not.toContain('value="tiktok"')
+  })
+
   it('exposes TikTok OAuth when the production rollout flag is enabled', async () => {
     const oauthSelect = sliceSelect(
       await homeHtml('https://verifier.divine.video/', {
@@ -308,6 +332,11 @@ describe('verifier tiktok oauth gating', () => {
     expect(await docsHtml()).toContain('Existing TikTok OAuth verifications remain recognized.')
   })
 
+  it('does not say existing TikTok links count while the operator has switched them off', async () => {
+    expect(await docsHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'tiktok' }))
+      .not.toContain('Existing TikTok OAuth verifications remain recognized.')
+  })
+
   it('documents the platforms endpoint without a TikTok unsupported caveat', async () => {
     const html = await docsHtml()
     expect(html).not.toContain('TikTok reports unsupported')
@@ -323,11 +352,110 @@ describe('API docs: what a sign-in return carries', () => {
   })
 })
 
+describe('confirm refusal for switched-off sign-in links', () => {
+  it('documents signin_unavailable among the confirm refusals', async () => {
+    expect(await docsHtml()).toContain('<code>signin_unavailable</code>')
+  })
+
+  it('the page explains a confirm refused because sign-in links are switched off', async () => {
+    expect(await homeHtml()).toContain("signin_unavailable: 'Sign-in links for this platform are switched off right now.'")
+  })
+})
+
+describe('verifier Bluesky sign-in shutoff', () => {
+  it('hides switched-off Bluesky sign-in without hiding proof posts', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'bluesky' })
+    expect(sliceSelect(html, 'oauth-platform-select')).not.toContain('value="bluesky"')
+    expect(sliceSelect(html, 'proof-platform-select')).toContain('value="bluesky"')
+    expect(html).not.toContain('aria-label="Link Bluesky by signing in"')
+    expect(html).toContain('aria-label="Link Bluesky with a post"')
+  })
+
+  it('offers Bluesky sign-in again when its switch is cleared', async () => {
+    expect(sliceSelect(await homeHtml(), 'oauth-platform-select')).toContain('value="bluesky"')
+  })
+
+  it('does not advertise switched-off Bluesky OAuth in the docs table', async () => {
+    const html = await docsHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'bluesky' })
+    const marker = html.indexOf('<code>bluesky</code>')
+    expect(marker).toBeGreaterThan(-1)
+    const row = html.slice(html.lastIndexOf('<tr>', marker), html.indexOf('</tr>', marker))
+    expect(row).toContain('<td>No</td>')
+    expect(row).not.toContain('<td>Yes</td>')
+  })
+
+  it('with every sign-in switched off or unset, the page hides Quick Connect and does not offer sign-in', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'bluesky' })
+    const start = html.indexOf('id="quick-connect"')
+    const tag = html.slice(html.lastIndexOf('<div', start), html.indexOf('>', start) + 1)
+    expect(tag).toMatch(/\bhidden\b/)
+    expect(html).not.toContain('Works for .')
+    expect(html).not.toContain('For , sign in')
+    expect(html).not.toContain('Pick one.')
+    expect(html).toContain('Post your npub on the account you want to link, then paste the link to that post.')
+    expect(html).not.toContain('one of two ways')
+    expect(html).toContain('<p class="verify-lead">Sign in, link your account with a post, then publish.</p>')
+  })
+
+  it('keeps Quick Connect for the sign-ins still available', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, SIGNIN_LINKS_OFF: 'bluesky' })
+    const start = html.indexOf('id="quick-connect"')
+    const tag = html.slice(html.lastIndexOf('<div', start), html.indexOf('>', start) + 1)
+    expect(tag).not.toMatch(/\bhidden\b/)
+    const select = sliceSelect(html, 'oauth-platform-select')
+    expect(select).toContain('value="twitter"')
+    expect(select).not.toContain('value="bluesky"')
+    expect(html).toContain('Pick one.')
+  })
+
+  it('the Bluesky proof helper does not mention login while Bluesky sign-in links are switched off', async () => {
+    // Both helper texts live in the page script; the flag picks one.
+    const off = await homeHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'bluesky' })
+    expect(off).toContain('const BLUESKY_LINKS_OFF = true;')
+    expect(await homeHtml()).toContain('const BLUESKY_LINKS_OFF = false;')
+    expect(off).toContain('helper.textContent = BLUESKY_LINKS_OFF\n          ? \'Bluesky can verify by identity-link record, even without a post ID.\'\n          : \'Bluesky can verify by login or')
+  })
+
+  it('/docs names no sign-in platform as none right now', async () => {
+    const html = await docsHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'bluesky' })
+    expect(html).toContain('OAuth login</strong> (none right now)')
+    expect(html).toContain('OAuth Verification (none right now)')
+    expect(html).not.toContain('OAuth login</strong> ()')
+  })
+
+  it('/docs words the empty case without claiming records are ignored', async () => {
+    const html = await docsHtml('https://verifier.divine.video/', { SIGNIN_LINKS_OFF: 'bluesky' })
+    expect(html).toContain("for every sign-in platform whose links aren't switched off")
+    expect(html).toContain('No platform offers sign-in right now, so new links need a proof post.')
+    expect(html).not.toContain('for no platform right now')
+    expect(html).not.toContain('Users can verify by logging in instead of posting a proof.')
+  })
+
+  it('/docs starts its example with the first offered platform', async () => {
+    const html = await docsHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, SIGNIN_LINKS_OFF: 'bluesky' })
+    expect(html).toContain('/auth/twitter/start')
+    expect(html).not.toContain('/auth/bluesky/start')
+    expect(html).not.toContain('"handle":"example.bsky.social"')
+  })
+
+  it('/docs by default keeps the Bluesky example and intro', async () => {
+    const html = await docsHtml()
+    expect(html).toContain('POST https://verifier.divine.video/auth/bluesky/start')
+    expect(html).toContain('Users can verify by logging in instead of posting a proof.')
+  })
+})
+
 describe('verifier twitter oauth gating', () => {
   it('hides Twitter from the sign-in picker when Twitter sign-in is not configured', async () => {
     const oauthSelect = sliceSelect(await homeHtml(), 'oauth-platform-select')
     expect(oauthSelect).not.toContain('value="twitter"')
     expect(oauthSelect).toContain('value="bluesky"')
+  })
+
+  it('hides Twitter sign-in while its links are switched off', async () => {
+    const html = await homeHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, SIGNIN_LINKS_OFF: 'twitter' })
+    expect(sliceSelect(html, 'oauth-platform-select')).not.toContain('value="twitter"')
+    expect(sliceSelect(html, 'proof-platform-select')).toContain('value="twitter"')
   })
 
   it('keeps Twitter in the proof-post picker', async () => {
@@ -424,6 +552,7 @@ Content-Type: application/json
         <li><code>signin_wrong_account</code>;</li>
         <li><code>signin_not_yours</code>;</li>
         <li><code>signin_claim_mismatch</code>;</li>
+        <li><code>signin_unavailable</code> (403: sign-in links for this platform are switched off);</li>
         <li><code>invalid_event</code>.</li>
       </ul>`)
   })

@@ -1,4 +1,5 @@
 import type { Bindings } from './types'
+import { signInLinksAreOff } from './oauth/signin-switch'
 import { isTikTokOAuthUsable } from './oauth/tiktok'
 import { isTwitterOAuthUsable } from './oauth/twitter'
 import { isYouTubeOAuthUsable } from './oauth/youtube'
@@ -10,8 +11,12 @@ export interface PlatformFlags {
   hasYouTube: boolean
   hasTikTok: boolean
   twitterOAuthEnabled: boolean
+  blueskyLinksOff: boolean
   youtubeOAuthEnabled: boolean
   tiktokOAuthEnabled: boolean
+  // The operator withdrew TikTok's sign-in links, so none of them count, old
+  // ones included. /docs uses it to stop saying existing links stay recognized.
+  tiktokLinksOff: boolean
 }
 
 export interface OAuthPlatform {
@@ -35,21 +40,23 @@ export function platformFlags(env: Bindings, tiktokOAuthReviewEnabled: boolean):
     // Twitter proof posts use the public oEmbed endpoint and need no
     // credentials; only sign-in does, so the page hides just that path.
     twitterOAuthEnabled: isTwitterOAuthUsable(env),
+    blueskyLinksOff: signInLinksAreOff(env, 'bluesky'),
     // YouTube shows with its API key; its sign-in also needs the Google client
     // ID and secret and the redirect base (isYouTubeOAuthUsable).
     youtubeOAuthEnabled: hasYouTube && isYouTubeOAuthUsable(env),
     tiktokOAuthEnabled: isTikTokOAuthUsable(env, tiktokOAuthReviewEnabled),
+    tiktokLinksOff: signInLinksAreOff(env, 'tiktok'),
   }
 }
 
-// Sign-in platforms, in picker order. Leaves out Twitter, YouTube and TikTok
-// while their sign-in is unavailable. The picker and every list of sign-in
-// platforms in the copy are built from this one list, so the copy never
-// advertises a path the picker omits.
+// Sign-in platforms, in picker order. Leaves out switched-off platforms and
+// Twitter, YouTube and TikTok while their sign-in is unavailable. The picker
+// and every list of sign-in platforms in the copy are built from this one
+// list, so the copy never advertises a path the picker omits.
 export function oauthPlatformsFor(flags: PlatformFlags): OAuthPlatform[] {
   return [
     ...(flags.twitterOAuthEnabled ? [{ value: 'twitter', name: 'Twitter', shortLabel: 'Twitter/X', optionLabel: 'Twitter / X' }] : []),
-    { value: 'bluesky', name: 'Bluesky', shortLabel: 'Bluesky', optionLabel: 'Bluesky' },
+    ...(!flags.blueskyLinksOff ? [{ value: 'bluesky', name: 'Bluesky', shortLabel: 'Bluesky', optionLabel: 'Bluesky' }] : []),
     ...(flags.youtubeOAuthEnabled ? [{ value: 'youtube', name: 'YouTube', shortLabel: 'YouTube', optionLabel: 'YouTube' }] : []),
     ...(flags.hasTikTok && flags.tiktokOAuthEnabled ? [{ value: 'tiktok', name: 'TikTok', shortLabel: 'TikTok', optionLabel: 'TikTok' }] : []),
   ]

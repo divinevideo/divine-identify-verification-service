@@ -332,6 +332,7 @@ describe('sign-in return on the verifier page', () => {
     ['provider_error', 'tiktok', 'Sign-in was not completed: could not be completed at TikTok'],
     ['provider_error', 'youtube', 'Sign-in was not completed: could not be completed at YouTube'],
     ['failed', 'twitter', 'Sign-in was not completed: the account could not be verified.'],
+    ['signin_unavailable', 'twitter', 'Sign-in links for this platform are switched off right now.'],
     ['update_required', 'twitter', 'Sign-in was not completed.'],
     ['something_new', 'twitter', 'Sign-in was not completed.'],
   ])('shows a known message for oauth_error_code=%s after a %s sign-in started here', async (code, platform, expected) => {
@@ -345,6 +346,7 @@ describe('sign-in return on the verifier page', () => {
     ['cancelled', 'Sign-in was not completed: it was cancelled or declined.'],
     ['provider_error', 'Sign-in was not completed: it could not be completed.'],
     ['failed', 'Sign-in was not completed: the account could not be verified.'],
+    ['signin_unavailable', 'Sign-in links for this platform are switched off right now.'],
     ['something_new', 'Sign-in was not completed.'],
   ])('shows a message without a platform for oauth_error_code=%s when no sign-in was started here', async (code, expected) => {
     const h = returnHarness({ search: `?${unfinished(code)}` })

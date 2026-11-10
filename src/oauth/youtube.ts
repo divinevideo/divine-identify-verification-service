@@ -2,6 +2,7 @@ import type { Bindings, OAuthState, SignInCallbackResult } from '../types'
 import { generatePKCE, generateRandomString } from './crypto'
 import { storeOAuthState, getOAuthState, deleteOAuthState } from './state'
 import { holdSignIn } from './signin-records'
+import { signInLinksAreOff } from './signin-switch'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -11,9 +12,11 @@ const YOUTUBE_CHANNELS_URL = 'https://www.googleapis.com/youtube/v3/channels'
 // needs the client ID and redirect base, and the callback's token exchange
 // also needs the client secret. /platforms uses this so the page knows
 // whether to offer YouTube sign-in, and the start step uses it too, so
-// nobody is sent to Google for a sign-in that cannot finish.
+// nobody is sent to Google for a sign-in that cannot finish. A platform whose
+// links are switched off (signin-switch.ts) isn't offered either.
 export function isYouTubeOAuthUsable(env: Bindings): boolean {
   return !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET && !!env.OAUTH_REDIRECT_BASE
+    && !signInLinksAreOff(env, 'youtube')
 }
 
 export async function startYouTubeOAuth(
@@ -24,7 +27,7 @@ export async function startYouTubeOAuth(
 ): Promise<Response> {
   // The explicit checks after isYouTubeOAuthUsable let TypeScript see both values are set.
   if (!isYouTubeOAuthUsable(env) || !env.GOOGLE_CLIENT_ID || !env.OAUTH_REDIRECT_BASE) {
-    return new Response(JSON.stringify({ error: 'YouTube OAuth not configured' }), {
+    return new Response(JSON.stringify({ error: signInLinksAreOff(env, 'youtube') ? 'Sign-in for YouTube is switched off right now.' : 'YouTube OAuth not configured' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
     })
