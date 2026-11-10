@@ -311,6 +311,7 @@ Content-Type: application/json
         <li><code>signin_wrong_account</code>;</li>
         <li><code>signin_not_yours</code>;</li>
         <li><code>signin_claim_mismatch</code>;</li>
+        <li><code>signin_unavailable</code> (403: sign-in links for this platform are switched off);</li>
         <li><code>invalid_event</code>.</li>
       </ul>
 

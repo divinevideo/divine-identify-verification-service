@@ -10,6 +10,7 @@ import {
   startCheckFor, confirmBindingFor, isSignInToken, sameToken,
 } from '../oauth/confirm'
 import { saveSignIn, savedIdentities } from '../oauth/signin-records'
+import { signInLinksAreOff } from '../oauth/signin-switch'
 
 const confirm = new Hono<{ Bindings: Bindings }>()
 
@@ -22,6 +23,8 @@ const REFUSALS = {
   no_start_check: { status: 401, code: 'signin_not_yours', error: 'This sign-in was started somewhere else.' },
   not_yours: { status: 401, code: 'signin_not_yours', error: 'This sign-in was started somewhere else.' },
   claim_mismatch: { status: 401, code: 'signin_claim_mismatch', error: 'This confirmation doesn\'t match the sign-in. Sign in again.' },
+  // 403, not 5xx: apps retry 5xx and signin_not_found, and this refusal is final until the operator clears the switch.
+  links_off: { status: 403, code: 'signin_unavailable', error: 'Sign-in links for this platform are switched off right now.' },
   invalid_event: { status: 400, code: 'invalid_event', error: 'The confirmation must be a signed linked-accounts list (kind 10011).' },
 } as const
 
@@ -53,6 +56,8 @@ confirm.post('/confirm', async (c) => {
   // The same event sent again (its first answer was lost) gets the same answer.
   const used = await getUsedCode(c.env.CACHE_KV, code)
   if (used) {
+    // Even a repeat of a finished confirmation: while the links are withdrawn, no confirm answers as linked.
+    if (signInLinksAreOff(c.env, used.platform)) return refuse('links_off', used.platform)
     if (used.event_id === event.id) return c.json({ linked: true, platform: used.platform, identity: used.identity })
     return refuse('used', used.platform)
   }
@@ -69,6 +74,9 @@ confirm.post('/confirm', async (c) => {
   const bound = event.tags.some(tag => tag[0] === 'i' && typeof tag[1] === 'string'
     && claims.includes(tag[1].toLowerCase()) && typeof tag[3] === 'string' && sameToken(tag[3], binding))
   if (!bound) return refuse('claim_mismatch', pending.platform)
+  // Last, so every other refusal keeps its precedence. Like them it keeps the
+  // code, so the owner can confirm once the switch is cleared.
+  if (signInLinksAreOff(c.env, pending.platform)) return refuse('links_off', pending.platform)
 
   const account = { platform: pending.platform, identity: pending.identity, account_id: pending.account_id, handle: pending.handle }
   // Saved first, then marked used, then the pending sign-in removed: a failed

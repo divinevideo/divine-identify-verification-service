@@ -646,6 +646,43 @@ describe('POST /auth/confirm', () => {
     expect(await confirm(env, { code: s.code, start_secret: s.secret, event: other })).toMatchObject({ status: 409, json: { code: 'signin_used' } })
   })
 
+  it.each(PLATFORMS)('%s: refuses to confirm while its sign-in links are switched off, and saves nothing', async (platform) => {
+    const env = platformEnv(platform, { SIGNIN_CONFIRMATION: 'required' })
+    const s = await startedAndFinished(platform, env)
+    env.SIGNIN_LINKS_OFF = platform
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toMatchObject({ status: 403, json: { code: 'signin_unavailable' } })
+    for (const key of recordKeysFor(platform, s.pubkey)) expect(await env.CACHE_KV.get(key)).toBeNull()
+    expect(info).toHaveBeenCalledWith(`${platform} sign-in confirmation refused: links_off`)
+  })
+
+  it('keeps the code, so the owner can confirm once the switch is cleared', async () => {
+    const env = platformEnv('twitter', { SIGNIN_CONFIRMATION: 'required' })
+    const s = await startedAndFinished('twitter', env)
+    env.SIGNIN_LINKS_OFF = 'twitter'
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(403)
+    delete env.SIGNIN_LINKS_OFF
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toMatchObject({ status: 200, json: { linked: true } })
+  })
+
+  it('refuses a repeat of an earlier confirmation while switched off', async () => {
+    const env = platformEnv('twitter', { SIGNIN_CONFIRMATION: 'required' })
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
+    env.SIGNIN_LINKS_OFF = 'twitter'
+    expect(await confirm(env, { code: s.code, start_secret: s.secret, event })).toMatchObject({ status: 403, json: { code: 'signin_unavailable' } })
+  })
+
+  it('confirms as usual when another platform is switched off', async () => {
+    const env = platformEnv('twitter', { SIGNIN_CONFIRMATION: 'required', SIGNIN_LINKS_OFF: 'tiktok' })
+    const s = await startedAndFinished('twitter', env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    expect((await confirm(env, { code: s.code, start_secret: s.secret, event })).status).toBe(200)
+  })
+
   it('answers 404 for a code it does not know', async () => {
     const env = baseEnv()
     const s = await startedAndFinished('twitter', env)

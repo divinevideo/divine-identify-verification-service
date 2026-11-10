@@ -76,6 +76,7 @@ The service backs Divine's identity and trust surface: divine-web and Divine mob
    - `signin_wrong_account`;
    - `signin_not_yours`;
    - `signin_claim_mismatch`;
+   - `signin_unavailable` (403: sign-in links for this platform are switched off);
    - `invalid_event`.
 
 Return addresses are limited to `https://verifier.divine.video/`, `https://verifyer.divine.video/` and `https://divine.video/app/callback` (any query or fragment).

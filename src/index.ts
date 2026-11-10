@@ -1640,6 +1640,7 @@ ${SHARED_PAGE_SCRIPT}
       signin_wrong_account: 'Sign in with the Divine account that started this sign-in.',
       signin_not_yours: 'This sign-in was started somewhere else.',
       signin_claim_mismatch: 'This confirmation doesn\\'t match the sign-in. Sign in again.',
+      signin_unavailable: 'Sign-in links for this platform are switched off right now.',
     };
     // The sign-in and its signed event are kept, so pressing Publish again
     // resends the same event.

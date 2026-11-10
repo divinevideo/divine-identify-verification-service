@@ -347,6 +347,16 @@ describe('API docs: what a sign-in return carries', () => {
   })
 })
 
+describe('confirm refusal for switched-off sign-in links', () => {
+  it('documents signin_unavailable among the confirm refusals', async () => {
+    expect(await docsHtml()).toContain('<code>signin_unavailable</code>')
+  })
+
+  it('the page explains a confirm refused because sign-in links are switched off', async () => {
+    expect(await homeHtml()).toContain("signin_unavailable: 'Sign-in links for this platform are switched off right now.'")
+  })
+})
+
 describe('verifier twitter oauth gating', () => {
   it('hides Twitter from the sign-in picker when Twitter sign-in is not configured', async () => {
     const oauthSelect = sliceSelect(await homeHtml(), 'oauth-platform-select')
@@ -454,6 +464,7 @@ Content-Type: application/json
         <li><code>signin_wrong_account</code>;</li>
         <li><code>signin_not_yours</code>;</li>
         <li><code>signin_claim_mismatch</code>;</li>
+        <li><code>signin_unavailable</code> (403: sign-in links for this platform are switched off);</li>
         <li><code>invalid_event</code>.</li>
       </ul>`)
   })
