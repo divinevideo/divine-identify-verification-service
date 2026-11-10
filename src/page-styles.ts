@@ -66,6 +66,7 @@ export const PAGE_STYLES = `
     }
     .hero .subtitle a { color: var(--off); border-bottom: 1.5px solid rgba(249, 247, 246, 0.35); padding-bottom: 1px; text-decoration: none; }
     .hero .subtitle a:hover { color: var(--green); border-bottom-color: var(--green); }
+    .hero .subtitle code { color: var(--off); background: rgba(249, 247, 246, 0.12); }
     .hero .cta-row { display: flex; gap: 12px; justify-content: flex-start; flex-wrap: wrap; margin-top: 4px; }
 
     /* Buttons */

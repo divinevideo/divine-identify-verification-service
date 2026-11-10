@@ -54,7 +54,7 @@ async function publishHarness(opts: {
   const source = [
     scriptBetween(html, 'function bytesToBase64Url(bytes)', 'async function createKeycastPkce()'),
     scriptBetween(html, 'async function publishIdentityTagToNostr()', '// A sign-in this page started'),
-    scriptBetween(html, 'const PENDING_SIGN_IN_KEY', 'function showStatus(msg, type)'),
+    scriptBetween(html, 'const PENDING_SIGN_IN_KEY', "// Shown instead of publishing when the current list couldn't be read"),
   ].join('\n')
 
   let now = 1_760_000_000_000

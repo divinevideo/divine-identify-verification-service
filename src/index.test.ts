@@ -699,7 +699,6 @@ describe('example accounts on the page', () => {
   it('shows the reserved example names in the fields people fill in', async () => {
     const html = await homeHtml()
     expect(html).toContain('<input id="verify-pubkey-input" class="field-input" type="text" readonly placeholder="Filled in when you sign in">')
-    expect(html).toContain('<input id="lookup-input" type="text" class="lookup-input" placeholder="example@divine.video or npub1...">')
     expect(html).toContain('<input id="oauth-bluesky-handle-input" class="field-input" type="text" placeholder="example.bsky.social">')
     expect(html).toContain("identityInput.placeholder = 'mastodon.social/@example';")
     expect(html).toContain("throw new Error('Enter your Bluesky handle (example: example.bsky.social).');")

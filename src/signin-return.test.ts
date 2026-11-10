@@ -35,7 +35,7 @@ function scriptBetween(html: string, from: string, to: string): string {
 // stand-ins for the browser, so the test exercises the shipped script rather
 // than a copy of it.
 async function loadReturnHandler() {
-  const source = scriptBetween(await pageHtml(), 'const PENDING_SIGN_IN_KEY', 'function showStatus(msg, type)')
+  const source = scriptBetween(await pageHtml(), 'const PENDING_SIGN_IN_KEY', "// Shown instead of publishing when the current list couldn't be read")
   const deps = ['window', 'localStorage', 'fetch', 'setStatus', 'clearStatus', 'document', 'updateProofInputs', 'activeSigner', 'activateSigner', 'createBrowserSigner', 'isBrowserSignerAvailable']
   return (env: Record<string, unknown>) =>
     new Function(...deps, `${source}\nreturn { handleOAuthCallbackMessage, resumeWaitingSignIn, rememberPendingSignIn, newSignInNonce, readPendingSignIn };`)(...deps.map(d => env[d]))
@@ -50,7 +50,7 @@ async function loadSignInStart() {
     scriptBetween(html, 'function bytesToBase64Url(bytes)', 'async function createKeycastPkce()'),
     scriptBetween(html, 'function setAccountInputValue(value)', 'function inferLoginQueryPubkey(params)'),
     scriptBetween(html, 'async function startOAuthVerification()', 'async function verifySingleHere()'),
-    scriptBetween(html, 'const PENDING_SIGN_IN_KEY', 'function showStatus(msg, type)'),
+    scriptBetween(html, 'const PENDING_SIGN_IN_KEY', "// Shown instead of publishing when the current list couldn't be read"),
   ].join('\n')
   const deps = ['window', 'localStorage', 'fetch', 'API', 'setStatus', 'clearStatus', 'setButtonLoading', 'document', 'activeSigner', 'activeSignerSource', 'crypto', 'btoa']
   return (env: Record<string, unknown>) =>
@@ -110,7 +110,7 @@ function startHarness(opts: { refusePending?: boolean, blockStorage?: boolean } 
 // Runs the page's start-up code, from handling a returning sign-in through the
 // Divine login checks, with the page functions it calls replaced by recorders.
 async function loadStartup() {
-  const source = scriptBetween(await pageHtml(), '// Start-up: a returning sign-in is handled first', '// Lookup tool Enter key')
+  const source = scriptBetween(await pageHtml(), '// Start-up: a returning sign-in is handled first', '// When loaded inside a Divine-hosted iframe')
   const pageFunctions = ['updateOAuthInputs', 'updateProofInputs', 'handleOAuthCallbackMessage', 'resumeWaitingSignIn', 'forgetExpiredSignIns', 'updateSignerSummary', 'maybeHandleKeycastCallback', 'applyLoginQueryHint', 'restoreKeycastSession']
   return () => {
     const calls: string[] = []

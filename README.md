@@ -13,7 +13,7 @@ Divine is a decentralized short-form video app that revives Vine's six-second fo
 - **KV caching** — verified claims are cached for 24 hours, failures for 15 minutes, and platform outages for 5 minutes (answered with the code `temporarily_unavailable`, meaning "try again", not a rejection).
 - **Limits on platform requests** — each request to a platform gets 5 seconds, counted through the end of its answer, and at most 1 MB of an answer is read. A whole claim's check gets 8 seconds, so a batch waits at most that long on its slowest claim. A platform that doesn't answer in time is reported like any other outage (`temporarily_unavailable`).
 - **Rate limiting** — per-IP (60/min), per-pubkey (20/min), and per-platform (30/min) windows guard the Worker and upstream APIs.
-- **Interactive landing page** — a self-service verification UI served at `/`, with Nostr login (browser signer, login.divine.video, bunker, or Nostr Connect), Quick Connect OAuth, linking with a post, a Publish step, a link manager, and a public lookup tool.
+- **Interactive landing page:** a self-service verification UI served at `/`, with Nostr login (browser signer, login.divine.video, bunker, or Nostr Connect), Quick Connect OAuth, linking with a post, a Publish step, and a link manager. A public lookup tool is at `/lookup`.
 - **Embeddable** — a postMessage NIP-07 bridge lets the flow run inside a trusted Divine iframe using the host's existing signer, so no second login is required.
 - **Stateless** — no database; state lives in Cloudflare KV, so the Worker scales horizontally.
 
@@ -31,6 +31,7 @@ The service is a single [Hono](https://hono.dev) app running on Cloudflare Worke
 - `/auth/*`: sign-in start (`POST /auth/:platform/start`; `GET`, used by app versions that can't confirm, is refused while confirmation is required), provider callbacks, `POST /auth/confirm`, Nostr login, Bluesky client metadata, sign-in status, and revoke.
 - `GET /` — the interactive landing page (returns JSON when the client asks for it).
 - `GET /docs` — the API reference.
+- `GET /lookup`: the page to look up which accounts a person has linked.
 
 Each platform is a verifier in `src/platforms/` behind a shared interface, wired up in `registry.ts`; adding a platform is a matter of adding a verifier rather than reshaping the service. OAuth handlers live in `src/oauth/`, and shared helpers (caching, rate limiting, validation, npub encoding) live in `src/utils/`.
 

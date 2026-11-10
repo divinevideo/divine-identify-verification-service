@@ -5,11 +5,11 @@ import { MAX_BATCH_SIZE } from './routes/verify'
 const PUBKEY = 'ab'.repeat(32)
 const API = 'https://verifier.divine.video'
 
-// Runs the landing page's real "Look up someone" code (doLookup) against
+// Runs the lookup page's real "Look up someone" code (doLookup) against
 // stand-ins for the DOM, relays and network, so the test exercises the shipped
 // script rather than a copy of it.
 async function loadDoLookup() {
-  const res = await worker.fetch(new Request(`${API}/`), {} as never)
+  const res = await worker.fetch(new Request(`${API}/lookup`), {} as never)
   const html = await res.text()
   const start = html.indexOf('async function doLookup()')
   const end = html.indexOf('function tryParseJSON(s)', start)
@@ -79,7 +79,7 @@ function harness(opts: {
   return { env, statuses, rendered, verifyBatches, requests }
 }
 
-describe('landing page "Look up someone"', () => {
+describe('"Look up someone" on /lookup', () => {
   it('shows the results for a profile that has linked accounts, with its NIP-05 check', async () => {
     const doLookup = await loadDoLookup()
     const h = harness({ iTags: [iTag('github', 'octocat', 'abc123')], nip05: 'alice@divine.video' })
@@ -153,7 +153,7 @@ describe('landing page "Look up someone"', () => {
   })
 })
 
-describe('landing page "Look up someone" with entries that are not well-formed', () => {
+describe('"Look up someone" on /lookup with entries that are not well-formed', () => {
   it('skips them and shows the other linked accounts', async () => {
     const doLookup = await loadDoLookup()
     const h = harness({
@@ -180,7 +180,7 @@ describe('landing page "Look up someone" with entries that are not well-formed',
   })
 })
 
-describe('landing page "Look up someone" with a NIP-05 that isn\'t text', () => {
+describe('"Look up someone" on /lookup with a NIP-05 that isn\'t text', () => {
   it('leaves it out of the results, without checking it', async () => {
     const doLookup = await loadDoLookup()
     const h = harness({ iTags: [iTag('github', 'octocat', 'abc123')], nip05Raw: 42 })
@@ -202,7 +202,7 @@ describe('landing page "Look up someone" with a NIP-05 that isn\'t text', () => 
   })
 })
 
-describe('landing page batch size', () => {
+describe('"Look up someone" on /lookup: batch size', () => {
   it('comes from the server\'s MAX_BATCH_SIZE, not a copy of the number', async () => {
     vi.resetModules()
     vi.doMock('./routes/verify', async (importOriginal) => ({
@@ -211,7 +211,7 @@ describe('landing page batch size', () => {
     }))
     try {
       const { default: freshWorker } = await import('./index')
-      const html = await (await freshWorker.fetch(new Request(`${API}/`), {} as never)).text()
+      const html = await (await freshWorker.fetch(new Request(`${API}/lookup`), {} as never)).text()
       expect(html).toContain('const VERIFY_BATCH_SIZE = 3;')
     } finally {
       vi.doUnmock('./routes/verify')
