@@ -22,6 +22,8 @@ describe('parseYouTubeIdentity', () => {
     ['@l·l', '@l·l'],
     // A decomposed accent: the combining mark may end a handle.
     ['@café', '@café'],
+    ['@é_é', '@é_é'],
+    ['@a..b', '@a..b'],
   ])('reads %s as the handle %s', (input, handle) => {
     expect(parseYouTubeIdentity(input)).toEqual({ kind: 'handle', handle })
   })
@@ -52,6 +54,8 @@ describe('parseYouTubeIdentity', () => {
     // A combining mark needs a letter before it.
     '@́',
     '@́alice',
+    '@alice.́',
+    '@a_́',
   ])('refuses %j', (input) => {
     expect(parseYouTubeIdentity(input)).toBeNull()
   })
