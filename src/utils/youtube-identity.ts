@@ -10,6 +10,13 @@ export const YOUTUBE_CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/
 // Length isn't checked here: YouTube's limits on it differ by script.
 const HANDLE_NAME = /^[\p{L}\p{N}]\p{M}*(?:[_.·-]*[\p{L}\p{N}]\p{M}*)*$/u
 
+// Folds A to Z only. YouTube documents handles as case-insensitive, but full
+// Unicode lowercasing can turn different handles into one, such as the Kelvin
+// sign into a k. The handle lookup cache and the sign-in check both use this.
+export function foldYouTubeHandleCase(text: string): string {
+  return text.replace(/[A-Z]/g, (c) => c.toLowerCase())
+}
+
 export type YouTubeIdentity =
   | { kind: 'channel'; channelId: string }
   | { kind: 'handle'; handle: string }

@@ -1,6 +1,6 @@
 // ABOUTME: Resolves a YouTube handle to the channel it belongs to, via the YouTube Data API.
 // ABOUTME: Remembers only the lookup, never a verified result, and never a failure.
-import { YOUTUBE_CHANNEL_ID } from '../utils/youtube-identity'
+import { foldYouTubeHandleCase, YOUTUBE_CHANNEL_ID } from '../utils/youtube-identity'
 import { discardBody, readJson } from './base'
 
 // How long YouTube's answer to "which channel does this handle belong to" is
@@ -28,9 +28,7 @@ export interface YouTubeLookupEnv {
 
 const NOT_FOUND = 'not-found'
 
-// Fold ASCII case only, because YouTube documents handles as case-insensitive
-// and full Unicode lowercasing can turn different handles into one key.
-const lookupKey = (name: string) => `yt_handle_channel:${name.replace(/[A-Z]/g, (c) => c.toLowerCase())}`
+const lookupKey = (name: string) => `yt_handle_channel:${foldYouTubeHandleCase(name)}`
 
 // Remembering a lookup only saves the next one, so a failed write never fails
 // the check it was made for.
@@ -41,6 +39,15 @@ async function remember(cache: KVNamespace | undefined, key: string, value: stri
   } catch (err) {
     console.warn('YouTube handle lookup not cached:', err instanceof Error ? err.name : 'unknown')
   }
+}
+
+/**
+ * Drop a remembered lookup, so a fresh sign-in is checked against YouTube's
+ * current answer rather than one naming the handle's previous channel.
+ * `handle` may carry a leading `@` or not.
+ */
+export async function forgetYouTubeHandleLookup(cache: KVNamespace | undefined, handle: string): Promise<void> {
+  await cache?.delete(lookupKey(handle.startsWith('@') ? handle.slice(1) : handle))
 }
 
 /**
