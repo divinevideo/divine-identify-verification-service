@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseYouTubeIdentity, YOUTUBE_CHANNEL_ID } from './youtube-identity'
+import { foldYouTubeHandleCase, parseYouTubeIdentity, YOUTUBE_CHANNEL_ID } from './youtube-identity'
 
 describe('parseYouTubeIdentity', () => {
   it.each(['UCaaaaaaaaaaaaaaaaaaaaaa', 'UC1234567890abcdefghij_-'])('reads %s as a channel id', (id) => {
@@ -58,5 +58,14 @@ describe('parseYouTubeIdentity', () => {
     '@a_́',
   ])('refuses %j', (input) => {
     expect(parseYouTubeIdentity(input)).toBeNull()
+  })
+})
+
+describe('foldYouTubeHandleCase', () => {
+  it('folds A to Z only', () => {
+    expect(foldYouTubeHandleCase('@AliCE_9')).toBe('@alice_9')
+    expect(foldYouTubeHandleCase('@ÉLODIE')).toBe('@Élodie')
+    // U+212A KELVIN SIGN would lowercase to an ASCII k.
+    expect(foldYouTubeHandleCase('@\u212Aate')).toBe('@\u212Aate')
   })
 })

@@ -1,6 +1,6 @@
 import type { Bindings, OAuthVerification } from '../types'
 import { lookUpYouTubeHandle } from '../platforms/youtube-handle'
-import { parseYouTubeIdentity } from '../utils/youtube-identity'
+import { foldYouTubeHandleCase, parseYouTubeIdentity } from '../utils/youtube-identity'
 
 // How long Bluesky's answer to "which account does this handle point to" is
 // reused. Only the lookup is cached, never the verified result, so unlinking
@@ -60,9 +60,6 @@ async function lookUpHandle(env: Bindings, handle: string): Promise<Lookup> {
   return { did }
 }
 
-// Folds A to Z only, as YouTube's handle lookup cache does (youtube-handle.ts).
-const foldAsciiCase = (text: string) => text.replace(/[A-Z]/g, (c) => c.toLowerCase())
-
 // A YouTube record saved with its channel id matches a claim of that id, or of
 // the handle sign-in saved while YouTube still resolves it to that channel.
 // Records are found by the fully lowercased identity, so a claim can reach one
@@ -81,7 +78,7 @@ async function youTubeChannelStillMatches(env: Bindings, record: OAuthVerificati
   if (!claimed) return false
   if (claimed.kind === 'channel') return claimed.channelId === record.account_id
   const saved = parseYouTubeIdentity(record.identity)
-  if (saved?.kind !== 'handle' || foldAsciiCase(saved.handle) !== foldAsciiCase(claimed.handle)) return false
+  if (saved?.kind !== 'handle' || foldYouTubeHandleCase(saved.handle) !== foldYouTubeHandleCase(claimed.handle)) return false
   const lookup = await lookUpYouTubeHandle(env, saved.handle)
   if (!lookup) return true
   return 'channelId' in lookup && lookup.channelId === record.account_id
