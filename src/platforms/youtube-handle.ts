@@ -44,6 +44,15 @@ async function remember(cache: KVNamespace | undefined, key: string, value: stri
 }
 
 /**
+ * Drop a remembered lookup, so a fresh sign-in is checked against YouTube's
+ * current answer rather than one naming the handle's previous channel.
+ * `handle` may carry a leading `@` or not.
+ */
+export async function forgetYouTubeHandleLookup(cache: KVNamespace | undefined, handle: string): Promise<void> {
+  await cache?.delete(lookupKey(handle.startsWith('@') ? handle.slice(1) : handle))
+}
+
+/**
  * The channel a handle belongs to. `null` means YouTube didn't answer usefully
  * (no key, unreachable, quota, unreadable answer); the caller decides what that
  * means. `handle` may carry a leading `@` or not. The caller checks the handle

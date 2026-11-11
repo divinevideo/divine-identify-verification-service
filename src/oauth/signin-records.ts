@@ -6,6 +6,8 @@ import { forgetHandleLookup } from './signin-account'
 import { signInConfirmationMode, newConfirmCode, storePendingSignIn, type SignedInAccount } from './confirm'
 import { signInIsCurrent } from './signin-lifetime'
 import { signInLinksAreOff } from './signin-switch'
+import { forgetYouTubeHandleLookup } from '../platforms/youtube-handle'
+import { parseYouTubeIdentity } from '../utils/youtube-identity'
 
 /** The event that confirmed a sign-in. */
 export interface Confirmation {
@@ -42,6 +44,19 @@ async function tidyEarlierBlueskySignIn(env: Bindings, pubkey: string, did: stri
   }
 }
 
+// A YouTube sign-in named by its handle is checked by looking the handle up
+// (signin-account.ts), and that lookup is remembered for a day. A handle can
+// pass to another channel within that day, so a fresh sign-in forgets it.
+// Best effort, like the Bluesky tidying above: the sign-in is saved either way.
+async function forgetEarlierYouTubeLookup(env: Bindings, identity: string): Promise<void> {
+  if (parseYouTubeIdentity(identity)?.kind !== 'handle') return
+  try {
+    await forgetYouTubeHandleLookup(env.CACHE_KV, identity)
+  } catch (err) {
+    console.warn('YouTube sign-in: earlier handle lookup not cleared:', err instanceof Error ? err.name : 'unknown')
+  }
+}
+
 // After a handle change, an unconfirmed sign-in replaces the confirmed DID
 // record too, so the handle and DID records stay a pair that unlinks together.
 const sameHandle = (a: string | undefined, b: string | undefined) => (a ?? '').toLowerCase() === (b ?? '').toLowerCase()
@@ -55,6 +70,7 @@ export async function saveSignIn(env: Bindings, pubkey: string, account: SignedI
   if (account.platform === 'bluesky' && account.account_id && account.handle) {
     await tidyEarlierBlueskySignIn(env, pubkey, account.account_id, account.handle)
   }
+  if (account.platform === 'youtube') await forgetEarlierYouTubeLookup(env, account.identity)
   const checkedAt = Math.floor(Date.now() / 1000)
   for (const identity of savedIdentities(account)) {
     if (!confirmation) {

@@ -34,6 +34,10 @@ export function renderDocsPage(opts: DocsPageOptions): string {
   // Pre-build conditional HTML to avoid TS2590 (template literal union too complex)
   const ytTableRow = hasYouTube ? `<tr><td><code>youtube</code></td><td>Channel ID (<code>UC</code> followed by 22 characters) or handle (<code>@user</code>, or without the <code>@</code>, which is added). <code>c/</code> and <code>user/</code> links aren't accepted.</td><td>Video ID (11 chars)</td><td>${youtubeOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
   const ttTableRow = hasTikTok ? `<tr><td><code>tiktok</code></td><td>Username (without @)</td><td>Video or photo link, share link, or post number</td><td>${tiktokOAuthEnabled ? 'Yes' : 'No'}</td></tr>` : ''
+  // The check runs only with the YouTube API key, which is also what lists YouTube.
+  const youtubeAccountCheckNote = hasYouTube
+    ? " A YouTube sign-in claimed by handle also stops counting once the handle belongs to another channel or YouTube finds no channel with it. The claim must spell the handle as the sign-in saved it, apart from the letter case of A to Z. YouTube's answer is reused for up to a day, and while YouTube can't answer, the link keeps counting. A sign-in saved under its channel ID (a channel without a handle) is compared with it exactly, without asking YouTube."
+    : ''
   const tiktokOAuthHistoryNote = hasTikTok && !tiktokOAuthEnabled && !tiktokLinksOff
     ? ' Existing TikTok OAuth verifications remain recognized.'
     : ''
@@ -337,7 +341,7 @@ Content-Type: application/json
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
 
-      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${oauthCheckedFor}. A sign-in counts only after you confirm it by publishing, and for ${FIXED_SIGNIN_LIFETIME_DAYS} days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting. A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.${tiktokOAuthHistoryNote}</div>
+      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${oauthCheckedFor}. A sign-in counts only after you confirm it by publishing, and for ${FIXED_SIGNIN_LIFETIME_DAYS} days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting. A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.${youtubeAccountCheckNote}${tiktokOAuthHistoryNote}</div>
     </section>
 
     <section id="other">

@@ -565,6 +565,12 @@ Content-Type: application/json
     expect(docs).not.toMatch(/no fixed lifetime|re-checked at each verification/)
   })
 
+  it('says how a YouTube sign-in is checked against its channel, only while YouTube is on', async () => {
+    const youtubeCheck = "A YouTube sign-in claimed by handle also stops counting once the handle belongs to another channel or YouTube finds no channel with it. The claim must spell the handle as the sign-in saved it, apart from the letter case of A to Z. YouTube's answer is reused for up to a day, and while YouTube can't answer, the link keeps counting. A sign-in saved under its channel ID (a channel without a handle) is compared with it exactly, without asking YouTube."
+    expect(oauthDocsSection(await docsHtml('https://verifier.divine.video/', youtubeSignInConfig))).toContain(youtubeCheck)
+    expect(oauthDocsSection(await docsHtml())).not.toContain('A YouTube sign-in')
+  })
+
   it('documents YouTube and TikTok sign-in starts as POSTs with a start check when they are on', async () => {
     const docs = oauthDocsSection(await docsHtml('https://verifier.divine.video/', { ...twitterOAuthConfig, ...youtubeSignInConfig, TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's', TIKTOK_OAUTH_ENABLED: 'true' }))
     // The other platforms follow the full Bluesky example after a blank line.
