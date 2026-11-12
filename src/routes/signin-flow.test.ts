@@ -956,3 +956,177 @@ describe('POST /auth/confirm', () => {
     expect(warn.mock.calls).toEqual([['twitter sign-in confirmed: pending not removed']])
   })
 })
+
+const ACCESS_URL = 'https://access.example.test/v1/entitlements'
+const GATE_REFUSAL = { code: 'confirmation_required', error: 'Linking by sign-in needs Divine Confirmation. Proof posts stay free.' }
+const GATE_UNAVAILABLE = { code: 'confirmation_unavailable', error: 'Divine Confirmation couldn\'t be checked right now. Try again in a few minutes.' }
+
+function gateEnv(platform: Platform, mode: string, extra: Partial<Bindings> = {}): Bindings {
+  return platformEnv(platform, {
+    SIGNIN_CONFIRMATION: 'required', CONFIRMATION_GATE: mode,
+    CONFIRMATION_ACCESS_URL: ACCESS_URL, CONFIRMATION_ACCESS_TOKEN: 'access-token', ...extra,
+  })
+}
+
+// Answers only the access service's URLs; anything else is a test failure.
+function accessService(answer: 'yes' | 'no' | 'error' | 'throw' | 'malformed') {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    if (!String(input).startsWith(`${ACCESS_URL}/`)) throw new Error(`unexpected fetch: ${String(input)}`)
+    if (answer === 'throw') throw new TypeError('network down')
+    if (answer === 'error') return new Response('boom', { status: 500 })
+    return jsonResponse({ isActive: answer === 'malformed' ? 'true' : answer === 'yes' })
+  })
+}
+
+function noFetch() {
+  return vi.fn(async () => { throw new Error('no fetch expected') })
+}
+
+async function accessKeys(env: Bindings): Promise<string[]> {
+  const { keys } = await env.CACHE_KV.list()
+  return keys.map(k => k.name).filter(name => name.startsWith('confirmation_access:'))
+}
+
+describe('POST /auth/confirm with the Confirmation gate', () => {
+  async function ready(platform: Platform, env: Bindings) {
+    const s = await startedAndFinished(platform, env)
+    const event = await signedList(s.secretKey, [['i', s.claim, 'oauth', s.binding]])
+    return { s, event, body: { code: s.code, start_secret: s.secret, event } }
+  }
+
+  it('gate off: confirms with no access fetch and saves an unmarked record, as today', async () => {
+    const env = gateEnv('twitter', 'off')
+    const { s, body } = await ready('twitter', env)
+    const fetcher = noFetch()
+    vi.stubGlobal('fetch', fetcher)
+    expect(await confirm(env, body)).toEqual({ status: 200, json: { linked: true, platform: 'twitter', identity: 'jack' } })
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(JSON.parse((await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', s.pubkey))) as string).access_required).toBeUndefined()
+  })
+
+  it.each(PLATFORMS)('%s, gate on: refuses a non-holder with 403 confirmation_required and saves nothing; the code still works for a retry', async (platform) => {
+    const env = gateEnv(platform, 'on')
+    const { s, body } = await ready(platform, env)
+    vi.stubGlobal('fetch', accessService('no'))
+    expect(await confirm(env, body)).toEqual({ status: 403, json: GATE_REFUSAL })
+    for (const key of recordKeysFor(platform, s.pubkey)) expect(await env.CACHE_KV.get(key)).toBeNull()
+    env.CONFIRMATION_TESTERS = s.pubkey
+    vi.stubGlobal('fetch', noFetch())
+    expect((await confirm(env, body)).status).toBe(200)
+    for (const key of recordKeysFor(platform, s.pubkey)) expect(JSON.parse((await env.CACHE_KV.get(key)) as string).access_required).toBe(true)
+  })
+
+  it('gate on: a holder confirms and every saved record is marked', async () => {
+    const env = gateEnv('bluesky', 'on')
+    const { s, body } = await ready('bluesky', env)
+    vi.stubGlobal('fetch', accessService('yes'))
+    expect((await confirm(env, body)).status).toBe(200)
+    for (const key of recordKeysFor('bluesky', s.pubkey)) expect(JSON.parse((await env.CACHE_KV.get(key)) as string).access_required).toBe(true)
+  })
+
+  it.each([['a 500', 'error'], ['a network error', 'throw'], ['a malformed answer', 'malformed']] as const)(
+    'gate on: %s refuses with 503 confirmation_unavailable, saves nothing and caches nothing', async (_label, answer) => {
+      const env = gateEnv('twitter', 'on')
+      const { s, body } = await ready('twitter', env)
+      vi.stubGlobal('fetch', accessService(answer))
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      expect(await confirm(env, body)).toEqual({ status: 503, json: GATE_UNAVAILABLE })
+      for (const key of recordKeysFor('twitter', s.pubkey)) expect(await env.CACHE_KV.get(key)).toBeNull()
+      expect(await accessKeys(env)).toEqual([])
+    },
+  )
+
+  it.each([['no URL', { CONFIRMATION_ACCESS_URL: undefined }], ['no token', { CONFIRMATION_ACCESS_TOKEN: undefined }]] as const)(
+    'gate on: %s refuses with 503 confirmation_unavailable, without a fetch', async (_label, extra) => {
+      const env = gateEnv('twitter', 'on', extra)
+      const { body } = await ready('twitter', env)
+      const fetcher = noFetch()
+      vi.stubGlobal('fetch', fetcher)
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      expect(await confirm(env, body)).toEqual({ status: 503, json: GATE_UNAVAILABLE })
+      expect(fetcher).not.toHaveBeenCalled()
+    },
+  )
+
+  it('gate on: a tester confirms with no access fetch', async () => {
+    const env = gateEnv('twitter', 'on')
+    const { s, body } = await ready('twitter', env)
+    env.CONFIRMATION_TESTERS = s.pubkey
+    const fetcher = noFetch()
+    vi.stubGlobal('fetch', fetcher)
+    expect((await confirm(env, body)).status).toBe(200)
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('gate on: a repeat of a finished confirmation answers the same without a new check or a second save', async () => {
+    const env = gateEnv('twitter', 'on')
+    const { s, body } = await ready('twitter', env)
+    vi.stubGlobal('fetch', accessService('yes'))
+    const first = await confirm(env, body)
+    expect(first.status).toBe(200)
+    const key = oauthVerificationKey('twitter', 'jack', s.pubkey)
+    const put = vi.spyOn(env.CACHE_KV, 'put')
+    const fetcher = noFetch()
+    vi.stubGlobal('fetch', fetcher)
+    expect(await confirm(env, body)).toEqual(first)
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(put).not.toHaveBeenCalled()
+    expect(JSON.parse((await env.CACHE_KV.get(key)) as string).access_required).toBe(true)
+  })
+
+  it('gate on: refusals before the gate keep their answer and make no access fetch', async () => {
+    const env = gateEnv('twitter', 'on')
+    const { body } = await ready('twitter', env)
+    const fetcher = noFetch()
+    vi.stubGlobal('fetch', fetcher)
+    expect(await confirm(env, { ...body, start_secret: 'T'.repeat(43) })).toMatchObject({ status: 401, json: { code: 'signin_not_yours' } })
+    env.SIGNIN_LINKS_OFF = 'twitter'
+    expect(await confirm(env, body)).toMatchObject({ status: 403, json: { code: 'signin_unavailable' } })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('shadow: a non-holder confirms, is saved unmarked, and a would_refuse line is logged with nothing that identifies anyone', async () => {
+    const env = gateEnv('twitter', 'shadow')
+    const { s, body } = await ready('twitter', env)
+    vi.stubGlobal('fetch', accessService('no'))
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    expect((await confirm(env, body)).status).toBe(200)
+    expect(JSON.parse((await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', s.pubkey))) as string).access_required).toBeUndefined()
+    expect(info.mock.calls).toContainEqual(['twitter confirmation check (shadow): would_refuse'])
+    const logged = JSON.stringify(info.mock.calls)
+    for (const secret of [s.pubkey, s.code, 'jack']) expect(logged).not.toContain(secret)
+  })
+
+  it.each([['yes', 'pass'], ['error', 'unavailable']] as const)('shadow: access %s confirms and logs %s', async (answer, outcome) => {
+    const env = gateEnv('twitter', 'shadow')
+    const { body } = await ready('twitter', env)
+    vi.stubGlobal('fetch', accessService(answer))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    expect((await confirm(env, body)).status).toBe(200)
+    expect(info.mock.calls).toContainEqual([`twitter confirmation check (shadow): ${outcome}`])
+  })
+
+  it('shadow: a tester confirms and logs tester, without a fetch', async () => {
+    const env = gateEnv('twitter', 'shadow')
+    const { s, body } = await ready('twitter', env)
+    env.CONFIRMATION_TESTERS = s.pubkey
+    const fetcher = noFetch()
+    vi.stubGlobal('fetch', fetcher)
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    expect((await confirm(env, body)).status).toBe(200)
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(info.mock.calls).toContainEqual(['twitter confirmation check (shadow): tester'])
+  })
+
+  it('gate on: logs the refusal reason without identifying anyone', async () => {
+    const env = gateEnv('twitter', 'on')
+    const { s, body } = await ready('twitter', env)
+    vi.stubGlobal('fetch', accessService('no'))
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    await confirm(env, body)
+    expect(info.mock.calls).toContainEqual(['twitter sign-in confirmation refused: confirmation_required'])
+    const logged = JSON.stringify(info.mock.calls)
+    for (const secret of [s.pubkey, s.code, 'jack']) expect(logged).not.toContain(secret)
+  })
+})
