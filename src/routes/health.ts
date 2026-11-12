@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { Bindings } from '../types'
 import { signInConfirmationMode } from '../oauth/confirm'
 import { signInLinksOff } from '../oauth/signin-switch'
+import { confirmationGate } from '../oauth/confirmation-gate'
 
 const health = new Hono<{ Bindings: Bindings }>()
 
@@ -15,6 +16,8 @@ health.get('/', (c) => {
     signin_confirmation: signInConfirmationMode(c.env),
     // Which platforms' links are switched off, so a change to the secret can be checked.
     signin_links_off: signInLinksOff(c.env),
+    // The Confirmation gate mode in effect, so a deploy can be checked. Testers are never listed.
+    confirmation_gate: confirmationGate(c.env),
   })
 })
 

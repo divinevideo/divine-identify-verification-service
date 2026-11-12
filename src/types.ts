@@ -30,6 +30,15 @@ export type Bindings = {
   // platforms' links stop counting and new sign-ins and confirmations are
   // refused, unlike removing credentials, which only stops new sign-ins.
   SIGNIN_LINKS_OFF?: string
+  // "off" (unset), "shadow" or "on": whether Divine Confirmation gates access.
+  // Any other value is treated as "off".
+  CONFIRMATION_GATE?: string
+  // A Worker secret listing the lowercase hex pubkeys the gate is applied to first, separated by commas or spaces.
+  CONFIRMATION_TESTERS?: string
+  // Base URL of the access service the gate asks whether a pubkey has Confirmation.
+  CONFIRMATION_ACCESS_URL?: string
+  // A Worker secret: the bearer token the access service requires.
+  CONFIRMATION_ACCESS_TOKEN?: string
 }
 
 export type OAuthPlatform = 'twitter' | 'bluesky' | 'youtube' | 'tiktok'

@@ -65,6 +65,23 @@ describe('verifier health', () => {
     }
   })
 
+  it('reports the Confirmation gate mode in effect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      for (const [value, mode] of [[undefined, 'off'], ['shadow', 'shadow'], [' ON ', 'on'], ['onn', 'off']]) {
+        const res = await worker.fetch(new Request('https://verifier.divine.video/health'), { CONFIRMATION_GATE: value } as never)
+        expect((await res.json() as { confirmation_gate?: string }).confirmation_gate).toBe(mode)
+      }
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('does not list testers on /health', async () => {
+    const res = await worker.fetch(new Request('https://verifier.divine.video/health'), { CONFIRMATION_TESTERS: 'a'.repeat(64) } as never)
+    expect(await res.text()).not.toContain('a'.repeat(64))
+  })
+
   it('documents the mode it reports on the page', async () => {
     const response = await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)
     const html = await response.text()
