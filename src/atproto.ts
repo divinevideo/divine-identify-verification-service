@@ -102,6 +102,12 @@ export async function resolveDidDocument(did: string): Promise<DidDocument | nul
   return null
 }
 
+/** Whether a DID document lists an #atproto_pds service at all, usable endpoint or not. */
+export function hasPdsService(didDoc: DidDocument): boolean {
+  const services = Array.isArray(didDoc.service) ? didDoc.service : []
+  return services.some(s => s?.id === '#atproto_pds')
+}
+
 export function getPdsEndpoint(didDoc: DidDocument): string | null {
   const services = Array.isArray(didDoc.service) ? didDoc.service : []
   // An entry that isn't an object has no id, so `?.` skips it.
