@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Bindings } from '../types'
 import { oauthVerificationKey, deleteOAuthVerification } from './state'
-import { saveSignIn, getCountedSignIn } from './signin-records'
+import { saveSignIn, getCountedSignIn, signInStanding } from './signin-records'
+import { confirmationAccessKey } from './confirmation-access'
 
 const PUBKEY = 'ab'.repeat(32)
 const HANDLE = 'alice.bsky.social'
@@ -304,5 +305,148 @@ describe('how long a sign-in record counts', () => {
       checked_at: NOW - 400 * DAY, account_id: DID, handle: HANDLE, confirmed: true,
     }))
     expect(await getCountedSignIn(env, 'bluesky', HANDLE, PUBKEY)).toBeNull()
+  })
+})
+
+const GATE = { CONFIRMATION_ACCESS_URL: 'https://access.example.test/v1/entitlements', CONFIRMATION_ACCESS_TOKEN: 't' }
+
+describe('marking sign-ins saved while the Confirmation gate is on', () => {
+  it('marks both Bluesky records, handle and DID, when saved while on', async () => {
+    const { env, store } = createEnv({ CONFIRMATION_GATE: 'on', ...GATE })
+    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
+    expect(read(store, 'bluesky', HANDLE).access_required).toBe(true)
+    expect(read(store, 'bluesky', DID).access_required).toBe(true)
+  })
+
+  it.each([undefined, 'off', 'shadow'])('does not mark a record saved with the gate %j', async gate => {
+    const { env, store } = createEnv({ ...(gate ? { CONFIRMATION_GATE: gate } : {}) } as Partial<Bindings>)
+    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
+    expect(read(store, 'bluesky', HANDLE).access_required).toBeUndefined()
+    expect(read(store, 'bluesky', DID).access_required).toBeUndefined()
+  })
+
+  it('marks a record that was saved unmarked when it is saved again while on', async () => {
+    const { env, store } = createEnv({ CONFIRMATION_GATE: 'on', ...GATE })
+    store.set(oauthVerificationKey('twitter', 'jack', PUBKEY), JSON.stringify({
+      platform: 'twitter', identity: 'jack', pubkey: PUBKEY, verified: true, method: 'oauth',
+      checked_at: Math.floor(Date.now() / 1000), confirmed: true,
+    }))
+    await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack' }, CONFIRMATION)
+    expect(read(store, 'twitter', 'jack').access_required).toBe(true)
+  })
+})
+
+describe('which marked records count', () => {
+  const NOW = 1_800_000_000
+  const DAY = 24 * 60 * 60
+  let fetchMock: ReturnType<typeof vi.fn>
+  const answer = (body: unknown, status = 200) => fetchMock.mockImplementation(async () => new Response(JSON.stringify(body), { status }))
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW * 1000)
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  function seeded(vars: Partial<Bindings>, extra: Record<string, unknown> = {}, ageDays = 0) {
+    const made = createEnv({ ...GATE, ...vars })
+    made.store.set(oauthVerificationKey('twitter', 'jack', PUBKEY), JSON.stringify({
+      platform: 'twitter', identity: 'jack', pubkey: PUBKEY, verified: true, method: 'oauth',
+      checked_at: NOW - ageDays * DAY, confirmed: true, ...extra,
+    }))
+    return made
+  }
+  const marked = { access_required: true }
+
+  it('gate on: an unmarked record counts with no access fetch', async () => {
+    const { env } = seeded({ CONFIRMATION_GATE: 'on' })
+    expect(await getCountedSignIn(env, 'twitter', 'jack', PUBKEY)).not.toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('gate on: a marked record counts when the owner has access', async () => {
+    answer({ isActive: true })
+    const { env } = seeded({ CONFIRMATION_GATE: 'on' }, marked)
+    const standing = await signInStanding(env, 'twitter', 'jack', PUBKEY)
+    expect(standing.counted).toMatchObject({ identity: 'jack' })
+  })
+
+  it('gate on: a marked record without access does not count, and says why', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    answer({ isActive: false })
+    const { env } = seeded({ CONFIRMATION_GATE: 'on' }, marked)
+    expect(await signInStanding(env, 'twitter', 'jack', PUBKEY)).toEqual({ counted: null, reason: 'needs_confirmation' })
+    expect(await getCountedSignIn(env, 'twitter', 'jack', PUBKEY)).toBeNull()
+  })
+
+  it('gate on: a marked record counts when access is unavailable (fail open)', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    answer({}, 500)
+    const { env } = seeded({ CONFIRMATION_GATE: 'on' }, marked)
+    expect((await signInStanding(env, 'twitter', 'jack', PUBKEY)).counted).not.toBeNull()
+  })
+
+  it('gate on: a marked record that stopped counting counts again once access returns, and the record was never deleted', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    answer({ isActive: false })
+    const { env, store } = seeded({ CONFIRMATION_GATE: 'on' }, marked)
+    expect(await signInStanding(env, 'twitter', 'jack', PUBKEY)).toEqual({ counted: null, reason: 'needs_confirmation' })
+    expect(store.has(oauthVerificationKey('twitter', 'jack', PUBKEY))).toBe(true)
+    // Stands in for the 60 s expiry of the cached "no", which confirmation-access.test.ts pins.
+    store.delete(confirmationAccessKey(PUBKEY))
+    answer({ isActive: true })
+    expect((await signInStanding(env, 'twitter', 'jack', PUBKEY)).counted).not.toBeNull()
+  })
+
+  it.each(['off', 'shadow'])('gate %s: a marked record counts without an access fetch', async gate => {
+    const { env } = seeded({ CONFIRMATION_GATE: gate } as Partial<Bindings>, marked)
+    expect((await signInStanding(env, 'twitter', 'jack', PUBKEY)).counted).not.toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('gate on: a marked record past its 30 days answers none, without an access fetch', async () => {
+    const { env } = seeded({ CONFIRMATION_GATE: 'on' }, marked, 31)
+    expect(await signInStanding(env, 'twitter', 'jack', PUBKEY)).toEqual({ counted: null, reason: 'none' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('answers none when there is no record', async () => {
+    const { env } = createEnv({ CONFIRMATION_GATE: 'on', ...GATE })
+    expect(await signInStanding(env, 'twitter', 'nobody', PUBKEY)).toEqual({ counted: null, reason: 'none' })
+  })
+
+  it('gate on: a marked Bluesky DID record without access does not count either', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const { env } = createEnv({ CONFIRMATION_GATE: 'on', ...GATE })
+    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
+    answer({ isActive: false })
+    expect(await signInStanding(env, 'bluesky', DID, PUBKEY)).toEqual({ counted: null, reason: 'needs_confirmation' })
+  })
+
+  it('logs a refused or unavailable check at verify with platform and mode, never the pubkey or identity', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    answer({ isActive: false })
+    const { env, store } = seeded({ CONFIRMATION_GATE: 'on' }, marked)
+    await signInStanding(env, 'twitter', 'jack', PUBKEY)
+    store.delete(confirmationAccessKey(PUBKEY))
+    answer({}, 500)
+    await signInStanding(env, 'twitter', 'jack', PUBKEY)
+    const lines = info.mock.calls.map(c => c.join(' '))
+    expect(lines).toEqual([
+      'twitter confirmation check at verify (on): no',
+      'twitter confirmation check at verify (on): unavailable',
+    ])
+    for (const line of lines) {
+      expect(line).not.toContain(PUBKEY)
+      expect(line).not.toContain('jack')
+    }
   })
 })
