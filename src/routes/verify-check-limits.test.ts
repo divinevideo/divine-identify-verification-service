@@ -192,6 +192,62 @@ describe('POST /verify counts every platform check against the limits', () => {
     expect(out[1]).toMatchObject({ verified: false, cached: false })
   })
 
+  describe('a Bluesky sign-in whose handle now points to another account', () => {
+    const HANDLE = 'alice.bsky.social'
+    const NOW_DID = 'did:plc:alicenow1111111111111111'
+    const movedClaim = { platform: 'bluesky', identity: HANDLE, proof: '3lbcdefghijk2', pubkey: PUBKEY }
+
+    async function moved(env: Bindings) {
+      await env.CACHE_KV.put(oauthVerificationKey('bluesky', HANDLE, PUBKEY), JSON.stringify({
+        platform: 'bluesky', identity: HANDLE, pubkey: PUBKEY, verified: true, method: 'oauth',
+        checked_at: Math.floor(NOW_MS / 1000) - DAY, account_id: 'did:plc:oldaccountaaaaaaaaaaaaaa', confirmed: true,
+      }))
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        fetchedUrls.push(url)
+        if (url.includes('resolveHandle')) return new Response(JSON.stringify({ did: NOW_DID }), { headers: { 'Content-Type': 'application/json' } })
+        return new Response('', { status: 404 })
+      }))
+    }
+
+    it('a refused proof check after a mismatch answers signin_account_changed', async () => {
+      const { env, rateLimitStore } = createEnv()
+      rateLimitStore.set(counterKey('rl:pk', PUBKEY), '20')
+      await moved(env)
+
+      const out = await results(await postBatch(env, { claims: [movedClaim] }))
+
+      expect(out[0]).toMatchObject({ verified: false, code: 'signin_account_changed', cached: false })
+      expect(fetchedUrls.some(u => u.includes('getPostThread'))).toBe(false)
+    })
+
+    it('the proof check after a mismatch spends one unit, after the batch has spent its own', async () => {
+      const { env, rateLimitStore } = createEnv()
+      rateLimitStore.set(counterKey('rl:pk', PUBKEY), '0')
+      await moved(env)
+
+      const res = await postBatch(env, { claims: [movedClaim, githubClaim('proofonex')] })
+
+      expect(res.status).toBe(200)
+      expect(checked('proofonex')).toBe(true)
+      expect(fetchedUrls.some(u => u.includes('getPostThread'))).toBe(true)
+      expect(rateLimitStore.get(counterKey('rl:pk', PUBKEY))).toBe('2')
+      expect(rateLimitStore.get(counterKey('rl:plat', 'bluesky'))).toBe('1')
+      expectLogsCarryNoIdentifiers()
+    })
+
+    it('two proof checks after mismatches in one request each spend their own unit', async () => {
+      const { env, rateLimitStore } = createEnv()
+      await moved(env)
+
+      const res = await postBatch(env, { claims: [movedClaim, { ...movedClaim, proof: '3lbcdefghijk3' }] })
+
+      expect(res.status).toBe(200)
+      expect(rateLimitStore.get(counterKey('rl:pk', PUBKEY))).toBe('2')
+      expect(rateLimitStore.get(counterKey('rl:plat', 'bluesky'))).toBe('2')
+    })
+  })
+
   it('answers try-again for the claims whose limit could not be read and checks the rest', async () => {
     const { env, rateLimitKV, rateLimitStore } = createEnv()
     rateLimitKV.get.mockImplementation(async (key: string) => {

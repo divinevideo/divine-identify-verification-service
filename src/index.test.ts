@@ -589,8 +589,8 @@ Content-Type: application/json
     expect(docs).not.toMatch(/no fixed lifetime|re-checked at each verification/)
   })
 
-  it('says signin_account_changed also covers a YouTube handle spelled unlike the sign-in', async () => {
-    expect(await docsHtml()).toContain('<code>signin_account_changed</code> means the handle no longer points to the account that signed in (it was deleted, or now points to another account). For a YouTube sign-in claimed by handle, it also means the claim spells the handle differently from the sign-in, beyond the letter case of A to Z.')
+  it('says signin_account_changed covers an inactive account, still checks Bluesky proofs, and covers a YouTube handle spelled unlike the sign-in', async () => {
+    expect(await docsHtml()).toContain('<code>signin_account_changed</code> means the handle no longer points to the account that signed in (it was deleted, or now points to another account), or that account is no longer active. For a Bluesky handle, a proof post or identity-link record is still checked first, and verifies the claim as usual. For a YouTube sign-in claimed by handle, it also means the claim spells the handle differently from the sign-in, beyond the letter case of A to Z.')
   })
 
   it('says how a YouTube sign-in is checked against its channel, only while YouTube is on', async () => {

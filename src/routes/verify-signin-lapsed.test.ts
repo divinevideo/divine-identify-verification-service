@@ -285,4 +285,122 @@ describe('Bluesky sign-in links', () => {
     expect(answer.code).toBe('signin_account_changed')
     expect(answer.error).toBe('This handle no longer points to the account that signed in, so the link no longer counts.')
   })
+
+  it('a lapsed sign-in link no longer fetches a post named oauth', async () => {
+    blueskyFetch([])
+    const { env } = makeEnv()
+    const answer = await single(env, 'bluesky', 'alice.bsky.social', 'oauth')
+    expect(answer.code).toBe('signin_expired')
+    expect(fetchMock.mock.calls.map(([input]) => String(input)).some(u => u.includes('app.bsky.feed.getPostThread'))).toBe(false)
+  })
+
+  describe('a signed-in handle that now points to another account', () => {
+    const OLD_DID = 'did:plc:oldaccountaaaaaaaaaaaaaa'
+    const PROOF = '3lbcdefghijk2'
+    const CHANGED = 'This handle no longer points to the account that signed in, so the link no longer counts.'
+    const LINK_RECORD = {
+      uri: `at://${DID}/video.divine.identity.link/nostr-npub`,
+      value: { $type: 'video.divine.identity.link', version: 1, target: { protocol: 'nostr', id: NPUB } },
+    }
+    const postBy = (text: string) => json({ thread: { post: { author: { handle: 'alice.bsky.social', did: DID }, record: { text } } } })
+
+    // A sign-in record saved for an account the handle no longer points to: the
+    // handle resolves to DID, not OLD_DID.
+    function movedRecord(store: Map<string, string>) {
+      store.set(oauthVerificationKey('bluesky', 'alice.bsky.social', PUBKEY), JSON.stringify({
+        platform: 'bluesky', identity: 'alice.bsky.social', pubkey: PUBKEY, verified: true, method: 'oauth',
+        checked_at: Math.floor(Date.now() / 1000), confirmed: true, account_id: OLD_DID,
+      }))
+    }
+
+    function movedFetch(records: unknown[] | 'throw', post?: () => Response) {
+      fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.startsWith('https://bsky.social/xrpc/com.atproto.identity.resolveHandle')) return json({ did: DID })
+        if (url === `https://plc.directory/${DID}`) return json({ service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] })
+        if (url.startsWith(`${PDS}/xrpc/com.atproto.repo.listRecords`)) {
+          if (records === 'throw') throw new TypeError('network down')
+          return json({ records })
+        }
+        if (url.startsWith('https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread') && post) return post()
+        return new Response('', { status: 404 })
+      })
+    }
+
+    const urls = () => fetchMock.mock.calls.map(([input]) => String(input))
+    const fetchedPost = () => urls().some(u => u.includes('app.bsky.feed.getPostThread'))
+
+    describe.each(ROUTES)('%s', (_route, check) => {
+      it('a moved handle verifies by a proof post on the account it points to now', async () => {
+        movedFetch([], () => postBy(`proof ${NPUB}`))
+        const { env, store } = makeEnv()
+        movedRecord(store)
+        const answer = await check(env, 'bluesky', 'alice.bsky.social', PROOF)
+        expect(answer).toMatchObject({ verified: true, method: 'proof_post' })
+        expect(answer.code).toBeUndefined()
+      })
+
+      it('a moved handle verifies by the identity-link record on the account it points to now', async () => {
+        movedFetch([LINK_RECORD])
+        const { env, store } = makeEnv()
+        movedRecord(store)
+        const answer = await check(env, 'bluesky', 'alice.bsky.social', 'oauth')
+        expect(answer).toMatchObject({ verified: true, method: 'identity_link' })
+        expect(urls().some(u => u.startsWith(`${PDS}/xrpc/com.atproto.repo.listRecords`) && u.includes(encodeURIComponent(DID)))).toBe(true)
+        expect(fetchedPost()).toBe(false)
+      })
+
+      it('a moved sign-in link without an identity-link record answers signin_account_changed and fetches no post', async () => {
+        movedFetch([], () => postBy(`proof ${NPUB}`))
+        const { env, store } = makeEnv()
+        movedRecord(store)
+        const answer = await check(env, 'bluesky', 'alice.bsky.social', 'oauth')
+        expect(answer).toMatchObject({ verified: false, code: 'signin_account_changed', error: CHANGED })
+        expect(fetchedPost()).toBe(false)
+      })
+
+      it('a moved handle whose proof post does not verify answers signin_account_changed', async () => {
+        movedFetch([], () => postBy('a post without the npub'))
+        const { env, store } = makeEnv()
+        movedRecord(store)
+        const answer = await check(env, 'bluesky', 'alice.bsky.social', PROOF)
+        expect(answer).toMatchObject({ verified: false, code: 'signin_account_changed', error: CHANGED })
+        expect(fetchedPost()).toBe(true)
+      })
+    })
+
+    it('an outage on the proof check after a mismatch answers signin_account_changed', async () => {
+      movedFetch('throw', () => new Response('', { status: 503 }))
+      const { env, store } = makeEnv()
+      movedRecord(store)
+      const answer = await single(env, 'bluesky', 'alice.bsky.social', PROOF)
+      expect(answer).toMatchObject({ verified: false, code: 'signin_account_changed', error: CHANGED })
+      expect(JSON.parse(store.get(cacheKey('bluesky', 'alice.bsky.social', PROOF, PUBKEY))!).type).toBe('platform_error')
+    })
+
+    it('a cached proof-post verification still verifies after a mismatch, without asking Bluesky again', async () => {
+      movedFetch([], () => postBy(`proof ${NPUB}`))
+      const { env, store } = makeEnv()
+      movedRecord(store)
+      store.set(cacheKey('bluesky', 'alice.bsky.social', PROOF, PUBKEY), JSON.stringify({
+        verified: true, method: 'proof_post', checked_at: 1, type: 'verified',
+      }))
+      const answer = await single(env, 'bluesky', 'alice.bsky.social', PROOF)
+      expect(answer).toMatchObject({ verified: true, method: 'proof_post', cached: true })
+      expect(fetchedPost()).toBe(false)
+      expect(urls().some(u => u.includes('com.atproto.repo.listRecords'))).toBe(false)
+    })
+
+    it('a cached failure after a mismatch answers signin_account_changed, not the cached error', async () => {
+      movedFetch([], () => postBy(`proof ${NPUB}`))
+      const { env, store } = makeEnv()
+      movedRecord(store)
+      store.set(cacheKey('bluesky', 'alice.bsky.social', PROOF, PUBKEY), JSON.stringify({
+        verified: false, error: 'npub not found in Bluesky post', checked_at: 1, type: 'failed',
+      }))
+      const answer = await single(env, 'bluesky', 'alice.bsky.social', PROOF)
+      expect(answer).toMatchObject({ verified: false, code: 'signin_account_changed', error: CHANGED })
+      expect(fetchedPost()).toBe(false)
+    })
+  })
 })

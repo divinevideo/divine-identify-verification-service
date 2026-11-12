@@ -3,7 +3,7 @@ import type { Bindings, VerifyClaim, VerifyResult, CachedResult, Platform, OAuth
 import { validateClaim, normalizePubkey, fitsStorageKeys, VALID_PLATFORMS } from '../utils/validation'
 import { hexToNpub } from '../utils/npub'
 import { cacheKey, getCached, putCached } from '../utils/cache'
-import { checkRateLimit, reserveChecks, RATE_LIMITS, type CheckRefusal, type CheckWant } from '../utils/rate-limit'
+import { checkRateLimit, reserveChecks, RATE_LIMITS, type CheckRefusal, type CheckReservation, type CheckWant } from '../utils/rate-limit'
 import { getVerifier } from '../platforms/registry'
 import { PLATFORM_CHECK_TIME_BUDGET_MS, PlatformUnavailableError, withinTimeBudget } from '../platforms/base'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
@@ -112,9 +112,19 @@ interface PendingCheck {
   lapse: LapseCode
   now: number
   startedAt: number
+  // Set when a counted Bluesky sign-in no longer matches its account: the check
+  // only looks for other evidence, so any answer but "verified" says why the
+  // sign-in stopped counting.
+  afterMismatch?: 'moved' | 'inactive'
 }
 
-type FirstLook = { answer: Promise<VerifyResult> } | { check: PendingCheck }
+// What a counted sign-in record settles to once its account is looked up: an
+// answer, or a check for a proof post or identity-link record.
+type SignInLook = { answer: VerifyResult } | { check: PendingCheck & Required<Pick<PendingCheck, 'afterMismatch'>> }
+
+// signIn stays a promise of its own so its account lookup holds up neither the
+// claims beside it nor the request's reservation for them.
+type FirstLook = { answer: Promise<VerifyResult> } | { check: PendingCheck } | { signIn: Promise<SignInLook> }
 
 // Not "expired": the record is intact, but the handle was deleted or now
 // points to another account, or the account is no longer active. Apps offer
@@ -133,18 +143,26 @@ function accountChangedAnswer(claim: VerifyClaim, now: number, why: 'moved' | 'i
   }
 }
 
-// A counted sign-in answers without a platform check. The account lookup it
-// may need stays in its own promise so the claims beside it are not held up.
-async function signInAnswer(
-  env: Bindings,
-  oauthResult: OAuthVerification,
-  claim: VerifyClaim,
-  tidy: { identity: string; proof: string },
-  tidied: { canonical_identity?: string; canonical_proof?: string },
-  now: number,
-): Promise<VerifyResult> {
-  const account = await signInAccountStillMatches(env, oauthResult, tidy.identity)
-  if (account !== 'matches') return accountChangedAnswer(claim, now, account)
+// A result cached for this claim, echoing the identity as sent.
+function cachedAnswer(claim: VerifyClaim, cached: CachedResult, tidied: PendingCheck['tidied']): VerifyResult {
+  return {
+    platform: claim.platform,
+    identity: claim.identity,
+    verified: cached.verified,
+    error: cached.error,
+    code: cached.code,
+    method: cached.method,
+    provenance: cached.provenance,
+    // The entry may have been written for the clean form, so the tidy values
+    // of this claim fill in what the platform didn't supply.
+    ...(cached.verified ? cleanValues({ canonicalProof: cached.canonical_proof, canonicalIdentity: cached.canonical_identity }, tidied) : {}),
+    checked_at: cached.checked_at,
+    cached: true,
+  }
+}
+
+// The answer for a counted sign-in whose account still matches.
+function signedInAnswer(claim: VerifyClaim, oauthResult: OAuthVerification, tidied: PendingCheck['tidied']): VerifyResult {
   return {
     platform: claim.platform,
     identity: claim.identity,
@@ -159,6 +177,39 @@ async function signInAnswer(
     checked_at: oauthResult.checked_at,
     cached: true,
   }
+}
+
+// A counted sign-in on a platform other than Bluesky answers without a
+// platform check: it has no other evidence to fall back on, so an account that
+// no longer matches answers that it changed, and spends no platform quota.
+async function signInAnswer(
+  env: Bindings,
+  oauthResult: OAuthVerification,
+  claim: VerifyClaim,
+  tidy: { identity: string; proof: string },
+  tidied: PendingCheck['tidied'],
+  now: number,
+): Promise<VerifyResult> {
+  const account = await signInAccountStillMatches(env, oauthResult, tidy.identity)
+  if (account !== 'matches') return accountChangedAnswer(claim, now, account)
+  return signedInAnswer(claim, oauthResult, tidied)
+}
+
+// A counted Bluesky sign-in answers without a platform check while its account
+// still matches. One that no longer matches can still be verified by a proof
+// post or identity-link record on the account the handle points to now, so it
+// is checked for those (from the cache, or by a check of its own).
+async function signInLook(env: Bindings, oauthResult: OAuthVerification, pending: PendingCheck): Promise<SignInLook> {
+  const { claim, tidy, tidied, key, now } = pending
+  const account = await signInAccountStillMatches(env, oauthResult, tidy.identity)
+  if (account === 'matches') return { answer: signedInAnswer(claim, oauthResult, tidied) }
+
+  // Only a verification stands in for the sign-in; anything else cached (a
+  // failure, an outage) is no better than the sign-in's own answer.
+  const cached = await getCached(env.CACHE_KV, key)
+  if (cached?.verified) return { answer: cachedAnswer(claim, cached, tidied) }
+  if (cached) return { answer: accountChangedAnswer(claim, now, account) }
+  return { check: { ...pending, afterMismatch: account } }
 }
 
 // Everything that can answer a claim without asking its platform. Only what is
@@ -206,6 +257,9 @@ async function lookFirst(
   if (SIGNIN_PLATFORMS.has(normalizedClaim.platform)) {
     const standing = await signInStanding(env, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey, accessFor)
     if (standing.counted) {
+      if (normalizedClaim.platform === 'bluesky') {
+        return { signIn: signInLook(env, standing.counted, { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now, startedAt }) }
+      }
       return { answer: signInAnswer(env, standing.counted, normalizedClaim, tidy, tidied, now) }
     }
     // The free routes (proof posts, Bluesky identity-link records) still get their turn below.
@@ -219,22 +273,7 @@ async function lookFirst(
     if (isSignInLink && !cached.verified && cached.code !== 'temporarily_unavailable') {
       return { answer: Promise.resolve(lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, cached.checked_at, true, lapse)) }
     }
-    return {
-      answer: Promise.resolve({
-        platform: normalizedClaim.platform,
-        identity: normalizedClaim.identity,
-        verified: cached.verified,
-        error: cached.error,
-        code: cached.code,
-        method: cached.method,
-        provenance: cached.provenance,
-        // The entry may have been written for the clean form, so the tidy values
-        // of this claim fill in what the platform didn't supply.
-        ...(cached.verified ? cleanValues({ canonicalProof: cached.canonical_proof, canonicalIdentity: cached.canonical_identity }, tidied) : {}),
-        checked_at: cached.checked_at,
-        cached: true,
-      }),
-    }
+    return { answer: Promise.resolve(cachedAnswer(normalizedClaim, cached, tidied)) }
   }
 
   return { check: { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now, startedAt } }
@@ -267,13 +306,14 @@ function refusedAnswer(check: PendingCheck, refusal: CheckRefusal): VerifyResult
 }
 
 async function checkPlatform(check: PendingCheck, env: Bindings): Promise<VerifyResult> {
-  const { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now, startedAt } = check
+  const { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now, startedAt, afterMismatch } = check
 
   // Convert hex pubkey to npub for content search
   const npub = hexToNpub(normalizedClaim.pubkey)
 
   // Perform verification within whatever remains of the batch's 8-second budget
-  // after any Confirmation access check in lookFirst.
+  // after any Confirmation access check in lookFirst, and any sign-in account
+  // lookup in signInLook.
   const verifier = getVerifier(normalizedClaim.platform, env.GITHUB_TOKEN, env.YOUTUBE_API_KEY, env.DISCORD_BOT_TOKEN, env.DISCORD_VERIFY_CHANNEL_ID, env.CACHE_KV)
   const budgetMs = PLATFORM_CHECK_TIME_BUDGET_MS - Math.max(0, Date.now() - startedAt)
   let result: Awaited<ReturnType<typeof verifier.verify>>
@@ -282,7 +322,9 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
       throw new PlatformUnavailableError(`${verifier.label} didn't finish within ${PLATFORM_CHECK_TIME_BUDGET_MS / 1000} seconds`)
     }
     result = await withinTimeBudget(
-      verifier.verify(tidy.identity, tidy.proof, npub),
+      // A sign-in link has no post, so only Bluesky's identity-link record is
+      // tried, never a post named "oauth".
+      verifier.verify(tidy.identity, isSignInLink ? '' : tidy.proof, npub),
       budgetMs,
       verifier.label,
     )
@@ -308,6 +350,10 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
       type: 'platform_error',
     }
     await rememberResult(env, key, normalizedClaim.platform, cacheResult)
+
+    // The proof check after a sign-in stopped matching can only add a
+    // verification, so an outage keeps the sign-in's own answer.
+    if (afterMismatch) return accountChangedAnswer(normalizedClaim, now, afterMismatch)
 
     return {
       platform: normalizedClaim.platform,
@@ -335,6 +381,8 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
   }
   await rememberResult(env, key, normalizedClaim.platform, cacheResult)
 
+  if (afterMismatch && !result.verified) return accountChangedAnswer(normalizedClaim, now, afterMismatch)
+
   // A Bluesky sign-in link with no identity-link record either: the cache keeps
   // Bluesky's own answer, and the person is told to sign in again.
   if (isSignInLink && !result.verified) {
@@ -359,7 +407,9 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
  * Answers a request's claims, one promise per claim in input order. Claims a
  * sign-in record or the cache answers settle on their own; the rest share one
  * reservation against the address, pubkey and platform limits, so every
- * platform check the request makes is counted.
+ * platform check the request makes is counted. A Bluesky sign-in that no longer
+ * matches its account learns it needs a check only after its account lookup,
+ * so that check takes a reservation of its own (below).
  */
 export function verifyClaims(claims: readonly VerifyClaim[], env: Bindings, clientIp: string): Array<Promise<VerifyResult>> {
   const startedAt = Date.now()
@@ -396,8 +446,34 @@ export function verifyClaims(claims: readonly VerifyClaim[], env: Bindings, clie
     return { refusalAt, written }
   })
 
+  // Late reservations, for checks a sign-in's account lookup asks for. They
+  // stay out of the batch reservation so a slow lookup doesn't hold up the
+  // claims beside it, and run one at a time after the batch's writes, so no two
+  // reservations in a request read the same counters before either writes.
+  let late: Promise<void> = reservation.then(r => r.written, () => {})
+
   return looks.map((look, index) => look.then(async first => {
     if ('answer' in first) return first.answer
+    if ('signIn' in first) {
+      const settled = await first.signIn
+      if ('answer' in settled) return settled.answer
+      const { check } = settled
+      const { pubkey, platform } = check.claim
+      const mine = late.then(() => reserveChecks(env.RATE_LIMIT_KV, [{ pubkey, platform }], clientIp))
+      late = mine.then(r => r.written, () => {})
+      // Everything but a verification after a mismatch says why the sign-in
+      // stopped counting, a refused check included.
+      const { afterMismatch } = check
+      let mineReservation: CheckReservation
+      try {
+        mineReservation = await mine
+      } catch {
+        return accountChangedAnswer(check.claim, check.now, afterMismatch)
+      }
+      if (mineReservation.refusals[0]) return accountChangedAnswer(check.claim, check.now, afterMismatch)
+      const [result] = await Promise.all([checkPlatform(check, env), mineReservation.written])
+      return result
+    }
     const { refusalAt, written } = await reservation
     const refusal = refusalAt.get(index)
     if (refusal) return refusedAnswer(first.check, refusal)

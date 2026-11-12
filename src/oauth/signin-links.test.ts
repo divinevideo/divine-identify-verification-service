@@ -44,7 +44,9 @@ function handleLookup(answer: string | 'not-found' | 'unreachable') {
 }
 
 // The handle lookup plus, for DID, the account host's answers (PLC and getRepoStatus). `account`
-// is what the host says; 'unreachable' makes both of its requests fail.
+// is what the host says; 'unreachable' makes both of its requests fail. A sign-in that no longer
+// matches is then checked for an identity-link record, and finds none: no other DID has a PLC
+// entry, and the account lists no records.
 function bluesky(handleAnswer: string | 'not-found' | 'unreachable', account: { active?: boolean, status?: string } | 'unreachable' | 'tombstone' = {}) {
   const lookup = handleLookup(handleAnswer)
   const fetched: string[] = []
@@ -56,6 +58,8 @@ function bluesky(handleAnswer: string | 'not-found' | 'unreachable', account: { 
     if (account === 'tombstone' && url.startsWith('https://plc.directory/')) return new Response('', { status: 410 })
     const answer = blueskyAccountAnswer(url, DID, account === 'tombstone' ? {} : account)
     if (answer) return answer
+    if (url.startsWith('https://plc.directory/')) return new Response('', { status: 404 })
+    if (url.includes('com.atproto.repo.listRecords')) return json({ records: [] })
     throw new Error(`unexpected fetch ${url}`)
   })
   return { mock, fetched }
@@ -123,7 +127,7 @@ describe('checking a Bluesky sign-in link', () => {
 
   it('stops verifying when the handle now points to a different account', async () => {
     const { env, store } = createEnv()
-    vi.stubGlobal('fetch', handleLookup(OTHER_DID))
+    vi.stubGlobal('fetch', bluesky(OTHER_DID).mock)
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
     const result = await check(env)
     expect(result.verified).toBe(false)
@@ -252,8 +256,7 @@ describe('checking a Bluesky sign-in link claimed by DID', () => {
 describe('checking a Bluesky sign-in link with an unusual handle', () => {
   it('does not let a look-alike handle change the answer for the real one', async () => {
     const { env, store } = createEnv()
-    const lookup = handleLookup(DID)
-    vi.stubGlobal('fetch', lookup)
+    vi.stubGlobal('fetch', bluesky(DID).mock)
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
     // U+212A KELVIN SIGN lowercases to an ASCII k
     const lookAlike = 'alice.bs\u212Ay.social'
