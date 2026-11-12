@@ -16,6 +16,7 @@ import { listInProse, oauthPlatformsFor, platformFlags } from './page-platforms'
 import { PAGE_STYLES } from './page-styles'
 import { SHARED_PAGE_SCRIPT } from './page-script-shared'
 import { renderDocsPage } from './docs-page'
+import { confirmationGate } from './oauth/confirmation-gate'
 import { renderLookupPage } from './lookup-page'
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -2326,6 +2327,7 @@ app.get('/docs', (c) => {
   return c.html(renderDocsPage({
     origin: requestUrl.origin,
     ...platformFlags(c.env, tiktokOAuthReviewEnabled),
+    confirmationGateOn: confirmationGate(c.env) === 'on',
   }))
 })
 
