@@ -303,6 +303,36 @@ describe('a finished sign-in started with a start check', () => {
     for (const key of recordKeysFor(platform, PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
   })
 
+  const GATE_ENV = { CONFIRMATION_ACCESS_URL: 'https://access.example.test/v1/entitlements', CONFIRMATION_ACCESS_TOKEN: 't' }
+  const accessCalls = (stub: ReturnType<typeof vi.fn>) => stub.mock.calls.filter(([url]) => String(url).startsWith('https://access.example.test'))
+
+  it.each(['shadow', 'on'])('optional mode, gate %s: holds the sign-in under a code, saves no record, makes no access fetch, and does not say oauth_verified', async (mode) => {
+    const env = baseEnv({ CONFIRMATION_GATE: mode, ...GATE_ENV })
+    const stub = callbackFetchFor('twitter')
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK }, stub)
+    expect(new URLSearchParams(location.hash.slice(1)).get('oauth_confirm')).toMatch(CODE)
+    expect(location.searchParams.get('oauth_verified')).toBeNull()
+    for (const key of recordKeysFor('twitter', PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
+    expect(accessCalls(stub)).toEqual([])
+  })
+
+  it.each(['shadow', 'on'])('optional mode, gate %s: an installed-app sign-in (no start check) saves nothing and is not reported as linked', async (mode) => {
+    const env = baseEnv({ CONFIRMATION_GATE: mode, ...GATE_ENV })
+    const stub = callbackFetchFor('twitter')
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN }, stub)
+    expect(location.searchParams.get('oauth_verified')).toBeNull()
+    expect(location.hash).not.toContain('oauth_confirm')
+    for (const key of recordKeysFor('twitter', PUBKEY)) expect(await env.CACHE_KV.get(key)).toBeNull()
+    expect(accessCalls(stub)).toEqual([])
+  })
+
+  it('optional mode, gate off: still saves the unconfirmed record and says oauth_verified', async () => {
+    const env = baseEnv({ CONFIRMATION_GATE: 'off', ...GATE_ENV })
+    const { location } = await finishWithState('twitter', env, { returnUrl: PAGE_RETURN, startCheck: START_CHECK })
+    expect(location.searchParams.get('oauth_verified')).toBe('true')
+    expect(await env.CACHE_KV.get(oauthVerificationKey('twitter', 'jack', PUBKEY))).not.toBeNull()
+  })
+
   // A sign-in started before the switch was set can come back after it.
   it('optional mode: a sign-in returning while its platform is switched off saves no record and is not reported as linked', async () => {
     const env = baseEnv({ SIGNIN_LINKS_OFF: 'twitter' })

@@ -16,6 +16,7 @@ import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
 import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from '../oauth/bluesky'
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
 import { startTikTokOAuth, handleTikTokCallback, isTikTokOAuthUsable } from '../oauth/tiktok'
+import { confirmationGate } from '../oauth/confirmation-gate'
 import { signInLinksAreOff } from '../oauth/signin-switch'
 import signInConfirm from './signin-confirm'
 
@@ -399,7 +400,8 @@ function finishSignIn(c: Context<{ Bindings: Bindings }>, platform: OAuthPlatfor
     // holdSignIn saved nothing for a switched-off platform; say so instead of
     // reporting it linked.
     if (refusedWhileOff) Object.assign(params, unfinishedSignIn('signin_unavailable', 'Sign-in links for this platform are switched off right now.'))
-    else params.oauth_verified = 'true'
+    // While the gate is shadow or on nothing was saved, so nothing is linked.
+    else if (confirmationGate(c.env) === 'off') params.oauth_verified = 'true'
   }
   const confirm = result.confirmCode ? { code: result.confirmCode, placement: confirmCodePlacement(c.env) } : undefined
   return c.redirect(buildReturnUrl(result.returnUrl, params, confirm))

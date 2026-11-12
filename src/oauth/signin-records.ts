@@ -147,7 +147,11 @@ export async function holdSignIn(env: Bindings, state: OAuthState, account: Sign
     // the return reports it as not completed, and a code that revives if the
     // switch is cleared would contradict that.
     if (signInLinksAreOff(env, state.platform)) return { success: true, returnUrl: state.returnUrl, identity: account.identity }
-    await saveSignIn(env, state.pubkey, account, null)
+    // While the gate is shadow or on, /auth/confirm is the only route that
+    // saves a record: it checks Confirmation only after the owner has proved
+    // their key. state.pubkey is unproven here, so checking it would reveal
+    // whether any pubkey has Confirmation.
+    if (confirmationGate(env) === 'off') await saveSignIn(env, state.pubkey, account, null)
   }
   let confirmCode: string | undefined
   if (state.startCheck) {
