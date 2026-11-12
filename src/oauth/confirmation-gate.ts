@@ -1,5 +1,6 @@
 // ABOUTME: The operator settings for the Divine Confirmation access gate (CONFIRMATION_GATE, CONFIRMATION_TESTERS).
-// ABOUTME: Reads the Worker settings into the gate mode and the set of testers who are held to it first.
+// ABOUTME: Reads the Worker settings into the gate mode and the set of testers, who are treated as having
+// ABOUTME: Confirmation without asking the access service.
 import type { Bindings } from '../types'
 
 export type ConfirmationGateMode = 'off' | 'shadow' | 'on'

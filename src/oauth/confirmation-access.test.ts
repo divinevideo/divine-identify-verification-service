@@ -117,6 +117,26 @@ describe('confirmationAccess', () => {
     expect(env.CACHE_KV.put).not.toHaveBeenCalled()
   })
 
+  it('answers unavailable for an oversized body, even one that starts with isActive true', async () => {
+    const env = gateEnv()
+    fetchMock.mockResolvedValue(new Response(`{"isActive":true,"pad":"${'x'.repeat(1024 * 1024 + 10)}"}`, { status: 200 }))
+    expect(await confirmationAccess(env, PUBKEY)).toBe('unavailable')
+    expect(env.CACHE_KV.put).not.toHaveBeenCalled()
+  })
+
+  it('answers unavailable when the body stops arriving partway', async () => {
+    const env = gateEnv()
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"isActive":'))
+        controller.error(new Error('connection reset'))
+      },
+    })
+    fetchMock.mockResolvedValue(new Response(body, { status: 200 }))
+    expect(await confirmationAccess(env, PUBKEY)).toBe('unavailable')
+    expect(env.CACHE_KV.put).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['a timeout', () => new DOMException('timed out', 'TimeoutError')],
     ['a network error', () => new TypeError('fetch failed')],

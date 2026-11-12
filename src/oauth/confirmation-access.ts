@@ -1,6 +1,7 @@
 // ABOUTME: Asks the Divine Confirmation access service whether a pubkey has access, with a short KV cache.
 // ABOUTME: The service's answer is untrusted: anything but a clear boolean is "unavailable", never "yes".
 import type { Bindings } from '../types'
+import { discardBody, readJson } from '../platforms/base'
 import { isConfirmationTester } from './confirmation-gate'
 
 export type ConfirmationAccess = 'yes' | 'no' | 'unavailable'
@@ -59,13 +60,18 @@ export async function confirmationAccess(env: Bindings, pubkey: string): Promise
   } catch (err) {
     return unavailable(err instanceof Error && err.name === 'TimeoutError' ? 'timeout' : 'network error')
   }
-  if (res.status !== 200) return unavailable(`status ${res.status}`)
+  if (res.status !== 200) {
+    await discardBody(res)
+    return unavailable(`status ${res.status}`)
+  }
 
+  // readJson caps the body; an oversized or unparseable body is undefined, and
+  // a body that stops arriving throws. Either way: no answer, never "yes".
   let body: unknown
   try {
-    body = await res.json()
+    body = await readJson<unknown>(res, 'confirmation access service')
   } catch {
-    return unavailable('unexpected answer')
+    return unavailable('body unreadable')
   }
   const answer = readAccessAnswer(body)
   if (!answer) return unavailable('unexpected answer')

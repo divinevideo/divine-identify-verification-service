@@ -190,6 +190,7 @@ describe('GET /platforms', () => {
   describe('signin_requires', () => {
     it('gate on: every platform with sign-in says it requires Confirmation, and no other does', async () => {
       const body = await fetchPlatforms({ ...ALL_OAUTH_CONFIGURED, CONFIRMATION_GATE: 'on' })
+      expect(Object.values(body.platforms).some((info) => info.oauth === true)).toBe(true)
       for (const info of Object.values(body.platforms)) {
         if (info.oauth) expect(info.signin_requires).toBe('confirmation')
         else expect(info).not.toHaveProperty('signin_requires')

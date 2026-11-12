@@ -121,7 +121,7 @@ export async function signInStanding(env: Bindings, platform: string, identity: 
   if (record.access_required === true && confirmationGate(env) === 'on') {
     const access = await confirmationAccess(env, pubkey)
     if (access !== 'yes') {
-      console.info(`${platform} confirmation check at verify (on): ${access}`)
+      console.info(`${platform} confirmation check for a saved link (on): ${access}`)
       if (access === 'no') return { counted: null, reason: 'needs_confirmation' }
     }
   }

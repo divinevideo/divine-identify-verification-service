@@ -22,10 +22,6 @@ export const MAX_BATCH_SIZE = 10
 export const SIGNIN_PLATFORMS: ReadonlySet<Platform> = new Set<Platform>(['twitter', 'bluesky', 'youtube', 'tiktok'])
 const SIGNIN_PROOF = 'oauth'
 
-// A sign-in link with no counting record (it lapsed, was unlinked, was never
-// confirmed, or never happened) says so, instead of the platform's answer for a post
-// named "oauth". The text is a plain fact: third parties see it too, and not
-// every platform offers sign-in.
 // A record that exists but is held back by the Confirmation gate says so with its own code.
 type LapseCode = 'signin_expired' | 'signin_needs_confirmation'
 
@@ -34,6 +30,10 @@ const LAPSE_MESSAGES: Record<LapseCode, string> = {
   signin_needs_confirmation: 'This sign-in link needs Divine Confirmation to count.',
 }
 
+// A sign-in link with no counting record (it lapsed, was unlinked, was never
+// confirmed, or never happened) says so, instead of the platform's answer for a post
+// named "oauth". The text is a plain fact: third parties see it too, and not
+// every platform offers sign-in.
 function lapsedSignIn(platform: Platform, identity: string, checkedAt: number, cached: boolean, code: LapseCode): VerifyResult {
   return {
     platform,

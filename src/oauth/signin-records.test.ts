@@ -430,7 +430,7 @@ describe('which marked records count', () => {
     expect(await signInStanding(env, 'bluesky', DID, PUBKEY)).toEqual({ counted: null, reason: 'needs_confirmation' })
   })
 
-  it('logs a refused or unavailable check at verify with platform and mode, never the pubkey or identity', async () => {
+  it('logs a refused or unavailable check for a saved link with platform and mode, never the pubkey or identity', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     answer({ isActive: false })
@@ -441,8 +441,8 @@ describe('which marked records count', () => {
     await signInStanding(env, 'twitter', 'jack', PUBKEY)
     const lines = info.mock.calls.map(c => c.join(' '))
     expect(lines).toEqual([
-      'twitter confirmation check at verify (on): no',
-      'twitter confirmation check at verify (on): unavailable',
+      'twitter confirmation check for a saved link (on): no',
+      'twitter confirmation check for a saved link (on): unavailable',
     ])
     for (const line of lines) {
       expect(line).not.toContain(PUBKEY)

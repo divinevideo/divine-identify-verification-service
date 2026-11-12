@@ -33,7 +33,9 @@ export type Bindings = {
   // "off" (unset), "shadow" or "on": whether Divine Confirmation gates access.
   // Any other value is treated as "off".
   CONFIRMATION_GATE?: string
-  // A Worker secret listing the lowercase hex pubkeys the gate is applied to first, separated by commas or spaces.
+  // A Worker secret listing lowercase hex pubkeys (separated by commas or
+  // spaces) that are treated as having Confirmation, in every gate mode,
+  // without asking the access service.
   CONFIRMATION_TESTERS?: string
   // Base URL of the access service the gate asks whether a pubkey has Confirmation.
   CONFIRMATION_ACCESS_URL?: string

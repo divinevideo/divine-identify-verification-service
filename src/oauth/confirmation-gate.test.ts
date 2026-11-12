@@ -60,7 +60,7 @@ describe('CONFIRMATION_TESTERS', () => {
     const logged = JSON.stringify(vi.mocked(console.warn).mock.calls)
     expect(logged).not.toContain(npub)
     expect(logged).not.toContain(short)
-    expect(logged).toContain('2')
+    expect(logged).toContain('has 2 entries that are not 64-character hex pubkeys')
   })
 
   it('warns once for a repeated malformed list', () => {

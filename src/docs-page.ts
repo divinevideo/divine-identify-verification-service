@@ -46,7 +46,7 @@ export function renderDocsPage(opts: DocsPageOptions): string {
     ? ' Each entry where <code>oauth</code> is <code>true</code> also has <code>signin_requires: "confirmation"</code>: linking by signing in needs Divine Confirmation. Proof posts stay free.'
     : ''
   const confirmationCodeNote = confirmationGateOn
-    ? ' <code>signin_needs_confirmation</code> means an account linked by signing in does not count because its owner does not have Divine Confirmation right now. Renewing restores it without signing in again. Proof posts and Bluesky identity-link records still verify.'
+    ? ' <code>signin_needs_confirmation</code> means an account linked by signing in, while the Confirmation requirement was on, does not count because its owner does not have Divine Confirmation right now. Links saved earlier are unaffected. Renewing restores it without signing in again. Proof posts and Bluesky identity-link records still verify.'
     : ''
   const confirmationRefusals = confirmationGateOn
     ? `

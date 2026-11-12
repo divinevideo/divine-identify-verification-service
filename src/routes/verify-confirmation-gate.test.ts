@@ -1,4 +1,4 @@
-// ABOUTME: Tests /verify with the Confirmation gate on: a paid sign-in link whose owner lacks Confirmation
+// ABOUTME: Tests /verify with the Confirmation gate on: a sign-in link saved while the gate is on, whose owner lacks Confirmation
 // ABOUTME: tries the free routes first, then reports signin_needs_confirmation instead of signin_expired.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import worker from '../index'
@@ -188,11 +188,28 @@ describe('gate on, edge cases', () => {
     const { env, store } = makeEnv(); markedRecord(store, 'twitter', 'jack'); access('no')
     await single(env, 'twitter', 'jack', 'oauth')
     const info = vi.mocked(console.info).mock.calls.map((c) => c.join(' '))
-    expect(info).toContain('twitter confirmation check at verify (on): no')
+    expect(info).toContain('twitter confirmation check for a saved link (on): no')
     const all = [console.info, console.warn, console.error].flatMap((f) => vi.mocked(f).mock.calls.map((c) => c.join(' ')))
     for (const line of all) {
       expect(line).not.toContain(PUBKEY)
       expect(line).not.toContain('jack')
     }
+  })
+})
+
+describe('GET /auth/:platform/status, gate on', () => {
+  async function status(env: Bindings): Promise<{ verified: boolean }> {
+    const res = await worker.fetch(new Request(`https://verifier.divine.video/auth/twitter/status?pubkey=${PUBKEY}&identity=jack`), env)
+    return await res.json() as { verified: boolean }
+  }
+
+  it('a marked record without access is not verified', async () => {
+    const { env, store } = makeEnv(); markedRecord(store, 'twitter', 'jack'); access('no')
+    expect(await status(env)).toMatchObject({ verified: false })
+  })
+
+  it('a marked record with access unavailable is verified', async () => {
+    const { env, store } = makeEnv(); markedRecord(store, 'twitter', 'jack'); access('down')
+    expect(await status(env)).toMatchObject({ verified: true })
   })
 })
