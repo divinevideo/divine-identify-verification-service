@@ -77,6 +77,11 @@ async function lookUpDidDocument(did: string): Promise<DidDocument | 'inactive' 
   }
   const doc = await readJson<unknown>(resp, label)
   if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) return null
+  // Only a real DID document for this DID can say the account has no hosting.
+  // Any other JSON a host answers (a catch-all {"message":"ok"}, another DID's
+  // document) says nothing about the account.
+  const id = (doc as { id?: unknown }).id
+  if (typeof id !== 'string' || id.toLowerCase() !== did.toLowerCase()) return null
   return doc as DidDocument
 }
 

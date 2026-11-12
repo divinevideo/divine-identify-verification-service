@@ -196,13 +196,18 @@ async function signInAnswer(
 }
 
 // A counted Bluesky sign-in answers without a platform check while its account
-// still matches. One that no longer matches can still be verified by a proof
-// post or identity-link record on the account the handle points to now, so it
-// is checked for those (from the cache, or by a check of its own).
+// still matches. One whose handle moved can still be verified by a proof post
+// or identity-link record on the account the handle points to now, so it is
+// checked for those (from the cache, or by a check of its own). An inactive
+// account answers that the account changed and spends no platform quota.
 async function signInLook(env: Bindings, oauthResult: OAuthVerification, pending: PendingCheck): Promise<SignInLook> {
   const { claim, tidy, tidied, key, now } = pending
   const account = await signInAccountStillMatches(env, oauthResult, tidy.identity)
   if (account === 'matches') return { answer: signedInAnswer(claim, oauthResult, tidied) }
+  // An inactive account is answered as it stands: no cache read, no reservation,
+  // no Bluesky fetch. Only a handle that moved can be verified on the account it
+  // points to now.
+  if (account === 'inactive') return { answer: accountChangedAnswer(claim, now, account) }
 
   // Only a verification stands in for the sign-in; anything else cached (a
   // failure, an outage) is no better than the sign-in's own answer.

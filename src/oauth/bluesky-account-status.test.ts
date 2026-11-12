@@ -196,6 +196,22 @@ describe('blueskyAccountStatus', () => {
       expect(await blueskyAccountStatus(env, WEB_DID)).toBeNull()
     })
 
+    it('answers null when the host answers 200 with JSON that is not this DID document', async () => {
+      const { env, kv } = createEnv()
+      stubWeb(() => json({ message: 'ok' }))
+      expect(await blueskyAccountStatus(env, WEB_DID)).toBeNull()
+      expect(kv.put).not.toHaveBeenCalled()
+    })
+
+    it('answers null for a document naming another DID, and inactive for its own without a PDS', async () => {
+      const { env } = createEnv()
+      stubWeb(() => json({ id: 'did:web:other.example.com', service: [] }))
+      expect(await blueskyAccountStatus(env, WEB_DID)).toBeNull()
+      const { env: env2 } = createEnv()
+      stubWeb(() => json({ id: WEB_DID, service: [] }))
+      expect(await blueskyAccountStatus(env2, WEB_DID)).toBe('inactive')
+    })
+
     it('answers null when the host answers 200 with HTML', async () => {
       const { env } = createEnv()
       stubWeb(() => new Response('<html>', { status: 200 }))

@@ -145,9 +145,14 @@ describe('checking a Bluesky sign-in link', () => {
 
   it('trusts the record when Bluesky cannot be reached', async () => {
     const { env, store } = createEnv()
-    vi.stubGlobal('fetch', handleLookup('unreachable'))
+    // The account host would say inactive, but an outage on the handle lookup
+    // must not send the check on to ask it.
+    const { mock, fetched } = bluesky('unreachable', { active: false, status: 'deactivated' })
+    vi.stubGlobal('fetch', mock)
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
     expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(asksAccountHost(fetched)).toBe(false)
+    expect(fetched.some(u => u.startsWith('https://plc.directory/'))).toBe(false)
   })
 
   it('asks the account host, not the handle lookup, for a claim made with the DID itself', async () => {

@@ -73,7 +73,7 @@ describe('the README states the fixed lifetime', () => {
     const readme = readFileSync('README.md', 'utf8')
     expect(readme).toContain(`and lasts ${FIXED_SIGNIN_LIFETIME_DAYS} days from then`)
     expect(readme).toContain('stops counting once the handle points to another account or no longer resolves')
-    expect(readme).toContain("the link keeps counting). A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting.")
+    expect(readme).toContain("the link keeps counting). A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated, suspended or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting.")
     expect(readme).not.toContain('without asking Bluesky')
     expect(readme).not.toMatch(/no fixed lifetime|re-checked at each verification/)
     expect(readme).not.toMatch(/until (it is )?unlinked/)

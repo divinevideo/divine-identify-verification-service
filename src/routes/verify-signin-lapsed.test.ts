@@ -369,6 +369,65 @@ describe('Bluesky sign-in links', () => {
       })
     })
 
+    // A sign-in whose handle still points to its account, but the account's host says it is not active.
+    describe('an inactive account', () => {
+      const INACTIVE = 'The account that signed in is no longer active on Bluesky, so the link no longer counts.'
+
+      function inactiveRecord(store: Map<string, string>) {
+        store.set(oauthVerificationKey('bluesky', 'alice.bsky.social', PUBKEY), JSON.stringify({
+          platform: 'bluesky', identity: 'alice.bsky.social', pubkey: PUBKEY, verified: true, method: 'oauth',
+          checked_at: Math.floor(Date.now() / 1000), confirmed: true, account_id: DID,
+        }))
+      }
+
+      // The handle resolves to the signed-in account, whose PDS reports it deactivated
+      // yet would still serve an identity-link record and a proof post.
+      function inactiveFetch() {
+        fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+          const url = String(input)
+          if (url.startsWith('https://bsky.social/xrpc/com.atproto.identity.resolveHandle')) return json({ did: DID })
+          if (url === `https://plc.directory/${DID}`) return json({ id: DID, service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] })
+          if (url.startsWith(`${PDS}/xrpc/com.atproto.sync.getRepoStatus`)) return json({ did: DID, active: false, status: 'deactivated' })
+          if (url.startsWith(`${PDS}/xrpc/com.atproto.repo.listRecords`)) return json({ records: [LINK_RECORD] })
+          if (url.startsWith('https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread')) return postBy(`proof ${NPUB}`)
+          return new Response('', { status: 404 })
+        })
+      }
+
+      describe.each(ROUTES)('%s', (_route, check) => {
+        it('answers signin_account_changed without checking a proof post or identity-link record', async () => {
+          inactiveFetch()
+          const { env, store } = makeEnv()
+          inactiveRecord(store)
+          const rateLimit = new Map<string, string>()
+          env.RATE_LIMIT_KV = {
+            get: async (key: string) => rateLimit.get(key) ?? null,
+            put: async (key: string, value: string) => { rateLimit.set(key, value) },
+            delete: async (key: string) => { rateLimit.delete(key) },
+            list: async () => ({ keys: [], list_complete: true, caches_used: 0 }),
+          } as unknown as KVNamespace
+          const answer = await check(env, 'bluesky', 'alice.bsky.social', 'oauth')
+          expect(answer).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+          expect(urls().some(u => u.includes('com.atproto.repo.listRecords'))).toBe(false)
+          expect(fetchedPost()).toBe(false)
+          // No per-person or per-platform unit is reserved; only the address-level limit may write.
+          expect([...rateLimit.keys()].filter(k => k.includes(PUBKEY))).toEqual([])
+        })
+      })
+
+      it('answers signin_account_changed even when a verification is cached under the claim', async () => {
+        inactiveFetch()
+        const { env, store } = makeEnv()
+        inactiveRecord(store)
+        store.set(cacheKey('bluesky', 'alice.bsky.social', PROOF, PUBKEY), JSON.stringify({
+          verified: true, method: 'proof_post', checked_at: 1, type: 'verified',
+        }))
+        const answer = await single(env, 'bluesky', 'alice.bsky.social', PROOF)
+        expect(answer).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+        expect(fetchedPost()).toBe(false)
+      })
+    })
+
     it('an outage on the proof check after a mismatch answers signin_account_changed', async () => {
       movedFetch('throw', () => new Response('', { status: 503 }))
       const { env, store } = makeEnv()
