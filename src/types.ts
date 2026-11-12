@@ -173,6 +173,9 @@ export interface PlatformInfo {
   // Days a confirmed sign-in link on this platform lasts, then the person signs
   // in again. Present where oauth is true.
   signin_expires_after_days?: number
+  // What a person needs before a sign-in link counts, while the Divine
+  // Confirmation gate is on. Present where oauth is true.
+  signin_requires?: 'confirmation'
 }
 
 export interface SignInCallbackResult {
