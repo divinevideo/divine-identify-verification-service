@@ -7,7 +7,7 @@ import { checkRateLimit, reserveChecks, RATE_LIMITS, type CheckRefusal, type Che
 import { getVerifier } from '../platforms/registry'
 import { PLATFORM_CHECK_TIME_BUDGET_MS, PlatformUnavailableError, withinTimeBudget } from '../platforms/base'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
-import { getCountedSignIn } from '../oauth/signin-records'
+import { signInStanding } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { tidyClaim } from '../utils/tidy-claim'
 import { setPagePolicy } from '../content-security-policy'
@@ -26,13 +26,21 @@ const SIGNIN_PROOF = 'oauth'
 // confirmed, or never happened) says so, instead of the platform's answer for a post
 // named "oauth". The text is a plain fact: third parties see it too, and not
 // every platform offers sign-in.
-function lapsedSignIn(platform: Platform, identity: string, checkedAt: number, cached: boolean): VerifyResult {
+// A record that exists but is held back by the Confirmation gate says so with its own code.
+type LapseCode = 'signin_expired' | 'signin_needs_confirmation'
+
+const LAPSE_MESSAGES: Record<LapseCode, string> = {
+  signin_expired: 'No current sign-in verifies this account.',
+  signin_needs_confirmation: 'This sign-in link needs Divine Confirmation to count.',
+}
+
+function lapsedSignIn(platform: Platform, identity: string, checkedAt: number, cached: boolean, code: LapseCode): VerifyResult {
   return {
     platform,
     identity,
     verified: false,
-    error: 'No current sign-in verifies this account.',
-    code: 'signin_expired',
+    error: LAPSE_MESSAGES[code],
+    code,
     checked_at: checkedAt,
     cached,
   }
@@ -99,6 +107,8 @@ interface PendingCheck {
   tidied: { canonical_identity?: string; canonical_proof?: string }
   key: string
   isSignInLink: boolean
+  // What to report if no route verifies the sign-in link. Never stored in the result cache.
+  lapse: LapseCode
   now: number
 }
 
@@ -163,11 +173,14 @@ async function lookFirst(claim: VerifyClaim, env: Bindings): Promise<FirstLook> 
 
   // A sign-in record answers first, so a result cached before a fresh sign-in
   // (a failed check, or one made right after an unlink) can't hide it.
+  let lapse: LapseCode = 'signin_expired'
   if (SIGNIN_PLATFORMS.has(normalizedClaim.platform)) {
-    const oauthResult = await getCountedSignIn(env, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey)
-    if (oauthResult) {
-      return { answer: signInAnswer(env, oauthResult, normalizedClaim, tidy, tidied, now) }
+    const standing = await signInStanding(env, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey)
+    if (standing.counted) {
+      return { answer: signInAnswer(env, standing.counted, normalizedClaim, tidy, tidied, now) }
     }
+    // The free routes (proof posts, Bluesky identity-link records) still get their turn below.
+    if (standing.reason === 'needs_confirmation') lapse = 'signin_needs_confirmation'
   }
 
   const isSignInLink = SIGNIN_PLATFORMS.has(normalizedClaim.platform) && tidy.proof === SIGNIN_PROOF
@@ -176,7 +189,7 @@ async function lookFirst(claim: VerifyClaim, env: Bindings): Promise<FirstLook> 
   // without asking the platform. This comes before the result cache, so an
   // answer cached for this claim before can't stand in for it.
   if (isSignInLink && normalizedClaim.platform !== 'bluesky') {
-    return { answer: Promise.resolve(lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, now, false)) }
+    return { answer: Promise.resolve(lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, now, false, lapse)) }
   }
 
   // Then the result cache
@@ -184,7 +197,7 @@ async function lookFirst(claim: VerifyClaim, env: Bindings): Promise<FirstLook> 
   if (cached) {
     // A failure Bluesky gave this sign-in link earlier; an outage stays "try again".
     if (isSignInLink && !cached.verified && cached.code !== 'temporarily_unavailable') {
-      return { answer: Promise.resolve(lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, cached.checked_at, true)) }
+      return { answer: Promise.resolve(lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, cached.checked_at, true, lapse)) }
     }
     return {
       answer: Promise.resolve({
@@ -204,7 +217,7 @@ async function lookFirst(claim: VerifyClaim, env: Bindings): Promise<FirstLook> 
     }
   }
 
-  return { check: { claim: normalizedClaim, tidy, tidied, key, isSignInLink, now } }
+  return { check: { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now } }
 }
 
 // A claim the limits had no unit for. It is not remembered: the next request
@@ -234,7 +247,7 @@ function refusedAnswer(check: PendingCheck, refusal: CheckRefusal): VerifyResult
 }
 
 async function checkPlatform(check: PendingCheck, env: Bindings): Promise<VerifyResult> {
-  const { claim: normalizedClaim, tidy, tidied, key, isSignInLink, now } = check
+  const { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now } = check
 
   // Convert hex pubkey to npub for content search
   const npub = hexToNpub(normalizedClaim.pubkey)
@@ -300,7 +313,7 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
   // A Bluesky sign-in link with no identity-link record either: the cache keeps
   // Bluesky's own answer, and the person is told to sign in again.
   if (isSignInLink && !result.verified) {
-    return lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, now, false)
+    return lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, now, false, lapse)
   }
 
   return {
