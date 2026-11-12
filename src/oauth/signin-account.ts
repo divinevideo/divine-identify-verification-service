@@ -1,5 +1,6 @@
 import type { Bindings, OAuthVerification } from '../types'
 import { lookUpYouTubeHandle } from '../platforms/youtube-handle'
+import { blueskyAccountStatus } from './bluesky-account-status'
 import { foldYouTubeHandleCase, parseYouTubeIdentity } from '../utils/youtube-identity'
 
 // How long Bluesky's answer to "which account does this handle point to" is
@@ -84,23 +85,37 @@ async function youTubeChannelStillMatches(env: Bindings, record: OAuthVerificati
   return 'channelId' in lookup && lookup.channelId === record.account_id
 }
 
+/** `moved`: the claim no longer names the account that signed in. `inactive`: it does, but the account's host says it is gone. */
+export type SignInAccountCheck = 'matches' | 'moved' | 'inactive'
+
+// Whether the account itself is still active on its host (bluesky-account-status.ts).
+// An answer that couldn't be had keeps the link counting.
+async function blueskyAccountCheck(env: Bindings, did: string): Promise<SignInAccountCheck> {
+  return (await blueskyAccountStatus(env, did)) === 'inactive' ? 'inactive' : 'matches'
+}
+
 /**
  * Whether a kept sign-in record still describes the account claimed. A Bluesky
  * record saved with the account's DID matches a claim of that DID, or of a
- * handle that still points to it; a YouTube record saved with its channel id
+ * handle that still points to it, and in both cases only while the account's
+ * host still reports it active; a YouTube record saved with its channel id
  * likewise (youTubeChannelStillMatches). An older record without the account's
  * id, other platforms, and a lookup the platform couldn't answer all keep the
  * record as it is.
  */
-export async function signInAccountStillMatches(env: Bindings, record: OAuthVerification, identity: string): Promise<boolean> {
-  if (!record.account_id) return true
-  if (record.platform === 'youtube') return youTubeChannelStillMatches(env, { ...record, account_id: record.account_id }, identity)
-  if (record.platform !== 'bluesky') return true
+export async function signInAccountStillMatches(env: Bindings, record: OAuthVerification, identity: string): Promise<SignInAccountCheck> {
+  if (!record.account_id) return 'matches'
+  if (record.platform === 'youtube') return (await youTubeChannelStillMatches(env, { ...record, account_id: record.account_id }, identity)) ? 'matches' : 'moved'
+  if (record.platform !== 'bluesky') return 'matches'
   // Handles and DIDs are ASCII. Anything else can only look like the linked
   // one, so it doesn't match, and it's never looked up or remembered.
-  if (!/^[\x21-\x7e]+$/.test(identity)) return false
-  if (/^did:/i.test(identity)) return identity.toLowerCase() === record.account_id.toLowerCase()
+  if (!/^[\x21-\x7e]+$/.test(identity)) return 'moved'
+  if (/^did:/i.test(identity)) {
+    if (identity.toLowerCase() !== record.account_id.toLowerCase()) return 'moved'
+    return blueskyAccountCheck(env, record.account_id)
+  }
   const lookup = await lookUpHandle(env, identity)
-  if (!lookup) return true
-  return 'did' in lookup && lookup.did === record.account_id
+  if (!lookup) return 'matches'
+  if (!('did' in lookup) || lookup.did !== record.account_id) return 'moved'
+  return blueskyAccountCheck(env, record.account_id)
 }

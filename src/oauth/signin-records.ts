@@ -3,6 +3,7 @@
 import type { Bindings, OAuthState, OAuthVerification, SignInCallbackResult } from '../types'
 import { getOAuthVerification, storeOAuthVerification, oauthVerificationKey } from './state'
 import { forgetHandleLookup } from './signin-account'
+import { forgetBlueskyAccountStatus } from './bluesky-account-status'
 import { signInConfirmationMode, newConfirmCode, storePendingSignIn, type SignedInAccount } from './confirm'
 import { confirmationGate } from './confirmation-gate'
 import { confirmationAccess, type ConfirmationAccess } from './confirmation-access'
@@ -31,6 +32,12 @@ async function tidyEarlierBlueskySignIn(env: Bindings, pubkey: string, did: stri
     await forgetHandleLookup(env, handle)
   } catch (err) {
     console.warn('Bluesky sign-in: earlier handle lookup not cleared:', err)
+  }
+  // An account reactivated since an inactive answer was remembered verifies at once.
+  try {
+    await forgetBlueskyAccountStatus(env, did)
+  } catch (err) {
+    console.warn('Bluesky sign-in: earlier account status not cleared:', err instanceof Error ? err.name : 'unknown')
   }
   try {
     // A handle change leaves a record under the old handle. Remove it while it

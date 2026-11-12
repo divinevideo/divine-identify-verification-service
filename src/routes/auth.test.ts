@@ -8,6 +8,7 @@ import auth, { isAllowedReturnUrl } from './auth'
 import worker from '../index'
 import { oauthStateKey, oauthVerificationKey, storeOAuthVerification } from '../oauth/state'
 import { sha256Hex } from '../oauth/unlink-proof'
+import { blueskyAccountAnswer } from '../test-support/bluesky-account'
 
 // Mount auth sub-app at /auth to match production routing
 const app = new Hono<{ Bindings: Bindings }>()
@@ -915,7 +916,7 @@ describe('GET /auth/bluesky/status for a kept sign-in', () => {
     const env = createTestEnv()
     const pubkey = 'a'.repeat(64)
     await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), account_id: 'did:plc:alice111111111111111111', handle: 'alice.bsky.social' }))
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ did: 'did:plc:alice111111111111111111' }), { status: 200 })))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => blueskyAccountAnswer(String(input), 'did:plc:alice111111111111111111') ?? new Response(JSON.stringify({ did: 'did:plc:alice111111111111111111' }), { status: 200 })))
     const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
     expect(await res.json()).toMatchObject({ verified: true, method: 'oauth' })
   })

@@ -116,6 +116,23 @@ interface PendingCheck {
 
 type FirstLook = { answer: Promise<VerifyResult> } | { check: PendingCheck }
 
+// Not "expired": the record is intact, but the handle was deleted or now
+// points to another account, or the account is no longer active. Apps offer
+// the same "Sign in again" for both codes, where the platform offers sign-in.
+function accountChangedAnswer(claim: VerifyClaim, now: number, why: 'moved' | 'inactive'): VerifyResult {
+  return {
+    platform: claim.platform,
+    identity: claim.identity,
+    verified: false,
+    error: why === 'inactive'
+      ? 'The account that signed in is no longer active on Bluesky, so the link no longer counts.'
+      : 'This handle no longer points to the account that signed in, so the link no longer counts.',
+    code: 'signin_account_changed',
+    checked_at: now,
+    cached: false,
+  }
+}
+
 // A counted sign-in answers without a platform check. The account lookup it
 // may need stays in its own promise so the claims beside it are not held up.
 async function signInAnswer(
@@ -126,20 +143,8 @@ async function signInAnswer(
   tidied: { canonical_identity?: string; canonical_proof?: string },
   now: number,
 ): Promise<VerifyResult> {
-  if (!(await signInAccountStillMatches(env, oauthResult, tidy.identity))) {
-    return {
-      platform: claim.platform,
-      identity: claim.identity,
-      verified: false,
-      // Not "expired": the record is intact, but the handle was deleted or
-      // now points to another account. Apps offer the same "Sign in again"
-      // for both codes, where the platform offers sign-in.
-      error: 'This handle no longer points to the account that signed in, so the link no longer counts.',
-      code: 'signin_account_changed',
-      checked_at: now,
-      cached: false,
-    }
-  }
+  const account = await signInAccountStillMatches(env, oauthResult, tidy.identity)
+  if (account !== 'matches') return accountChangedAnswer(claim, now, account)
   return {
     platform: claim.platform,
     identity: claim.identity,

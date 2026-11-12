@@ -6,6 +6,7 @@ import type { Bindings, CachedResult, VerifyClaim } from '../types'
 import verify, { verifyClaims } from './verify'
 import { cacheKey } from '../utils/cache'
 import { oauthVerificationKey } from '../oauth/state'
+import { blueskyAccountAnswer } from '../test-support/bluesky-account'
 
 const app = new Hono<{ Bindings: Bindings }>()
 app.route('/verify', verify)
@@ -168,6 +169,8 @@ describe('POST /verify counts every platform check against the limits', () => {
         await held
         return new Response(JSON.stringify({ did: DID }), { headers: { 'Content-Type': 'application/json' } })
       }
+      const account = blueskyAccountAnswer(url, DID)
+      if (account) return account
       if (url.includes('proofsiblingx')) githubFetched = true
       return new Response('', { status: 404 })
     }))

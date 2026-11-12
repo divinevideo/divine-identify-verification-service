@@ -5,6 +5,7 @@ import { cacheKey } from '../utils/cache'
 import { oauthVerificationKey, storeOAuthVerification } from './state'
 import { handleBlueskyCallback } from './bluesky'
 import { generateDPoPKeyPair } from './crypto'
+import { blueskyAccountAnswer } from '../test-support/bluesky-account'
 
 // An account linked by signing in to Bluesky, once its owner confirms it
 // (#113), stays verified for 30 days, or until it is unlinked (#58).
@@ -41,6 +42,27 @@ function handleLookup(answer: string | 'not-found' | 'unreachable') {
     return json({ did: answer })
   })
 }
+
+// The handle lookup plus, for DID, the account host's answers (PLC and getRepoStatus). `account`
+// is what the host says; 'unreachable' makes both of its requests fail.
+function bluesky(handleAnswer: string | 'not-found' | 'unreachable', account: { active?: boolean, status?: string } | 'unreachable' | 'tombstone' = {}) {
+  const lookup = handleLookup(handleAnswer)
+  const fetched: string[] = []
+  const mock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    fetched.push(url)
+    if (url.includes('com.atproto.identity.resolveHandle')) return lookup(input)
+    if (account === 'unreachable') throw new Error('network down')
+    if (account === 'tombstone' && url.startsWith('https://plc.directory/')) return new Response('', { status: 410 })
+    const answer = blueskyAccountAnswer(url, DID, account === 'tombstone' ? {} : account)
+    if (answer) return answer
+    throw new Error(`unexpected fetch ${url}`)
+  })
+  return { mock, fetched }
+}
+
+const INACTIVE = 'The account that signed in is no longer active on Bluesky, so the link no longer counts.'
+const asksAccountHost = (fetched: string[]) => fetched.some(u => u.includes('com.atproto.sync.getRepoStatus'))
 
 function signInRecord(identity: string, accountId?: string) {
   return JSON.stringify({ platform: 'bluesky', identity, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), ...(accountId ? { account_id: accountId } : {}) })
@@ -94,7 +116,7 @@ describe('checking a Bluesky sign-in link', () => {
 
   it('verifies while the handle still points to the linked account', async () => {
     const { env, store } = createEnv()
-    vi.stubGlobal('fetch', handleLookup(DID))
+    vi.stubGlobal('fetch', bluesky(DID).mock)
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
     expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
   })
@@ -124,22 +146,67 @@ describe('checking a Bluesky sign-in link', () => {
     expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
   })
 
-  it('needs no lookup for a claim made with the DID itself', async () => {
+  it('asks the account host, not the handle lookup, for a claim made with the DID itself', async () => {
     const { env, store } = createEnv()
-    const lookup = handleLookup(OTHER_DID)
-    vi.stubGlobal('fetch', lookup)
+    const { mock, fetched } = bluesky(OTHER_DID)
+    vi.stubGlobal('fetch', mock)
     store.set(oauthVerificationKey('bluesky', DID, PUBKEY), signInRecord(DID, DID))
     expect(await check(env, DID)).toMatchObject({ verified: true, method: 'oauth' })
-    expect(lookup).not.toHaveBeenCalled()
+    expect(fetched.some(u => u.includes('resolveHandle'))).toBe(false)
+    expect(asksAccountHost(fetched)).toBe(true)
+  })
+
+  it.each(['deactivated', 'deleted', 'takendown'])('stops verifying a DID claim once the account is %s', async status => {
+    const { env, store } = createEnv()
+    vi.stubGlobal('fetch', bluesky(OTHER_DID, { active: false, status }).mock)
+    store.set(oauthVerificationKey('bluesky', DID, PUBKEY), signInRecord(DID, DID))
+    expect(await check(env, DID)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+  })
+
+  it('stops verifying a DID claim once the DID is tombstoned', async () => {
+    const { env, store } = createEnv()
+    vi.stubGlobal('fetch', bluesky(OTHER_DID, 'tombstone').mock)
+    store.set(oauthVerificationKey('bluesky', DID, PUBKEY), signInRecord(DID, DID))
+    expect(await check(env, DID)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+  })
+
+  it('keeps a DID claim counting while the account host cannot be reached', async () => {
+    const { env, store } = createEnv()
+    vi.stubGlobal('fetch', bluesky(OTHER_DID, 'unreachable').mock)
+    store.set(oauthVerificationKey('bluesky', DID, PUBKEY), signInRecord(DID, DID))
+    expect(await check(env, DID)).toMatchObject({ verified: true, method: 'oauth' })
+  })
+
+  it('stops verifying a handle claim whose handle still points to the account, once the account is deactivated', async () => {
+    const { env, store } = createEnv()
+    vi.stubGlobal('fetch', bluesky(DID, { active: false, status: 'deactivated' }).mock)
+    store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
+    expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+  })
+
+  it('keeps a handle claim counting while the account host cannot be reached', async () => {
+    const { env, store } = createEnv()
+    vi.stubGlobal('fetch', bluesky(DID, 'unreachable').mock)
+    store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+  })
+
+  it('does not ask the account host when the handle points elsewhere', async () => {
+    const { env, store } = createEnv()
+    const { mock, fetched } = bluesky(OTHER_DID, { active: false })
+    vi.stubGlobal('fetch', mock)
+    store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
+    expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: 'This handle no longer points to the account that signed in, so the link no longer counts.' })
+    expect(asksAccountHost(fetched)).toBe(false)
   })
 
   it('accepts the linked DID written in capitals', async () => {
     const { env, store } = createEnv()
-    const lookup = handleLookup(OTHER_DID)
-    vi.stubGlobal('fetch', lookup)
+    const { mock, fetched } = bluesky(OTHER_DID)
+    vi.stubGlobal('fetch', mock)
     store.set(oauthVerificationKey('bluesky', DID, PUBKEY), signInRecord(DID, DID))
     expect(await check(env, DID.toUpperCase())).toMatchObject({ verified: true, method: 'oauth' })
-    expect(lookup).not.toHaveBeenCalled()
+    expect(fetched.some(u => u.includes('resolveHandle'))).toBe(false)
   })
 
   it('trusts the record when Bluesky answers without an account, and asks again next time', async () => {
@@ -154,12 +221,12 @@ describe('checking a Bluesky sign-in link', () => {
 
   it('looks the handle up once and reuses the answer', async () => {
     const { env, store } = createEnv()
-    const lookup = handleLookup(DID)
-    vi.stubGlobal('fetch', lookup)
+    const { mock, fetched } = bluesky(DID)
+    vi.stubGlobal('fetch', mock)
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
     await check(env)
     await check(env)
-    expect(lookup).toHaveBeenCalledTimes(1)
+    expect(fetched.filter(u => u.includes('resolveHandle'))).toHaveLength(1)
   })
 })
 
