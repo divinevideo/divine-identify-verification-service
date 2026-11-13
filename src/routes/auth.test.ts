@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach, type MockInstance } from 'vitest'
 import { Hono } from 'hono'
 import { schnorr } from '@noble/curves/secp256k1.js'
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js'
@@ -674,7 +674,7 @@ describe('GET /auth/:platform/callback after the person cancels or denies sign-i
 
   // The cancel path logs; keep that out of the test output and let the log
   // test read what was written. The file-level afterEach restores the spies.
-  let warn: ReturnType<typeof vi.spyOn>
+  let warn: MockInstance<typeof console.warn>
   beforeEach(() => {
     warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
