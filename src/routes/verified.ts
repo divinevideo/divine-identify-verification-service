@@ -282,8 +282,11 @@ async function lookUpOwner(platform: Platform, identity: string, tidyIdentity: s
     return planned
   })
 
-  // One call for every planned check, in candidate then tag order, so the whole lookup
-  // is counted in one reservation and what the limits have left goes to candidates in order.
+  // One call for every planned check, in candidate then tag order, so the lookup's checks
+  // share one reservation and what the limits have left goes to candidates in order. The
+  // exception is a Bluesky sign-in whose handle now points to another account: it learns it
+  // needs a check only after its handle lookup, so it reserves on its own after that shared
+  // reservation, and when the limit is nearly spent a later candidate can take the last unit.
   const flat = plans.flatMap(units => (units ?? []).flat())
   const flatAnswers = verifyClaims(flat, env, clientIp)
   let next = 0

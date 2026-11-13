@@ -119,6 +119,26 @@ describe('checking a YouTube sign-in link claimed by handle', () => {
     expect(lookup).toHaveBeenCalledTimes(1)
   })
 
+  it('a YouTube handle that moved still answers signin_account_changed without checking the video', async () => {
+    const { env, store } = createEnv()
+    const urls: string[] = []
+    const lookup = handleLookup({ alice: OTHER_CHANNEL })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input))
+      // A video check would reach this as an unexpected fetch, not a lookup.
+      if (!String(input).startsWith('https://www.googleapis.com/youtube/v3/channels')) return new Response('', { status: 404 })
+      return lookup(input)
+    }))
+    storeRecord(store, HANDLE, CHANNEL)
+    const res = await worker.fetch(new Request('https://verifier.divine.video/verify/single', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: 'youtube', identity: HANDLE, proof: 'dQw4w9WgXcQ', pubkey: PUBKEY }),
+    }), env)
+    expect(await res.json()).toMatchObject({ verified: false, code: 'signin_account_changed', error: CHANGED })
+    expect(urls.length).toBeGreaterThan(0)
+    expect(urls.every(u => u.startsWith('https://www.googleapis.com/youtube/v3/channels'))).toBe(true)
+  })
+
   it('reuses an earlier answer that the handle belongs to a different channel', async () => {
     const { env, store } = createEnv()
     const lookup = handleLookup({})
