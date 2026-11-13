@@ -39,6 +39,8 @@ export interface ContractConfig {
   TIKTOK_CLIENT_SECRET?: string
   /** "true" turns TikTok sign-in on when its keys are set; production sets "false". */
   TIKTOK_OAUTH_ENABLED?: string
+  /** "off" or unset: what production and this suite run, so the gate never applies. */
+  CONFIRMATION_GATE?: string
 }
 
 export interface ContractEnv {

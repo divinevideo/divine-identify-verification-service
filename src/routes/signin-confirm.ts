@@ -11,6 +11,8 @@ import {
 } from '../oauth/confirm'
 import { saveSignIn, savedIdentities } from '../oauth/signin-records'
 import { signInLinksAreOff } from '../oauth/signin-switch'
+import { confirmationGate, isConfirmationTester } from '../oauth/confirmation-gate'
+import { confirmationAccess } from '../oauth/confirmation-access'
 
 const confirm = new Hono<{ Bindings: Bindings }>()
 
@@ -25,6 +27,10 @@ const REFUSALS = {
   claim_mismatch: { status: 401, code: 'signin_claim_mismatch', error: 'This confirmation doesn\'t match the sign-in. Sign in again.' },
   // 403, not 5xx: apps retry 5xx and signin_not_found, and this refusal is final until the operator clears the switch.
   links_off: { status: 403, code: 'signin_unavailable', error: 'Sign-in links for this platform are switched off right now.' },
+  // 403 for a non-holder: the answer is final until they have Confirmation. 503 when the check couldn't run, because
+  // apps retry 5xx, which is right for a check that may pass a moment later. Both keep the code.
+  confirmation_required: { status: 403, code: 'confirmation_required', error: 'Linking by sign-in needs Divine Confirmation. Proof posts stay free.' },
+  confirmation_unavailable: { status: 503, code: 'confirmation_unavailable', error: 'Divine Confirmation couldn\'t be checked right now. Try again in a few minutes.' },
   invalid_event: { status: 400, code: 'invalid_event', error: 'The confirmation must be a signed linked-accounts list (kind 10011).' },
 } as const
 
@@ -77,6 +83,21 @@ confirm.post('/confirm', async (c) => {
   // Last, so every other refusal keeps its precedence. Like them it keeps the
   // code.
   if (signInLinksAreOff(c.env, pending.platform)) return refuse('links_off', pending.platform)
+
+  // After every other refusal, so they keep their precedence and no access fetch is made for them.
+  // The repeat branch above never reaches here: a finished confirmation answers without a new check or save.
+  // Off makes no fetch at all. The line carries the platform, mode and outcome, never who it was about.
+  const mode = confirmationGate(c.env)
+  if (mode !== 'off') {
+    const tester = isConfirmationTester(c.env, pending.pubkey)
+    const access = await confirmationAccess(c.env, pending.pubkey)
+    if (mode === 'on') {
+      if (access === 'no') return refuse('confirmation_required', pending.platform)
+      if (access === 'unavailable') return refuse('confirmation_unavailable', pending.platform)
+    }
+    const outcome = tester ? 'tester' : access === 'yes' ? 'pass' : access === 'no' ? 'would_refuse' : 'unavailable'
+    console.info(`${pending.platform} confirmation check (${mode}): ${outcome}`)
+  }
 
   const account = { platform: pending.platform, identity: pending.identity, account_id: pending.account_id, handle: pending.handle }
   // Saved first, then marked used, then the pending sign-in removed: a failed

@@ -8,10 +8,13 @@ import { PAGE_STYLES } from './page-styles'
 // picker offers. The page has no script, so it needs no nonce.
 export interface DocsPageOptions extends PlatformFlags {
   origin: string
+  // True only while CONFIRMATION_GATE is on. Off and shadow render the page
+  // exactly as it was before the gate existed.
+  confirmationGateOn?: boolean
 }
 
 export function renderDocsPage(opts: DocsPageOptions): string {
-  const { origin, hasYouTube, hasTikTok, twitterOAuthEnabled, blueskyLinksOff, youtubeOAuthEnabled, tiktokOAuthEnabled, tiktokLinksOff } = opts
+  const { origin, hasYouTube, hasTikTok, twitterOAuthEnabled, blueskyLinksOff, youtubeOAuthEnabled, tiktokOAuthEnabled, tiktokLinksOff, confirmationGateOn = false } = opts
   const oauthPlatforms = oauthPlatformsFor(opts)
   const oauthPlatformNames = oauthPlatforms.map(platform => platform.name)
   // The start example stays on Bluesky while it is offered, otherwise it shows
@@ -37,6 +40,21 @@ export function renderDocsPage(opts: DocsPageOptions): string {
   // The check runs only with the YouTube API key, which is also what lists YouTube.
   const youtubeAccountCheckNote = hasYouTube
     ? " A YouTube sign-in claimed by handle also stops counting once the handle belongs to another channel or YouTube finds no channel with it. The claim must spell the handle as the sign-in saved it, apart from the letter case of A to Z. YouTube's answer is reused for up to a day, and while YouTube can't answer, the link keeps counting. A sign-in saved under its channel ID (a channel without a handle) is compared with it exactly, without asking YouTube."
+    : ''
+  // Added only while the gate is on, so the page is unchanged otherwise.
+  const confirmationPlatformsNote = confirmationGateOn
+    ? ' Each entry where <code>oauth</code> is <code>true</code> also has <code>signin_requires: "confirmation"</code>: linking by signing in needs Divine Confirmation. Proof posts stay free.'
+    : ''
+  const confirmationCodeNote = confirmationGateOn
+    ? ' <code>signin_needs_confirmation</code> means an account linked by signing in, while the Confirmation requirement was on, does not count because its owner does not have Divine Confirmation right now. Links saved earlier are unaffected. Renewing restores it without signing in again. Proof posts and Bluesky identity-link records still verify.'
+    : ''
+  const confirmationRefusals = confirmationGateOn
+    ? `
+        <li><code>confirmation_required</code> (403: linking by sign-in needs Divine Confirmation; the code stays usable for its 10 minutes);</li>
+        <li><code>confirmation_unavailable</code> (503: Confirmation could not be checked; try again);</li>`
+    : ''
+  const confirmationHealthNote = confirmationGateOn
+    ? ', and <code>confirmation_gate</code>: the Confirmation gate mode in effect'
     : ''
   const tiktokOAuthHistoryNote = hasTikTok && !tiktokOAuthEnabled && !tiktokLinksOff
     ? ' Existing TikTok OAuth verifications remain recognized.'
@@ -170,7 +188,7 @@ Content-Type: application/json
         <tr><th>Field</th><th>Type</th><th>Description</th></tr>
         <tr><td><code>verified</code></td><td>boolean</td><td><code>true</code> if proof post contains the npub and the author matches</td></tr>
         <tr><td><code>error</code></td><td>string?</td><td>Error message (only when <code>verified</code> is <code>false</code>)</td></tr>
-        <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable reason the claim isn't verified. <code>temporarily_unavailable</code> means the claim couldn't be checked right now (the platform didn't answer, or the per-person or per-platform check limit was hit), not that it was rejected: try again in a few minutes. <code>signin_expired</code> means no sign-in currently counts for an account linked by signing in (proof <code>oauth</code>): it lapsed, was unlinked, was never confirmed, never happened, or sign-in links for that platform are switched off. On Bluesky it also means no identity-link record was found on the account. <code>signin_account_changed</code> means the handle no longer points to the account that signed in (it was deleted, or now points to another account). For a YouTube sign-in claimed by handle, it also means the claim spells the handle differently from the sign-in, beyond the letter case of A to Z. Apps can offer sign-in for either, where <code>GET /platforms</code> reports <code>oauth: true</code> for that platform. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.</td></tr>
+        <tr><td><code>code</code></td><td>string?</td><td>Stable machine-readable reason the claim isn't verified. <code>temporarily_unavailable</code> means the claim couldn't be checked right now (the platform didn't answer, or the per-person or per-platform check limit was hit), not that it was rejected: try again in a few minutes. <code>signin_expired</code> means no sign-in currently counts for an account linked by signing in (proof <code>oauth</code>): it lapsed, was unlinked, was never confirmed, never happened, or sign-in links for that platform are switched off. On Bluesky it also means no identity-link record was found on the account. <code>signin_account_changed</code> means the handle no longer points to the account that signed in (it was deleted, or now points to another account). For a YouTube sign-in claimed by handle, it also means the claim spells the handle differently from the sign-in, beyond the letter case of A to Z. Apps can offer sign-in for either, where <code>GET /platforms</code> reports <code>oauth: true</code> for that platform. Discord values: <code>discord_invalid_proof_format</code>, <code>discord_dm_link</code>, <code>discord_channel_link</code>, <code>discord_invite_refused</code>, <code>discord_not_configured</code>, <code>discord_bot_no_access</code>, <code>discord_message_not_found</code>, <code>discord_api_error</code>, <code>discord_author_mismatch</code>, <code>discord_message_content_unavailable</code>, <code>discord_npub_not_in_message</code>.${confirmationCodeNote}</td></tr>
         <tr><td><code>canonical_proof</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the proof was resolved to a simpler stable form: a pasted post link was reduced to the part the check uses, or a TikTok link or share link to its post number. Publish this instead of the proof you sent.</td></tr>
         <tr><td><code>canonical_identity</code></td><td>string?</td><td>Only when <code>verified</code> is <code>true</code> and the account as sent was tidied (for example a leading @ removed, a YouTube handle sent without its @ returned with it, or a Mastodon handle sent as <code>@user@server</code> returned as <code>server/@user</code>), or confirmed on a different host from the one in the claim (Mastodon: a server whose handles use another domain from its website). Publish this instead of the account you sent; links to the post use it.</td></tr>
         <tr><td><code>checked_at</code></td><td>number</td><td>Unix timestamp (seconds)</td></tr>
@@ -334,7 +352,7 @@ Content-Type: application/json
         <li><code>signin_wrong_account</code>;</li>
         <li><code>signin_not_yours</code>;</li>
         <li><code>signin_claim_mismatch</code>;</li>
-        <li><code>signin_unavailable</code> (403: sign-in links for this platform are switched off);</li>
+        <li><code>signin_unavailable</code> (403: sign-in links for this platform are switched off);</li>${confirmationRefusals}
         <li><code>invalid_event</code>.</li>
       </ul>
 
@@ -348,11 +366,11 @@ Content-Type: application/json
       <h2>Other Endpoints</h2>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/platforms</code></h3>
-        <p>List platforms currently available to clients. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field: <code>true</code> when sign-in is set up and switched on for that platform, <code>false</code> when only a proof post works. Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token. Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts.</p>
+        <p>List platforms currently available to clients. Twitter/X, Bluesky, YouTube (when listed), and TikTok each include an <code>oauth</code> field: <code>true</code> when sign-in is set up and switched on for that platform, <code>false</code> when only a proof post works. Each entry's <code>supported</code> is <code>false</code> when this deployment can't check that platform's proof posts, such as Discord without its bot token. Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts.${confirmationPlatformsNote}</p>
       </div>
       <div class="endpoint">
         <h3><span class="method get">GET</span> <code>/health</code></h3>
-        <p>Health check. Returns <code>{"status":"ok", ...}</code>, including <code>signin_confirmation</code>: <code>"optional"</code> or <code>"required"</code>, the sign-in confirmation mode in effect, and <code>signin_links_off</code>: the sign-in platforms whose links are switched off.</p>
+        <p>Health check. Returns <code>{"status":"ok", ...}</code>, including <code>signin_confirmation</code>: <code>"optional"</code> or <code>"required"</code>, the sign-in confirmation mode in effect, and <code>signin_links_off</code>: the sign-in platforms whose links are switched off${confirmationHealthNote}.</p>
       </div>
     </section>
 

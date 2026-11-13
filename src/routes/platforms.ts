@@ -5,6 +5,7 @@ import { isTikTokOAuthUsable } from '../oauth/tiktok'
 import { isTwitterOAuthUsable } from '../oauth/twitter'
 import { isBlueskyOAuthUsable } from '../oauth/bluesky'
 import { isYouTubeOAuthUsable } from '../oauth/youtube'
+import { confirmationGate } from '../oauth/confirmation-gate'
 import { FIXED_SIGNIN_LIFETIME_DAYS } from '../oauth/signin-lifetime'
 
 const platforms = new Hono<{ Bindings: Bindings }>()
@@ -25,6 +26,7 @@ platforms.get('/', (c) => {
       tiktok: isTikTokOAuthUsable(c.env),
     },
     signinLifetimeDays: FIXED_SIGNIN_LIFETIME_DAYS,
+    signinRequires: confirmationGate(c.env) === 'on' ? 'confirmation' : undefined,
   }) })
 })
 

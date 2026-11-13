@@ -39,6 +39,9 @@ export function getPlatformInfo(opts?: {
   // Days a confirmed sign-in link lasts. Reported on every platform where
   // sign-in is set up (oauth is true).
   signinLifetimeDays?: number
+  // Set while the Divine Confirmation gate is on. Reported on every platform
+  // where sign-in is set up (oauth is true), whether or not a lifetime is given.
+  signinRequires?: 'confirmation'
 }): Record<string, PlatformInfo> {
   const platforms: Record<string, PlatformInfo> = {
     github: { label: 'GitHub', supported: true },
@@ -60,6 +63,12 @@ export function getPlatformInfo(opts?: {
   if (typeof days === 'number') {
     for (const info of Object.values(platforms)) {
       if (info.oauth) info.signin_expires_after_days = days
+    }
+  }
+  const requires = opts?.signinRequires
+  if (requires) {
+    for (const info of Object.values(platforms)) {
+      if (info.oauth) info.signin_requires = requires
     }
   }
   return platforms

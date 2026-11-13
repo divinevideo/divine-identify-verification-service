@@ -130,4 +130,20 @@ describe('landing page after the move', () => {
       expect(script, id).not.toMatch(new RegExp(`#${id}(?![\\w-])`))
     }
   })
+
+  const CONFIRMATION_TERMS = ['signin_requires', 'confirmation_required', 'confirmation_unavailable', 'signin_needs_confirmation', 'confirmation_gate', 'Divine Confirmation']
+
+  it('says nothing about Confirmation while the gate is off or shadow, byte for byte the same as unset', async () => {
+    const unset = await (await get('/docs')).text()
+    for (const term of CONFIRMATION_TERMS) expect(unset).not.toContain(term)
+    for (const mode of ['off', 'shadow']) {
+      expect(await (await get('/docs', { CONFIRMATION_GATE: mode })).text()).toBe(unset)
+    }
+  })
+
+  it('documents the field, the three codes and the health mode while the gate is on', async () => {
+    const html = await (await get('/docs', { CONFIRMATION_GATE: 'on' })).text()
+    for (const term of CONFIRMATION_TERMS) expect(html).toContain(term)
+    expect(html).not.toContain('\u2014')
+  })
 })

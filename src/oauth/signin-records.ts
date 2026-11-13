@@ -4,6 +4,8 @@ import type { Bindings, OAuthState, OAuthVerification, SignInCallbackResult } fr
 import { getOAuthVerification, storeOAuthVerification, oauthVerificationKey } from './state'
 import { forgetHandleLookup } from './signin-account'
 import { signInConfirmationMode, newConfirmCode, storePendingSignIn, type SignedInAccount } from './confirm'
+import { confirmationGate } from './confirmation-gate'
+import { confirmationAccess, type ConfirmationAccess } from './confirmation-access'
 import { signInIsCurrent } from './signin-lifetime'
 import { signInLinksAreOff } from './signin-switch'
 import { forgetYouTubeHandleLookup } from '../platforms/youtube-handle'
@@ -72,6 +74,8 @@ export async function saveSignIn(env: Bindings, pubkey: string, account: SignedI
   }
   if (account.platform === 'youtube') await forgetEarlierYouTubeLookup(env, account.identity)
   const checkedAt = Math.floor(Date.now() / 1000)
+  // Read once so the handle and DID records of one link carry the same mark.
+  const accessRequired = confirmationGate(env) === 'on'
   for (const identity of savedIdentities(account)) {
     if (!confirmation) {
       // Best effort: KV reads are eventually consistent, so a confirmed record
@@ -89,25 +93,50 @@ export async function saveSignIn(env: Bindings, pubkey: string, account: SignedI
       checked_at: checkedAt,
       ...(account.account_id ? { account_id: account.account_id } : {}),
       ...(account.handle ? { handle: account.handle } : {}),
+      ...(accessRequired ? { access_required: true as const } : {}),
       ...(confirmation ? { confirmed: true as const, confirm_event_id: confirmation.event_id, confirm_created_at: confirmation.created_at } : {}),
     })
   }
 }
 
+export type SignInStanding = { counted: OAuthVerification } | { counted: null; reason: 'none' | 'needs_confirmation' }
+
 /**
- * The sign-in record for a claim, if it counts. Every reader goes through
- * here: once confirmation is required, only confirmed records count, and a
- * record counts only while its lifetime (signin-lifetime.ts) lasts. A record
- * also doesn't count while its platform's links are switched off
- * (signin-switch.ts); the record is kept, so clearing the switch restores it.
+ * Whether the sign-in record for a claim counts, and if not, why. Every reader
+ * goes through here: once confirmation is required, only confirmed records
+ * count, and a record counts only while its lifetime (signin-lifetime.ts)
+ * lasts. A record also doesn't count while its platform's links are switched
+ * off (signin-switch.ts). A record saved while the Confirmation gate was on
+ * (access_required) counts only while its owner has Confirmation and the gate
+ * is still on; an unavailable access check counts. Records are never deleted
+ * here, so a link counts again once access returns or the gate is turned off.
  */
-export async function getCountedSignIn(env: Bindings, platform: string, identity: string, pubkey: string): Promise<OAuthVerification | null> {
-  if (signInLinksAreOff(env, platform)) return null
+export async function signInStanding(
+  env: Bindings,
+  platform: string,
+  identity: string,
+  pubkey: string,
+  accessFor: (pubkey: string) => Promise<ConfirmationAccess> = (pk) => confirmationAccess(env, pk),
+): Promise<SignInStanding> {
+  const none = { counted: null, reason: 'none' } as const
+  if (signInLinksAreOff(env, platform)) return none
   const record = await getOAuthVerification(env.CACHE_KV, platform, identity, pubkey)
-  if (!record) return null
-  if (signInConfirmationMode(env) === 'required' && record.confirmed !== true) return null
-  if (!signInIsCurrent(record, Math.floor(Date.now() / 1000))) return null
-  return record
+  if (!record) return none
+  if (signInConfirmationMode(env) === 'required' && record.confirmed !== true) return none
+  if (!signInIsCurrent(record, Math.floor(Date.now() / 1000))) return none
+  if (record.access_required === true && confirmationGate(env) === 'on') {
+    const access = await accessFor(pubkey)
+    if (access !== 'yes') {
+      console.info(`${platform} confirmation check for a saved link (on): ${access}`)
+      if (access === 'no') return { counted: null, reason: 'needs_confirmation' }
+    }
+  }
+  return { counted: record }
+}
+
+/** The sign-in record for a claim, if it counts (see signInStanding). The single reader. */
+export async function getCountedSignIn(env: Bindings, platform: string, identity: string, pubkey: string): Promise<OAuthVerification | null> {
+  return (await signInStanding(env, platform, identity, pubkey)).counted
 }
 
 /**
@@ -124,7 +153,11 @@ export async function holdSignIn(env: Bindings, state: OAuthState, account: Sign
     // the return reports it as not completed, and a code that revives if the
     // switch is cleared would contradict that.
     if (signInLinksAreOff(env, state.platform)) return { success: true, returnUrl: state.returnUrl, identity: account.identity }
-    await saveSignIn(env, state.pubkey, account, null)
+    // While the gate is shadow or on, /auth/confirm is the only route that
+    // saves a record: it checks Confirmation only after the owner has proved
+    // their key. state.pubkey is unproven here, so checking it would reveal
+    // whether any pubkey has Confirmation.
+    if (confirmationGate(env) === 'off') await saveSignIn(env, state.pubkey, account, null)
   }
   let confirmCode: string | undefined
   if (state.startCheck) {

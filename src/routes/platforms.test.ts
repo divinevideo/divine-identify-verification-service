@@ -8,7 +8,7 @@ import platforms from './platforms'
 const app = new Hono<{ Bindings: Bindings }>()
 app.route('/platforms', platforms)
 
-type PlatformsBody = { platforms: Record<string, { label: string; supported: boolean; oauth?: boolean; signin_expires_after_days?: number }> }
+type PlatformsBody = { platforms: Record<string, { label: string; supported: boolean; oauth?: boolean; signin_expires_after_days?: number; signin_requires?: string }> }
 
 async function fetchPlatforms(env: Partial<Bindings>): Promise<PlatformsBody> {
   const response = await app.request('/platforms', {}, env as Bindings)
@@ -184,6 +184,23 @@ describe('GET /platforms', () => {
     it('is absent on platforms without sign-in', async () => {
       const body = await fetchPlatforms(ALL_OAUTH_CONFIGURED)
       expect(body.platforms.github).not.toHaveProperty('signin_expires_after_days')
+    })
+  })
+
+  describe('signin_requires', () => {
+    it('gate on: every platform with sign-in says it requires Confirmation, and no other does', async () => {
+      const body = await fetchPlatforms({ ...ALL_OAUTH_CONFIGURED, CONFIRMATION_GATE: 'on' })
+      expect(Object.values(body.platforms).some((info) => info.oauth === true)).toBe(true)
+      for (const info of Object.values(body.platforms)) {
+        if (info.oauth) expect(info.signin_requires).toBe('confirmation')
+        else expect(info).not.toHaveProperty('signin_requires')
+      }
+    })
+
+    it.each(['off', 'shadow'])('gate %s: the answer is byte for byte the same as with the gate unset', async (mode) => {
+      const text = async (env: Partial<Bindings>) => (await app.request('/platforms', {}, env as Bindings)).text()
+      const extra = { CONFIRMATION_ACCESS_URL: 'https://access.example.test', CONFIRMATION_ACCESS_TOKEN: 't' }
+      expect(await text({ ...ALL_OAUTH_CONFIGURED, CONFIRMATION_GATE: mode, ...extra })).toBe(await text(ALL_OAUTH_CONFIGURED))
     })
   })
 })

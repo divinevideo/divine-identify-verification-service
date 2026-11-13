@@ -65,6 +65,23 @@ describe('verifier health', () => {
     }
   })
 
+  it('reports the Confirmation gate mode in effect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      for (const [value, mode] of [[undefined, 'off'], ['shadow', 'shadow'], [' ON ', 'on'], ['onn', 'off']]) {
+        const res = await worker.fetch(new Request('https://verifier.divine.video/health'), { CONFIRMATION_GATE: value } as never)
+        expect((await res.json() as { confirmation_gate?: string }).confirmation_gate).toBe(mode)
+      }
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('does not list testers on /health', async () => {
+    const res = await worker.fetch(new Request('https://verifier.divine.video/health'), { CONFIRMATION_TESTERS: 'a'.repeat(64) } as never)
+    expect(await res.text()).not.toContain('a'.repeat(64))
+  })
+
   it('documents the mode it reports on the page', async () => {
     const response = await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)
     const html = await response.text()
@@ -359,6 +376,12 @@ describe('confirm refusal for switched-off sign-in links', () => {
 
   it('the page explains a confirm refused because sign-in links are switched off', async () => {
     expect(await homeHtml()).toContain("signin_unavailable: 'Sign-in links for this platform are switched off right now.'")
+  })
+
+  it('the page explains a confirm refused because Divine Confirmation is required or could not be checked', async () => {
+    const html = await homeHtml()
+    expect(html).toContain("confirmation_required: 'Linking by sign-in needs Divine Confirmation. Proof posts stay free.'")
+    expect(html).toContain("confirmation_unavailable: 'Divine Confirmation couldn\\'t be checked right now. Press Publish to try again.'")
   })
 })
 
