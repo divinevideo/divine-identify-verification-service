@@ -135,7 +135,7 @@ results influence work.
 ## Project Structure & Module Organization
 - Worker source and tests live in `src/`. Keep handlers, verification logic, and shared types close together instead of creating deep folder nesting prematurely.
 - Product and rollout context lives in `PRD.md` and `docs/`.
-- Project configuration lives in `package.json`, `tsconfig.json`, `vitest.config.ts`, and `wrangler.toml`.
+- Project configuration lives in `package.json`, `tsconfig.json`, `vitest.config.mts`, and `wrangler.toml`.
 
 ## Build, Test, and Development Commands
 - `npm install`: install dependencies.
