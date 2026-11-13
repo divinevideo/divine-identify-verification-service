@@ -1652,6 +1652,8 @@ ${SHARED_PAGE_SCRIPT}
       signin_not_yours: 'This sign-in was started somewhere else.',
       signin_claim_mismatch: 'This confirmation doesn\\'t match the sign-in. Sign in again.',
       signin_unavailable: 'Sign-in links for this platform are switched off right now.',
+      confirmation_required: 'Linking by sign-in needs Divine Confirmation. Proof posts stay free.',
+      confirmation_unavailable: 'Divine Confirmation couldn\\'t be checked right now. Press Publish to try again.',
     };
     // The sign-in and its signed event are kept, so pressing Publish again
     // resends the same event.
@@ -1685,7 +1687,13 @@ ${SHARED_PAGE_SCRIPT}
           await new Promise(resolve => setTimeout(resolve, 1000));
           continue;
         }
-        if (again || resp.status === 429) throw new Error(CONFIRM_TRY_AGAIN);
+        if (again || resp.status === 429) {
+          throw new Error(code === 'confirmation_unavailable' ? CONFIRM_REFUSALS.confirmation_unavailable : CONFIRM_TRY_AGAIN);
+        }
+        // The verifier keeps the 10-minute code when Confirmation is missing, so
+        // keep the pending sign-in and signed event here too in case Confirmation
+        // is added before the code expires; a proof post still publishes around it.
+        if (code === 'confirmation_required') throw new Error(CONFIRM_REFUSALS.confirmation_required);
         // Any other answer is a refusal (a 4xx, with or without a code), and
         // resending the same event would be refused again. It ends this
         // sign-in: forget it, so the next Publish of this account is an
