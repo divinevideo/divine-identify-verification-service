@@ -84,7 +84,7 @@ Return addresses are limited to `https://verifier.divine.video/`, `https://verif
 
 ## Getting started
 
-Requires Node.js and a Cloudflare account with [Wrangler](https://developers.cloudflare.com/workers/wrangler/).
+Requires Node.js 22.12 or newer and a Cloudflare account with [Wrangler](https://developers.cloudflare.com/workers/wrangler/).
 
 ```bash
 npm install       # install dependencies
