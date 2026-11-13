@@ -7,6 +7,7 @@ import { checkRateLimit, reserveChecks, RATE_LIMITS, type CheckRefusal, type Che
 import { getVerifier } from '../platforms/registry'
 import { PLATFORM_CHECK_TIME_BUDGET_MS, PlatformUnavailableError, withinTimeBudget } from '../platforms/base'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
+import { confirmationAccess, type ConfirmationAccess } from '../oauth/confirmation-access'
 import { signInStanding } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { tidyClaim } from '../utils/tidy-claim'
@@ -110,6 +111,7 @@ interface PendingCheck {
   // What to report if no route verifies the sign-in link. Never stored in the result cache.
   lapse: LapseCode
   now: number
+  startedAt: number
 }
 
 type FirstLook = { answer: Promise<VerifyResult> } | { check: PendingCheck }
@@ -156,7 +158,12 @@ async function signInAnswer(
 
 // Everything that can answer a claim without asking its platform. Only what is
 // left over needs a unit from the limits.
-async function lookFirst(claim: VerifyClaim, env: Bindings): Promise<FirstLook> {
+async function lookFirst(
+  claim: VerifyClaim,
+  env: Bindings,
+  accessFor: (pubkey: string) => Promise<ConfirmationAccess>,
+  startedAt: number,
+): Promise<FirstLook> {
   const now = Math.floor(Date.now() / 1000)
   const normalizedClaim = normalizeClaim(claim)
   // Check and cache the storage form, but echo the identity as sent: clients
@@ -170,26 +177,34 @@ async function lookFirst(claim: VerifyClaim, env: Bindings): Promise<FirstLook> 
     ...(tidy.proof !== normalizedClaim.proof ? { canonical_proof: tidy.proof } : {}),
   }
   const key = cacheKey(normalizedClaim.platform, tidy.identity, tidy.proof, normalizedClaim.pubkey)
+  const isSignInLink = SIGNIN_PLATFORMS.has(normalizedClaim.platform) && tidy.proof === SIGNIN_PROOF
+
+  // Only Bluesky has other evidence a sign-in link can still be verified by
+  // (an identity-link record on the account), so the others never reach the
+  // result cache, the limits or a platform check. Answering in their own
+  // promise keeps a slow Confirmation check or handle lookup from holding up
+  // sibling claims in the batch.
+  if (isSignInLink && normalizedClaim.platform !== 'bluesky') {
+    return {
+      answer: (async () => {
+        const standing = await signInStanding(env, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey, accessFor)
+        if (standing.counted) return signInAnswer(env, standing.counted, normalizedClaim, tidy, tidied, now)
+        const lapse: LapseCode = standing.reason === 'needs_confirmation' ? 'signin_needs_confirmation' : 'signin_expired'
+        return lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, now, false, lapse)
+      })(),
+    }
+  }
 
   // A sign-in record answers first, so a result cached before a fresh sign-in
   // (a failed check, or one made right after an unlink) can't hide it.
   let lapse: LapseCode = 'signin_expired'
   if (SIGNIN_PLATFORMS.has(normalizedClaim.platform)) {
-    const standing = await signInStanding(env, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey)
+    const standing = await signInStanding(env, normalizedClaim.platform, tidy.identity, normalizedClaim.pubkey, accessFor)
     if (standing.counted) {
       return { answer: signInAnswer(env, standing.counted, normalizedClaim, tidy, tidied, now) }
     }
     // The free routes (proof posts, Bluesky identity-link records) still get their turn below.
     if (standing.reason === 'needs_confirmation') lapse = 'signin_needs_confirmation'
-  }
-
-  const isSignInLink = SIGNIN_PLATFORMS.has(normalizedClaim.platform) && tidy.proof === SIGNIN_PROOF
-  // Only Bluesky has other evidence a sign-in link can still be verified by
-  // (an identity-link record on the account), so the others answer now,
-  // without asking the platform. This comes before the result cache, so an
-  // answer cached for this claim before can't stand in for it.
-  if (isSignInLink && normalizedClaim.platform !== 'bluesky') {
-    return { answer: Promise.resolve(lapsedSignIn(normalizedClaim.platform, normalizedClaim.identity, now, false, lapse)) }
   }
 
   // Then the result cache
@@ -217,7 +232,7 @@ async function lookFirst(claim: VerifyClaim, env: Bindings): Promise<FirstLook> 
     }
   }
 
-  return { check: { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now } }
+  return { check: { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now, startedAt } }
 }
 
 // A claim the limits had no unit for. It is not remembered: the next request
@@ -247,18 +262,23 @@ function refusedAnswer(check: PendingCheck, refusal: CheckRefusal): VerifyResult
 }
 
 async function checkPlatform(check: PendingCheck, env: Bindings): Promise<VerifyResult> {
-  const { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now } = check
+  const { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now, startedAt } = check
 
   // Convert hex pubkey to npub for content search
   const npub = hexToNpub(normalizedClaim.pubkey)
 
-  // Perform verification
+  // Perform verification within whatever remains of the batch's 8-second budget
+  // after any Confirmation access check in lookFirst.
   const verifier = getVerifier(normalizedClaim.platform, env.GITHUB_TOKEN, env.YOUTUBE_API_KEY, env.DISCORD_BOT_TOKEN, env.DISCORD_VERIFY_CHANNEL_ID, env.CACHE_KV)
+  const budgetMs = PLATFORM_CHECK_TIME_BUDGET_MS - Math.max(0, Date.now() - startedAt)
   let result: Awaited<ReturnType<typeof verifier.verify>>
   try {
+    if (budgetMs <= 0) {
+      throw new PlatformUnavailableError(`${verifier.label} didn't finish within ${PLATFORM_CHECK_TIME_BUDGET_MS / 1000} seconds`)
+    }
     result = await withinTimeBudget(
       verifier.verify(tidy.identity, tidy.proof, npub),
-      PLATFORM_CHECK_TIME_BUDGET_MS,
+      budgetMs,
       verifier.label,
     )
   } catch (err) {
@@ -337,7 +357,20 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
  * platform check the request makes is counted.
  */
 export function verifyClaims(claims: readonly VerifyClaim[], env: Bindings, clientIp: string): Array<Promise<VerifyResult>> {
-  const looks = claims.map(claim => lookFirst(claim, env))
+  const startedAt = Date.now()
+  // Share one Confirmation access check per pubkey within this call so a batch
+  // or /verified list neither fans out duplicate fetches nor writes the same KV
+  // key concurrently. Kept strictly per call for Workers request isolation.
+  const accessByPubkey = new Map<string, Promise<ConfirmationAccess>>()
+  const accessFor = (pubkey: string): Promise<ConfirmationAccess> => {
+    let pending = accessByPubkey.get(pubkey)
+    if (!pending) {
+      pending = confirmationAccess(env, pubkey)
+      accessByPubkey.set(pubkey, pending)
+    }
+    return pending
+  }
+  const looks = claims.map(claim => lookFirst(claim, env, accessFor, startedAt))
   // allSettled: one claim whose first look fails must not keep the others
   // from their units.
   const reservation = Promise.allSettled(looks).then(async settled => {

@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import worker from '../index'
 import type { Bindings } from '../types'
 import { oauthVerificationKey } from '../oauth/state'
+import { confirmationAccessKey } from '../oauth/confirmation-access'
 import { cacheKey } from '../utils/cache'
 import { storageForm } from './verify'
 import { hexToNpub } from '../utils/npub'
@@ -20,13 +21,13 @@ type Answer = { verified: boolean; error?: string; code?: string; method?: strin
 function makeEnv(vars: Partial<Bindings> = {}) {
   const store = new Map<string, string>()
   const kv = {
-    get: async (key: string) => store.get(key) ?? null,
-    put: async (key: string, value: string) => { store.set(key, value) },
-    delete: async (key: string) => { store.delete(key) },
-    list: async () => ({ keys: [], list_complete: true, caches_used: 0 }),
-  } as unknown as KVNamespace
-  const env = { CACHE_KV: kv, RATE_LIMIT_KV: kv, SIGNIN_CONFIRMATION: 'required', YOUTUBE_API_KEY: 'test-key', CONFIRMATION_GATE: 'on', CONFIRMATION_ACCESS_URL: ACCESS_URL, CONFIRMATION_ACCESS_TOKEN: 't', ...vars } as Bindings
-  return { env, store }
+    get: vi.fn(async (key: string) => store.get(key) ?? null),
+    put: vi.fn(async (key: string, value: string) => { store.set(key, value) }),
+    delete: vi.fn(async (key: string) => { store.delete(key) }),
+    list: vi.fn(async () => ({ keys: [], list_complete: true, caches_used: 0 })),
+  }
+  const env = { CACHE_KV: kv as unknown as KVNamespace, RATE_LIMIT_KV: kv as unknown as KVNamespace, SIGNIN_CONFIRMATION: 'required', YOUTUBE_API_KEY: 'test-key', CONFIRMATION_GATE: 'on', CONFIRMATION_ACCESS_URL: ACCESS_URL, CONFIRMATION_ACCESS_TOKEN: 't', ...vars } as Bindings
+  return { env, store, kv }
 }
 
 function json(body: unknown, status = 200): Response {
@@ -193,6 +194,91 @@ describe('gate on, edge cases', () => {
     for (const line of all) {
       expect(line).not.toContain(PUBKEY)
       expect(line).not.toContain('jack')
+    }
+  })
+
+  it('fetches and caches Confirmation access once when a batch checks several marked links for one pubkey', async () => {
+    const { env, store, kv } = makeEnv()
+    for (const [platform, identity] of ACCOUNTS) markedRecord(store, platform, identity)
+    access('no')
+
+    const res = await worker.fetch(new Request('https://verifier.divine.video/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        claims: ACCOUNTS.map(([platform, identity]) => ({ platform, identity, proof: 'oauth', pubkey: PUBKEY })),
+      }),
+    }), env)
+    const { results } = await res.json() as { results: Answer[] }
+
+    expect(results).toHaveLength(3)
+    for (const result of results) {
+      expect(result).toMatchObject({ verified: false, code: 'signin_needs_confirmation', error: NEEDS })
+    }
+    expect(accessCalls()).toBe(1)
+    const accessWrites = kv.put.mock.calls.filter(([key]) => key === confirmationAccessKey(PUBKEY))
+    expect(accessWrites).toHaveLength(1)
+  })
+
+  it('does not hold a sibling platform check behind a slow Confirmation check for a sign-in link', async () => {
+    const { env, store } = makeEnv()
+    markedRecord(store, 'twitter', 'jack')
+
+    let releaseAccess!: () => void
+    const heldAccess = new Promise<void>((resolve) => { releaseAccess = resolve })
+    let githubFetched = false
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === `${ACCESS_URL}/${PUBKEY}`) {
+        await heldAccess
+        return json({ isActive: false })
+      }
+      if (url.includes('proofsiblingx')) {
+        githubFetched = true
+        return new Response('', { status: 404 })
+      }
+      return new Response('', { status: 404 })
+    })
+
+    const pending = worker.fetch(new Request('https://verifier.divine.video/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        claims: [
+          { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
+          { platform: 'github', identity: 'octocat', proof: 'proofsiblingx', pubkey: PUBKEY },
+        ],
+      }),
+    }), env)
+
+    await vi.waitFor(() => expect(githubFetched).toBe(true))
+    releaseAccess()
+    const { results } = await (await pending).json() as { results: Answer[] }
+    expect(results[0]).toMatchObject({ verified: false, code: 'signin_needs_confirmation' })
+    expect(results[1]).toMatchObject({ verified: false })
+  })
+
+  it('keeps a slow Confirmation check plus Bluesky fallback inside the 8-second batch budget', async () => {
+    vi.useFakeTimers()
+    try {
+      const { env, store } = makeEnv()
+      markedRecord(store, 'bluesky', BSKY)
+      const routes = blueskyRoutes([])
+      fetchMock.mockImplementation((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url === `${ACCESS_URL}/${PUBKEY}`) {
+          return new Promise((resolve) => setTimeout(() => resolve(json({ isActive: false })), 2_500))
+        }
+        return new Promise((resolve) => setTimeout(() => resolve(routes(url) ?? new Response('', { status: 404 })), 4_900))
+      })
+
+      const pending = single(env, 'bluesky', BSKY, 'oauth')
+      await vi.advanceTimersByTimeAsync(8_000)
+      const answer = await pending
+
+      expect(answer).toMatchObject({ verified: false, code: 'temporarily_unavailable' })
+    } finally {
+      vi.useRealTimers()
     }
   })
 })

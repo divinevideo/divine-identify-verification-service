@@ -5,7 +5,7 @@ import { getOAuthVerification, storeOAuthVerification, oauthVerificationKey } fr
 import { forgetHandleLookup } from './signin-account'
 import { signInConfirmationMode, newConfirmCode, storePendingSignIn, type SignedInAccount } from './confirm'
 import { confirmationGate } from './confirmation-gate'
-import { confirmationAccess } from './confirmation-access'
+import { confirmationAccess, type ConfirmationAccess } from './confirmation-access'
 import { signInIsCurrent } from './signin-lifetime'
 import { signInLinksAreOff } from './signin-switch'
 import { forgetYouTubeHandleLookup } from '../platforms/youtube-handle'
@@ -111,7 +111,13 @@ export type SignInStanding = { counted: OAuthVerification } | { counted: null; r
  * is still on; an unavailable access check counts. Records are never deleted
  * here, so a link counts again once access returns or the gate is turned off.
  */
-export async function signInStanding(env: Bindings, platform: string, identity: string, pubkey: string): Promise<SignInStanding> {
+export async function signInStanding(
+  env: Bindings,
+  platform: string,
+  identity: string,
+  pubkey: string,
+  accessFor: (pubkey: string) => Promise<ConfirmationAccess> = (pk) => confirmationAccess(env, pk),
+): Promise<SignInStanding> {
   const none = { counted: null, reason: 'none' } as const
   if (signInLinksAreOff(env, platform)) return none
   const record = await getOAuthVerification(env.CACHE_KV, platform, identity, pubkey)
@@ -119,7 +125,7 @@ export async function signInStanding(env: Bindings, platform: string, identity: 
   if (signInConfirmationMode(env) === 'required' && record.confirmed !== true) return none
   if (!signInIsCurrent(record, Math.floor(Date.now() / 1000))) return none
   if (record.access_required === true && confirmationGate(env) === 'on') {
-    const access = await confirmationAccess(env, pubkey)
+    const access = await accessFor(pubkey)
     if (access !== 'yes') {
       console.info(`${platform} confirmation check for a saved link (on): ${access}`)
       if (access === 'no') return { counted: null, reason: 'needs_confirmation' }
