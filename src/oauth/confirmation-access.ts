@@ -31,14 +31,37 @@ function unavailable(reason: string): ConfirmationAccess {
   return 'unavailable'
 }
 
+// Secrets set from the CLI often carry a trailing newline; query strings,
+// fragments or credentials would deform `${base}/${pubkey}` or put secrets in a URL.
+function configuredAccessUrl(raw: string | undefined): string | null {
+  const trimmed = raw?.trim()
+  if (!trimmed || trimmed.includes('?') || trimmed.includes('#')) return null
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return null
+  }
+  if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username || parsed.password) {
+    return null
+  }
+  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`
+}
+
+function configuredAccessToken(raw: string | undefined): string | null {
+  const trimmed = raw?.trim()
+  if (!trimmed || /[\r\n\0]/.test(trimmed)) return null
+  return trimmed
+}
+
 /** Whether this pubkey has Divine Confirmation access. Cached yes 300 s and no 60 s; unavailable is never cached. */
 export async function confirmationAccess(env: Bindings, pubkey: string): Promise<ConfirmationAccess> {
   // The service accepts only lowercase hex, so anything else has no access.
   if (!/^[0-9a-f]{64}$/.test(pubkey)) return 'no'
   if (isConfirmationTester(env, pubkey)) return 'yes'
 
-  const base = env.CONFIRMATION_ACCESS_URL
-  const token = env.CONFIRMATION_ACCESS_TOKEN
+  const base = configuredAccessUrl(env.CONFIRMATION_ACCESS_URL)
+  const token = configuredAccessToken(env.CONFIRMATION_ACCESS_TOKEN)
   if (!base || !token) return unavailable('not configured')
 
   const key = confirmationAccessKey(pubkey)
@@ -51,7 +74,7 @@ export async function confirmationAccess(env: Bindings, pubkey: string): Promise
 
   let res: Response
   try {
-    res = await fetch(`${base.replace(/\/+$/, '')}/${pubkey}`, {
+    res = await fetch(`${base}/${pubkey}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       // Never follow a redirect: the bearer token must not leave the configured host.
       redirect: 'manual',

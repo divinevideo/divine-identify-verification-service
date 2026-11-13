@@ -334,6 +334,16 @@ describe('marking sign-ins saved while the Confirmation gate is on', () => {
     await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack' }, CONFIRMATION)
     expect(read(store, 'twitter', 'jack').access_required).toBe(true)
   })
+
+  it.each(['off', 'shadow'] as const)('clears access_required when a marked record is saved again while %s', async gate => {
+    const { env, store } = createEnv({ CONFIRMATION_GATE: gate })
+    store.set(oauthVerificationKey('twitter', 'jack', PUBKEY), JSON.stringify({
+      platform: 'twitter', identity: 'jack', pubkey: PUBKEY, verified: true, method: 'oauth',
+      checked_at: Math.floor(Date.now() / 1000), confirmed: true, access_required: true,
+    }))
+    await saveSignIn(env, PUBKEY, { platform: 'twitter', identity: 'jack' }, CONFIRMATION)
+    expect(read(store, 'twitter', 'jack').access_required).toBeUndefined()
+  })
 })
 
 describe('which marked records count', () => {

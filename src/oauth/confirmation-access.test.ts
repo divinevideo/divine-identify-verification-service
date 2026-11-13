@@ -149,10 +149,38 @@ describe('confirmationAccess', () => {
 
   it.each([
     ['no URL', { CONFIRMATION_ACCESS_URL: undefined }],
+    ['whitespace URL', { CONFIRMATION_ACCESS_URL: '  \n' }],
+    ['not a URL', { CONFIRMATION_ACCESS_URL: 'not-a-url' }],
+    ['a non-HTTP URL', { CONFIRMATION_ACCESS_URL: 'wss://access.example.test/v1/entitlements' }],
+    ['a URL with query parameters', { CONFIRMATION_ACCESS_URL: 'https://access.example.test/v1/entitlements?key=secret' }],
+    ['a URL with an empty query', { CONFIRMATION_ACCESS_URL: 'https://access.example.test/v1/entitlements?' }],
+    ['a URL with a fragment', { CONFIRMATION_ACCESS_URL: 'https://access.example.test/v1/entitlements#v1' }],
+    ['a URL with credentials', { CONFIRMATION_ACCESS_URL: 'https://user:secret@access.example.test/v1/entitlements' }],
     ['no token', { CONFIRMATION_ACCESS_TOKEN: undefined }],
-  ])('answers unavailable with %s, without a fetch', async (_name, extra) => {
-    expect(await confirmationAccess(gateEnv(extra), PUBKEY)).toBe('unavailable')
+    ['whitespace token', { CONFIRMATION_ACCESS_TOKEN: '  \r\n' }],
+    ['multiline token', { CONFIRMATION_ACCESS_TOKEN: 'first-line\nsecond-line' }],
+  ])('answers unavailable with %s, without touching KV or fetching, and logs no secret', async (_name, extra) => {
+    const env = gateEnv(extra)
+    expect(await confirmationAccess(env, PUBKEY)).toBe('unavailable')
+    expect(env.CACHE_KV.get).not.toHaveBeenCalled()
     expect(fetchMock).not.toHaveBeenCalled()
+    const logged = JSON.stringify((console.warn as ReturnType<typeof vi.fn>).mock.calls)
+    expect(logged).toContain('not configured')
+    expect(logged).not.toContain('secret')
+    expect(logged).not.toContain('access.example.test')
+    expect(logged).not.toContain(PUBKEY)
+  })
+
+  it('trims surrounding whitespace and trailing newlines on the URL and token', async () => {
+    fetchMock.mockResolvedValue(json({ isActive: true }))
+    const env = gateEnv({
+      CONFIRMATION_ACCESS_URL: '  https://access.example.test/v1/entitlements/\n',
+      CONFIRMATION_ACCESS_TOKEN: '  access-token\r\n',
+    })
+    expect(await confirmationAccess(env, PUBKEY)).toBe('yes')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(String(url)).toBe(`https://access.example.test/v1/entitlements/${PUBKEY}`)
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer access-token')
   })
 
   it('answers yes for a tester without a fetch or a cache write', async () => {
