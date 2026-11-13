@@ -6,7 +6,7 @@ import { accountStatusKey, blueskyAccountStatus, forgetBlueskyAccountStatus } fr
 // Whether a Bluesky account is still active on its own host, so a sign-in
 // link stops counting once the account is deleted or deactivated.
 
-const DID = 'did:plc:alice111111111111111111'
+const DID = 'did:plc:alice2222222222222222222'
 const PDS = 'https://pds.account.test'
 const PLC_URL = `https://plc.directory/${DID}`
 const STATUS_URL = `${PDS}/xrpc/com.atproto.sync.getRepoStatus?did=${encodeURIComponent(DID)}`
@@ -38,6 +38,11 @@ function stubFetch(status: () => Response, overrides: { plc?: () => Response } =
   })
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
+}
+
+// "Couldn't tell" is remembered only as such, for a minute: never as active or inactive.
+function rememberedUnknown(kv: ReturnType<typeof createEnv>['kv'], did = DID) {
+  expect(kv.put.mock.calls).toEqual([[accountStatusKey(did), 'unknown', { expirationTtl: 60 }]])
 }
 
 afterEach(() => {
@@ -95,11 +100,11 @@ describe('blueskyAccountStatus', () => {
     ['the PDS is unreachable', () => { throw new TypeError('network down') }],
     ['the PDS answers 502', () => new Response('bad gateway', { status: 502 })],
     ['the PDS answers 400 with another error', () => json({ error: 'InvalidRequest' }, 400)],
-  ])('answers null and remembers nothing when %s', async (_name, answer) => {
+  ])('answers null and remembers only that it could not tell when %s', async (_name, answer) => {
     const { env, kv } = createEnv()
     stubFetch(answer)
     expect(await blueskyAccountStatus(env, DID)).toBeNull()
-    expect(kv.put).not.toHaveBeenCalled()
+    rememberedUnknown(kv)
   })
 
   it('treats a PDS 404 as unknown', async () => {
@@ -107,7 +112,7 @@ describe('blueskyAccountStatus', () => {
     const { env, kv } = createEnv()
     stubFetch(() => json({ error: 'NotFound' }, 404))
     expect(await blueskyAccountStatus(env, DID)).toBeNull()
-    expect(kv.put).not.toHaveBeenCalled()
+    rememberedUnknown(kv)
   })
 
   it.each([
@@ -117,14 +122,14 @@ describe('blueskyAccountStatus', () => {
     const { env, kv } = createEnv()
     stubFetch(answer)
     expect(await blueskyAccountStatus(env, DID)).toBeNull()
-    expect(kv.put).not.toHaveBeenCalled()
+    rememberedUnknown(kv)
   })
 
   it('answers null when PLC is unreachable', async () => {
     const { env, kv } = createEnv()
     stubFetch(() => json({ did: DID, active: true }), { plc: () => { throw new TypeError('network down') } })
     expect(await blueskyAccountStatus(env, DID)).toBeNull()
-    expect(kv.put).not.toHaveBeenCalled()
+    rememberedUnknown(kv)
   })
 
   it('answers null when the whole lookup takes longer than 3 seconds', async () => {
@@ -138,14 +143,14 @@ describe('blueskyAccountStatus', () => {
     const pending = blueskyAccountStatus(env, DID)
     await vi.advanceTimersByTimeAsync(3000)
     expect(await pending).toBeNull()
-    expect(kv.put).not.toHaveBeenCalled()
+    rememberedUnknown(kv)
   })
 
   it.each([401, 403, 500, 429, 400])('answers null when PLC answers %s', async (status) => {
     const { env, kv } = createEnv()
     stubFetch(() => json({ did: DID, active: true }), { plc: () => json({ message: 'no' }, status) })
     expect(await blueskyAccountStatus(env, DID)).toBeNull()
-    expect(kv.put).not.toHaveBeenCalled()
+    rememberedUnknown(kv)
   })
 
   it.each([
@@ -156,7 +161,7 @@ describe('blueskyAccountStatus', () => {
     const { env, kv } = createEnv()
     stubFetch(() => json({ did: DID, active: true }), { plc })
     expect(await blueskyAccountStatus(env, DID)).toBeNull()
-    expect(kv.put).not.toHaveBeenCalled()
+    rememberedUnknown(kv)
   })
 
   it('answers null for a PDS service whose endpoint cannot be used', async () => {
@@ -165,6 +170,15 @@ describe('blueskyAccountStatus', () => {
       plc: () => json({ id: DID, service: [{ id: '#atproto_pds', serviceEndpoint: 'http://pds.account.test' }] }),
     })
     expect(await blueskyAccountStatus(env, DID)).toBeNull()
+  })
+
+  it.each(['did:plc:tooshort', 'did:plc:ABCDEFGHIJKLMNOPQRSTUVWX'])('answers null for the malformed did:plc %s without asking PLC', async (did) => {
+    // PLC answers 404 for a DID it doesn't know, which would read as "gone".
+    const { env } = createEnv()
+    const fetchMock = vi.fn(async () => new Response('', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await blueskyAccountStatus(env, did)).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('answers null for an unsupported DID method', async () => {
@@ -200,7 +214,7 @@ describe('blueskyAccountStatus', () => {
       const { env, kv } = createEnv()
       stubWeb(() => json({ message: 'ok' }))
       expect(await blueskyAccountStatus(env, WEB_DID)).toBeNull()
-      expect(kv.put).not.toHaveBeenCalled()
+      rememberedUnknown(kv, WEB_DID)
     })
 
     it('answers null for a document naming another DID, and inactive for its own without a PDS', async () => {
@@ -210,6 +224,23 @@ describe('blueskyAccountStatus', () => {
       const { env: env2 } = createEnv()
       stubWeb(() => json({ id: WEB_DID, service: [] }))
       expect(await blueskyAccountStatus(env2, WEB_DID)).toBe('inactive')
+    })
+
+    it('does not answer inactive for a document that writes the PDS service id in full', async () => {
+      // A DID document may write a service id as the DID followed by the
+      // fragment; that still lists a PDS. getPdsEndpoint reads only the short
+      // form, so the lookup can't tell and the link keeps counting.
+      const { env, kv } = createEnv()
+      stubWeb(() => json({ id: WEB_DID, service: [{ id: `${WEB_DID}#atproto_pds`, type: 'AtprotoPersonalDataServer', serviceEndpoint: 'https://pds.alice.example.com' }] }))
+      expect(await blueskyAccountStatus(env, WEB_DID)).toBeNull()
+      expect(kv.put).not.toHaveBeenCalledWith(accountStatusKey(WEB_DID), 'inactive', expect.anything())
+    })
+
+    it('does not answer inactive when the full-form service id spells the DID in another case', async () => {
+      // The document's id is accepted ignoring case, so the full-form service id is matched the same way.
+      const { env } = createEnv()
+      stubWeb(() => json({ id: 'did:web:Alice.example.com', service: [{ id: 'did:web:alice.example.com#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: 'https://pds.alice.example.com' }] }))
+      expect(await blueskyAccountStatus(env, WEB_DID)).toBeNull()
     })
 
     it('answers null when the host answers 200 with HTML', async () => {
@@ -225,6 +256,38 @@ describe('blueskyAccountStatus', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     stubFetch(() => json({ did: DID, active: true }))
     expect(await blueskyAccountStatus(env, DID)).toBe('active')
+  })
+
+  it('writes no "couldn\'t tell" when the cache cannot be read first', async () => {
+    const { env, kv } = createEnv()
+    kv.get.mockRejectedValue(new Error('kv down'))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    stubFetch(() => new Response('', { status: 502 }))
+    expect(await blueskyAccountStatus(env, DID)).toBeNull()
+    expect(kv.put).not.toHaveBeenCalled()
+  })
+
+  it('does not replace a fresh answer from a concurrent lookup with "couldn\'t tell"', async () => {
+    vi.useFakeTimers()
+    const { env, store } = createEnv()
+    let plcCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== PLC_URL) throw new Error('unexpected fetch')
+      // Lookup A's request hangs; lookup B's finds the DID tombstoned.
+      return ++plcCalls === 1 ? new Promise<Response>(() => {}) : new Response('', { status: 410 })
+    }))
+    const a = blueskyAccountStatus(env, DID)
+    expect(await blueskyAccountStatus(env, DID)).toBe('inactive')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(await a).toBeNull()
+    expect(store.get(accountStatusKey(DID))).toBe('inactive')
+  })
+
+  it('reads a remembered couldn\'t-tell answer back as null without fetching', async () => {
+    const { env } = createEnv({ [accountStatusKey(DID)]: 'unknown' })
+    const fetchMock = stubFetch(() => json({ did: DID, active: true }))
+    expect(await blueskyAccountStatus(env, DID)).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('reuses a remembered answer without fetching', async () => {

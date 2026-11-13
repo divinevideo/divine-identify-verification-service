@@ -9,7 +9,7 @@ import { PLATFORM_CHECK_TIME_BUDGET_MS, PlatformUnavailableError, withinTimeBudg
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import { confirmationAccess, type ConfirmationAccess } from '../oauth/confirmation-access'
 import { signInStanding } from '../oauth/signin-records'
-import { signInAccountStillMatches } from '../oauth/signin-account'
+import { blueskySignInAccount, signInAccountStillMatches } from '../oauth/signin-account'
 import { tidyClaim } from '../utils/tidy-claim'
 import { setPagePolicy } from '../content-security-policy'
 
@@ -112,15 +112,24 @@ interface PendingCheck {
   lapse: LapseCode
   now: number
   startedAt: number
-  // Set when a counted Bluesky sign-in no longer matches its account: the check
-  // only looks for other evidence, so any answer but "verified" says why the
-  // sign-in stopped counting.
-  afterMismatch?: 'moved' | 'inactive'
+  // Set when a counted Bluesky sign-in's claim now names another account: that
+  // account's DID, so the check asks about it without resolving the handle
+  // again. The check only looks for other evidence, so any answer but
+  // "verified" says the sign-in stopped counting.
+  movedTo?: string
 }
 
 // What a counted sign-in record settles to once its account is looked up: an
 // answer, or a check for a proof post or identity-link record.
-type SignInLook = { answer: VerifyResult } | { check: PendingCheck & Required<Pick<PendingCheck, 'afterMismatch'>> }
+type SignInLook = { answer: VerifyResult } | { check: PendingCheck & { movedTo: string } }
+
+// The least of the batch's 8 seconds worth starting a check after a mismatch
+// with. That check asks at least two hosts in a row (the account's DID
+// document, then its server's records), so with under a second left it would
+// almost always run out of time, and running out of time after a mismatch
+// answers signin_account_changed anyway: starting it would only spend a unit.
+const MIN_CHECK_AFTER_MISMATCH_MS = 1_000
+const tooLittleLeftAfterMismatch = (startedAt: number) => PLATFORM_CHECK_TIME_BUDGET_MS - (Date.now() - startedAt) < MIN_CHECK_AFTER_MISMATCH_MS
 
 // signIn stays a promise of its own so its account lookup holds up neither the
 // claims beside it nor the request's reservation for them.
@@ -196,25 +205,27 @@ async function signInAnswer(
 }
 
 // A counted Bluesky sign-in answers without a platform check while its account
-// still matches. One whose handle moved can still be verified by a proof post
-// or identity-link record on the account the handle points to now, so it is
-// checked for those (from the cache, or by a check of its own). An inactive
-// account answers that the account changed and spends no platform quota.
+// still matches. One whose claim now names another account can still be
+// verified by a proof post or identity-link record on that account, so it is
+// checked for those (from the cache, or by a check of its own). Everything
+// else answers that the account changed and spends no platform quota.
 async function signInLook(env: Bindings, oauthResult: OAuthVerification, pending: PendingCheck): Promise<SignInLook> {
   const { claim, tidy, tidied, key, now } = pending
-  const account = await signInAccountStillMatches(env, oauthResult, tidy.identity)
+  const account = await blueskySignInAccount(env, oauthResult, tidy.identity)
   if (account === 'matches') return { answer: signedInAnswer(claim, oauthResult, tidied) }
-  // An inactive account is answered as it stands: no cache read, no reservation,
-  // no Bluesky fetch. Only a handle that moved can be verified on the account it
-  // points to now.
-  if (account === 'inactive') return { answer: accountChangedAnswer(claim, now, account) }
+  // An inactive account, a look-alike spelling and a handle that no longer
+  // resolves are answered as they stand: no cache read, no reservation, no
+  // Bluesky fetch. None names an account a check could find evidence on.
+  if (typeof account === 'string') return { answer: accountChangedAnswer(claim, now, account) }
 
   // Only a verification stands in for the sign-in; anything else cached (a
   // failure, an outage) is no better than the sign-in's own answer.
   const cached = await getCached(env.CACHE_KV, key)
   if (cached?.verified) return { answer: cachedAnswer(claim, cached, tidied) }
-  if (cached) return { answer: accountChangedAnswer(claim, now, account) }
-  return { check: { ...pending, afterMismatch: account } }
+  if (cached) return { answer: accountChangedAnswer(claim, now, 'moved') }
+  // Whether enough of the budget is left is checked just before this check's
+  // reservation (verifyClaims), after any wait for the reservations before it.
+  return { check: { ...pending, movedTo: account.movedTo } }
 }
 
 // Everything that can answer a claim without asking its platform. Only what is
@@ -311,7 +322,7 @@ function refusedAnswer(check: PendingCheck, refusal: CheckRefusal): VerifyResult
 }
 
 async function checkPlatform(check: PendingCheck, env: Bindings): Promise<VerifyResult> {
-  const { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now, startedAt, afterMismatch } = check
+  const { claim: normalizedClaim, tidy, tidied, key, isSignInLink, lapse, now, startedAt, movedTo } = check
 
   // Convert hex pubkey to npub for content search
   const npub = hexToNpub(normalizedClaim.pubkey)
@@ -328,8 +339,9 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
     }
     result = await withinTimeBudget(
       // A sign-in link has no post, so only Bluesky's identity-link record is
-      // tried, never a post named "oauth".
-      verifier.verify(tidy.identity, isSignInLink ? '' : tidy.proof, npub),
+      // tried, never a post named "oauth". After a mismatch, the account is the
+      // one the sign-in's handle lookup found.
+      verifier.verify(movedTo ?? tidy.identity, isSignInLink ? '' : tidy.proof, npub),
       budgetMs,
       verifier.label,
     )
@@ -358,7 +370,7 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
 
     // The proof check after a sign-in stopped matching can only add a
     // verification, so an outage keeps the sign-in's own answer.
-    if (afterMismatch) return accountChangedAnswer(normalizedClaim, now, afterMismatch)
+    if (movedTo) return accountChangedAnswer(normalizedClaim, now, 'moved')
 
     return {
       platform: normalizedClaim.platform,
@@ -386,7 +398,7 @@ async function checkPlatform(check: PendingCheck, env: Bindings): Promise<Verify
   }
   await rememberResult(env, key, normalizedClaim.platform, cacheResult)
 
-  if (afterMismatch && !result.verified) return accountChangedAnswer(normalizedClaim, now, afterMismatch)
+  if (movedTo && !result.verified) return accountChangedAnswer(normalizedClaim, now, 'moved')
 
   // A Bluesky sign-in link with no identity-link record either: the cache keeps
   // Bluesky's own answer, and the person is told to sign in again.
@@ -464,18 +476,20 @@ export function verifyClaims(claims: readonly VerifyClaim[], env: Bindings, clie
       if ('answer' in settled) return settled.answer
       const { check } = settled
       const { pubkey, platform } = check.claim
-      const mine = late.then(() => reserveChecks(env.RATE_LIMIT_KV, [{ pubkey, platform }], clientIp))
-      late = mine.then(r => r.written, () => {})
+      // Checked here, after the wait for the reservations before this one,
+      // which can use up the time left; this reservation's own counter read
+      // is the one wait it doesn't cover.
+      const mine = late.then(() => tooLittleLeftAfterMismatch(check.startedAt) ? null : reserveChecks(env.RATE_LIMIT_KV, [{ pubkey, platform }], clientIp))
+      late = mine.then(r => r?.written, () => {})
       // Everything but a verification after a mismatch says why the sign-in
-      // stopped counting, a refused check included.
-      const { afterMismatch } = check
-      let mineReservation: CheckReservation
+      // stopped counting, a refused check and too little time left included.
+      let mineReservation: CheckReservation | null
       try {
         mineReservation = await mine
       } catch {
-        return accountChangedAnswer(check.claim, check.now, afterMismatch)
+        return accountChangedAnswer(check.claim, check.now, 'moved')
       }
-      if (mineReservation.refusals[0]) return accountChangedAnswer(check.claim, check.now, afterMismatch)
+      if (!mineReservation || mineReservation.refusals[0]) return accountChangedAnswer(check.claim, check.now, 'moved')
       const [result] = await Promise.all([checkPlatform(check, env), mineReservation.written])
       return result
     }

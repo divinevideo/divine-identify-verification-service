@@ -428,6 +428,112 @@ describe('Bluesky sign-in links', () => {
       })
     })
 
+    it('a moved handle is looked up once: the check uses the account the lookup found', async () => {
+      movedFetch([LINK_RECORD])
+      const { env, store } = makeEnv()
+      movedRecord(store)
+      const answer = await single(env, 'bluesky', 'alice.bsky.social', 'oauth')
+      expect(answer).toMatchObject({ verified: true, method: 'identity_link' })
+      expect(urls().filter(u => u.includes('com.atproto.identity.resolveHandle'))).toHaveLength(1)
+    })
+
+    // Divine's apps stop waiting at 10 seconds and keep no answer for any claim
+    // in the call, so the check after a mismatch gets only what is left of the
+    // batch's 8 seconds (src/platforms/base.ts).
+    describe('the time a batch waits', () => {
+      afterEach(() => { vi.useRealTimers() })
+
+      // The handle lookup answers after `ms`; every host the check after it asks never answers.
+      function slowLookup(ms: number) {
+        fetchMock.mockImplementation((input: RequestInfo | URL) => {
+          if (String(input).startsWith('https://bsky.social/xrpc/com.atproto.identity.resolveHandle')) {
+            return new Promise<Response>(resolve => setTimeout(() => resolve(json({ did: DID })), ms))
+          }
+          return new Promise<Response>(() => {})
+        })
+      }
+
+      function separateRateLimits(env: Bindings) {
+        const rateLimit = new Map<string, string>()
+        env.RATE_LIMIT_KV = {
+          get: async (key: string) => rateLimit.get(key) ?? null,
+          put: async (key: string, value: string) => { rateLimit.set(key, value) },
+          delete: async (key: string) => { rateLimit.delete(key) },
+          list: async () => ({ keys: [], list_complete: true, caches_used: 0 }),
+        } as unknown as KVNamespace
+        return () => [...rateLimit.keys()].filter(k => k.includes(PUBKEY))
+      }
+
+      it('a slow handle lookup and a host that never answers still answer within the 8 seconds', async () => {
+        vi.useFakeTimers()
+        slowLookup(2_800)
+        const { env, store } = makeEnv()
+        movedRecord(store)
+        let settled = false
+        const answer = batch(env, 'bluesky', 'alice.bsky.social', PROOF).finally(() => { settled = true })
+        await vi.advanceTimersByTimeAsync(8_000)
+        expect(settled).toBe(true)
+        expect(await answer).toMatchObject({ verified: false, code: 'signin_account_changed', error: CHANGED })
+      })
+
+      it('with under a second of the batch left, answers signin_account_changed at once, without a unit or a check', async () => {
+        vi.useFakeTimers()
+        // The slow lookup stands in for whatever used the time before it (a
+        // Confirmation check, the handle lookup, the account status lookup).
+        slowLookup(7_200)
+        const { env, store } = makeEnv()
+        movedRecord(store)
+        const spent = separateRateLimits(env)
+        let settled = false
+        const answer = batch(env, 'bluesky', 'alice.bsky.social', PROOF).finally(() => { settled = true })
+        await vi.advanceTimersByTimeAsync(7_200)
+        expect(settled).toBe(true)
+        expect(await answer).toMatchObject({ verified: false, code: 'signin_account_changed', error: CHANGED })
+        expect(spent()).toEqual([])
+        expect(urls().some(u => u === `https://plc.directory/${DID}` || u.includes('com.atproto.repo.listRecords') || u.includes('getPostThread'))).toBe(false)
+      })
+
+      it('re-checks the time left after waiting for the reservations before it, and spends no unit with under a second left', async () => {
+        vi.useFakeTimers()
+        fetchMock.mockImplementation((input: RequestInfo | URL) => {
+          if (String(input).startsWith('https://bsky.social/xrpc/com.atproto.identity.resolveHandle')) {
+            return new Promise<Response>(resolve => setTimeout(() => resolve(json({ did: DID })), 100))
+          }
+          return new Promise<Response>(() => {})
+        })
+        const { env, store } = makeEnv()
+        movedRecord(store)
+        // The batch's own reservation (for the GitHub claim beside it) takes 7.5 s
+        // to write, and the moved handle's reservation waits for it.
+        const rateLimit = new Map<string, string>()
+        const checkUnitWrites: string[] = []
+        env.RATE_LIMIT_KV = {
+          get: async (key: string) => rateLimit.get(key) ?? null,
+          put: async (key: string, value: string) => {
+            if (/^rl:(ipchk|pk|plat):/.test(key)) {
+              checkUnitWrites.push(key)
+              await new Promise(resolve => setTimeout(resolve, 7_500))
+            }
+            rateLimit.set(key, value)
+          },
+          delete: async (key: string) => { rateLimit.delete(key) },
+          list: async () => ({ keys: [], list_complete: true, caches_used: 0 }),
+        } as unknown as KVNamespace
+        const res = worker.fetch(new Request('https://verifier.divine.video/verify', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ claims: [
+            { platform: 'bluesky', identity: 'alice.bsky.social', proof: PROOF, pubkey: PUBKEY },
+            { platform: 'github', identity: 'alice', proof: 'abcdef0123456789abcdef0123456789', pubkey: PUBKEY },
+          ] }),
+        }), env)
+        await vi.advanceTimersByTimeAsync(16_000)
+        const { results } = await (await res).json() as { results: Answer[] }
+        expect(results[0]).toMatchObject({ verified: false, code: 'signin_account_changed', error: CHANGED })
+        expect(checkUnitWrites.filter(k => k.startsWith('rl:plat:bluesky:'))).toEqual([])
+        expect(urls().some(u => u === `https://plc.directory/${DID}` || u.includes('com.atproto.repo.listRecords'))).toBe(false)
+      })
+    })
+
     it('an outage on the proof check after a mismatch answers signin_account_changed', async () => {
       movedFetch('throw', () => new Response('', { status: 503 }))
       const { env, store } = makeEnv()

@@ -194,7 +194,7 @@ describe('POST /verify counts every platform check against the limits', () => {
 
   describe('a Bluesky sign-in whose handle now points to another account', () => {
     const HANDLE = 'alice.bsky.social'
-    const NOW_DID = 'did:plc:alicenow1111111111111111'
+    const NOW_DID = 'did:plc:alicenow2222222222222222'
     const movedClaim = { platform: 'bluesky', identity: HANDLE, proof: '3lbcdefghijk2', pubkey: PUBKEY }
 
     async function moved(env: Bindings) {
