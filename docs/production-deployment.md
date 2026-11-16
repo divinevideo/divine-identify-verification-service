@@ -101,3 +101,30 @@ part of local validation or PR publication.
 
 References: [Wrangler versions and deployments](https://developers.cloudflare.com/workers/wrangler/commands/workers/#versions),
 [rollback limitations](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/).
+
+## Keeping existing Bluesky sign-in links (one time, #90)
+
+Before #90, every confirmed sign-in link was stored for 30 days. After the #90
+deploy, new confirmed Bluesky links saved with the account's DID are stored with
+no expiry. `scripts/keep-bluesky-links.mjs` gives the links already stored the
+same treatment: it re-puts each eligible record with no expiry and `kept: true`
+added, and changes nothing else.
+
+Run it only on Matt's go, right after the #90 deploy is live. It needs a
+`CLOUDFLARE_API_TOKEN` with Workers KV Storage edit access.
+
+1. Dry run: `node scripts/keep-bluesky-links.mjs`. It writes nothing and prints
+   one JSON line of counts (`listed`, `expiring`, `eligible`, `kept`, `changed`,
+   `skipped`). `kept` is 0 on a dry run.
+2. Write: `node scripts/keep-bluesky-links.mjs --write` (optionally
+   `--pace-ms N`, default 300, the pause between API calls).
+
+Running it again is safe: records already stored with no expiry are skipped. A
+record that changed or was removed between the script reading and writing it is
+left alone and counted in `changed`. If Cloudflare rate-limits the run, the
+script stops with a message; run it again to continue. It prints counts only,
+never key names, values or URLs.
+
+Links stored more than 30 days before the deploy have already expired and can't
+be kept; their owners link again. The script is transitional: remove it once it
+has run in production (`TODO(#90)`).
