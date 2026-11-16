@@ -70,9 +70,9 @@ async function link(env: Bindings, platform: string, identity: string, proof: st
 const ROUTES = [['single', single], ['batch', batch], ['link', link]] as const
 const ACCOUNTS = [['twitter', 'jack'], ['youtube', '@somechannel'], ['tiktok', 'someone']] as const
 
-function markedRecord(store: Map<string, string>, platform: string, identity: string, { marked = true, ageDays = 0 } = {}) {
-  store.set(oauthVerificationKey(platform as 'twitter', identity, PUBKEY), JSON.stringify({
-    platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth',
+function markedRecord(store: Map<string, string>, platform: string, identity: string, { marked = true, ageDays = 0, pubkey = PUBKEY } = {}) {
+  store.set(oauthVerificationKey(platform as 'twitter', identity, pubkey), JSON.stringify({
+    platform, identity, pubkey, verified: true, method: 'oauth',
     checked_at: Math.floor(Date.now() / 1000) - ageDays * 24 * 60 * 60, confirmed: true,
     ...(marked ? { access_required: true } : {}),
   }))
@@ -224,10 +224,7 @@ describe('gate on, edge cases', () => {
     const OTHER = 'cd'.repeat(32)
     const { env, store } = makeEnv()
     markedRecord(store, 'twitter', 'jack')
-    store.set(oauthVerificationKey('twitter', 'jack', OTHER), JSON.stringify({
-      platform: 'twitter', identity: 'jack', pubkey: OTHER, verified: true, method: 'oauth',
-      checked_at: Math.floor(Date.now() / 1000), confirmed: true, access_required: true,
-    }))
+    markedRecord(store, 'twitter', 'jack', { pubkey: OTHER })
     const asked: string[] = []
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input)
