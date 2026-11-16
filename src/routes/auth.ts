@@ -17,6 +17,7 @@ import { startBlueskyOAuth, handleBlueskyCallback, blueskyClientMetadata } from 
 import { startYouTubeOAuth, handleYouTubeCallback } from '../oauth/youtube'
 import { startTikTokOAuth, handleTikTokCallback, isTikTokOAuthUsable } from '../oauth/tiktok'
 import { confirmationGate } from '../oauth/confirmation-gate'
+import { confirmationAccess } from '../oauth/confirmation-access'
 import { signInLinksAreOff } from '../oauth/signin-switch'
 import signInConfirm from './signin-confirm'
 
@@ -249,6 +250,58 @@ auth.post('/nostr/login', async (c) => {
     pubkey: verification.event.pubkey,
     method: 'nostr_nip98',
   })
+})
+
+// Whether the signed-in account has Divine Confirmation. The Divine app asks
+// before it shows the sign-in button or the card offering Confirmation.
+// GET /auth/confirmation-access
+// Authorization: Nostr <base64 NIP-98 event whose u tag is this URL and method GET>
+// Answers 200 {"access":"yes"|"no"|"unavailable"}. Refusals carry no code: the
+// app reads any other status or body as unknown.
+//
+// Only the signer's own pubkey is ever looked up. Nothing in the query or a
+// body can name another, so the answer never reveals anyone else's status.
+// The answer does not depend on CONFIRMATION_GATE: apps act on it only while
+// /platforms reports signin_requires.
+//
+// No replay store: a captured header replays only inside NIP-98's 60 second
+// window, and only ever answers about its own signer, which reveals nothing
+// its holder could not already learn.
+auth.get('/confirmation-access', async (c) => {
+  // Every answer is about the signer of this request, so none is cached or shared.
+  c.header('Cache-Control', 'no-store')
+  c.header('Vary', 'Authorization')
+  // One line per answer, never the pubkey, the header or the IP.
+  const refuse = (status: 400 | 401 | 405 | 429, error: string) => {
+    console.info(`Confirmation access: refused, ${status}`)
+    return c.json({ error }, status)
+  }
+
+  // Hono also serves HEAD from a GET route, but the event is checked as GET.
+  if (c.req.method !== 'GET') {
+    c.header('Allow', 'GET')
+    return refuse(405, 'Method not allowed')
+  }
+
+  const clientIp = c.req.header('cf-connecting-ip') || 'unknown'
+  const ipLimit = await checkRateLimit(c.env.RATE_LIMIT_KV, RATE_LIMITS.ip, clientIp)
+  if (!ipLimit.allowed) {
+    return refuse(429, 'Rate limit exceeded')
+  }
+
+  const authorization = readNostrAuthorization(c.req.header('authorization'))
+  if (authorization.kind !== 'event') {
+    return refuse(400, 'Missing or invalid Authorization header: expected Nostr and a base64 NIP-98 event')
+  }
+  // The expected URL is derived as the header-form unlink on /auth/oauth/revoke does.
+  const verification = await verifyNip98Event(authorization.event, new URL(c.req.url).toString(), 'GET')
+  if (!verification.ok) {
+    return refuse(verification.status, verification.error)
+  }
+
+  const access = await confirmationAccess(c.env, verification.event.pubkey)
+  console.info(`Confirmation access: ${access}`)
+  return c.json({ access })
 })
 
 const OAUTH_PLATFORMS = new Set(['twitter', 'bluesky', 'youtube', 'tiktok'])

@@ -53,6 +53,14 @@ export function renderDocsPage(opts: DocsPageOptions): string {
         <li><code>confirmation_required</code> (403: linking by sign-in needs Divine Confirmation; the code stays usable for its 10 minutes);</li>
         <li><code>confirmation_unavailable</code> (503: Confirmation could not be checked; try again);</li>`
     : ''
+  const confirmationAccessDocs = confirmationGateOn
+    ? `
+
+      <h3>Check Confirmation access</h3>
+      <pre>GET ${origin}/auth/confirmation-access
+Authorization: Nostr &lt;base64 NIP-98 event&gt;</pre>
+      <p>Answers whether the account that signed the request has Divine Confirmation: <code>{"access":"yes"}</code>, <code>{"access":"no"}</code>, or <code>{"access":"unavailable"}</code> when it could not be checked. The NIP-98 event (kind 27235) must carry this exact URL in its <code>u</code> tag and <code>GET</code> in its <code>method</code> tag, and be at most 60 seconds old. Only the signer's own account is checked. A missing or malformed header or event answers 400, a signature that does not verify or a stale, mismatched URL or method 401, and the rate limit 429. Treat any other answer as unknown.</p>`
+    : ''
   const confirmationHealthNote = confirmationGateOn
     ? ', and <code>confirmation_gate</code>: the Confirmation gate mode in effect'
     : ''
@@ -359,7 +367,7 @@ Content-Type: application/json
       <h3>Check OAuth Status</h3>
       <pre>GET ${origin}/auth/bluesky/status?pubkey=hex64&amp;identity=example.bsky.social</pre>
 
-      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${oauthCheckedFor}. A sign-in counts only after you confirm it by publishing. A new confirmed Bluesky sign-in saved with its DID is stored until it is unlinked. Account checks do not change the stored record; an inactive account stops counting and counts again if a later check finds it active. Existing Bluesky links keep their original 30-day expiry; after expiry, sign in and confirm once more to get a record with no expiry. Other sign-in links last ${FIXED_SIGNIN_LIFETIME_DAYS} days from when you confirmed them, and after that you sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting unless the account's host reports the account inactive. A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated, suspended or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting and the host is asked again after a minute.${youtubeAccountCheckNote}${tiktokOAuthHistoryNote}</div>
+      <div class="note">A sign-in (OAuth) record is checked first, before cached results and proof posts, for ${oauthCheckedFor}. A sign-in counts only after you confirm it by publishing. A new confirmed Bluesky sign-in saved with its DID is stored until it is unlinked. Account checks do not change the stored record; an inactive account stops counting and counts again if a later check finds it active. Existing Bluesky links keep their original 30-day expiry; after expiry, sign in and confirm once more to get a record with no expiry. Other sign-in links last ${FIXED_SIGNIN_LIFETIME_DAYS} days from when you confirmed them, and after that you sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting unless the account's host reports the account inactive. A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated, suspended or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting and the host is asked again after a minute.${youtubeAccountCheckNote}${tiktokOAuthHistoryNote}</div>${confirmationAccessDocs}
     </section>
 
     <section id="other">
