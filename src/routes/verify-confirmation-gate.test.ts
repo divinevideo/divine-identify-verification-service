@@ -224,6 +224,29 @@ describe('gate on, edge cases', () => {
     expect(accessWrites).toHaveLength(1)
   })
 
+  it('fetches and caches Confirmation access once when one pubkey batches a marked sign-in link, a marked Bluesky sign-in link and a proof post', async () => {
+    const { env, store, kv } = makeEnv()
+    markedRecord(store, 'twitter', 'jack')
+    markedRecord(store, 'bluesky', BSKY)
+    access('no', blueskyRoutes([]))
+    // Bluesky sign-in links and proof posts on sign-in platforms read the sign-in record on a path of their own.
+    const proof = 'https://x.com/jack/status/1234567890123456789'
+    const claim = storageForm({ platform: 'twitter', identity: 'jack', proof, pubkey: PUBKEY })!
+    store.set(cacheKey('twitter', claim.identity, claim.proof, PUBKEY), JSON.stringify({ verified: true, method: 'proof_post', checked_at: 1, type: 'verified' }))
+
+    const results = await postClaims(env, [
+      { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
+      { platform: 'bluesky', identity: BSKY, proof: 'oauth', pubkey: PUBKEY },
+      { platform: 'twitter', identity: 'jack', proof, pubkey: PUBKEY },
+    ])
+
+    expect(results[0]).toMatchObject({ verified: false, code: 'signin_needs_confirmation' })
+    expect(results[1]).toMatchObject({ verified: false, code: 'signin_needs_confirmation' })
+    expect(results[2]).toMatchObject({ verified: true, method: 'proof_post' })
+    expect(accessCalls()).toBe(1)
+    expect(kv.put.mock.calls.filter(([key]) => key === confirmationAccessKey(PUBKEY))).toHaveLength(1)
+  })
+
   it('keeps Confirmation access per pubkey when one batch mixes marked sign-in links for two pubkeys', async () => {
     const OTHER = 'cd'.repeat(32)
     const { env, store, kv } = makeEnv()
