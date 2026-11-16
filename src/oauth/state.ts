@@ -30,14 +30,33 @@ export async function deleteOAuthState(kv: KVNamespace, stateId: string): Promis
   await kv.delete(oauthStateKey(stateId))
 }
 
-// A confirmed sign-in is stored for 30 days, and an unconfirmed one for a day.
-// Storage and the age check (signin-lifetime.ts) end a record at the same 30
-// days, so a rollback to code without the age check still ends it.
-// TODO(#90): keep Bluesky sign-ins until they are unlinked, once unlinking works for everyone (#76).
+// How long a record kept for an account that is gone stays stored after retiring.
+export const RETIRE_TTL_SECONDS = FIXED_SIGNIN_LIFETIME_DAYS * 24 * 60 * 60
+
+// A confirmed Bluesky sign-in is stored with no expiry and marked `kept`, so it
+// lasts until its owner unlinks it (#90). Every other confirmed sign-in is
+// stored for 30 days, and an unconfirmed one for a day. The age check
+// (signin-lifetime.ts) counts a confirmed Bluesky record at any age. If the
+// code is rolled back to before #90, a kept record stays stored until it is
+// unlinked, but the older age check stops counting it after 30 days, while
+// other records still end at 30 days as before.
 export async function storeOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
   const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
-  const ttl = verification.confirmed === true ? FIXED_SIGNIN_LIFETIME_DAYS * 24 * 60 * 60 : OAUTH_VERIFICATION_TTL
-  await kv.put(key, JSON.stringify(verification), { expirationTtl: ttl })
+  const { kept: _kept, ...record } = verification
+  if (record.platform === 'bluesky' && record.confirmed === true) {
+    await kv.put(key, JSON.stringify({ ...record, kept: true }))
+    return
+  }
+  const ttl = record.confirmed === true ? RETIRE_TTL_SECONDS : OAUTH_VERIFICATION_TTL
+  await kv.put(key, JSON.stringify(record), { expirationTtl: ttl })
+}
+
+// Gives a kept record an expiry again, for an account that is gone for the long
+// term, so it stops lingering forever. It ends after 30 days like other links.
+export async function retireOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
+  const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
+  const { kept: _kept, ...record } = verification
+  await kv.put(key, JSON.stringify(record), { expirationTtl: RETIRE_TTL_SECONDS })
 }
 
 export async function getOAuthVerification(

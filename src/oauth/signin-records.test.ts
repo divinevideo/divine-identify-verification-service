@@ -29,15 +29,15 @@ const bluesky = { platform: 'bluesky' as const, identity: HANDLE, account_id: DI
 const CONFIRMATION = { event_id: 'e'.repeat(64), created_at: 1_760_000_000 }
 
 describe('saving a sign-in', () => {
-  it('saves a confirmed Bluesky sign-in under the handle and the DID for 30 days, with the confirming event', async () => {
+  it('saves a confirmed Bluesky sign-in under the handle and the DID with no expiry, with the confirming event', async () => {
     const { env, store, kv } = createEnv()
     await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
     for (const identity of [HANDLE, DID]) {
       expect(read(store, 'bluesky', identity)).toMatchObject({
         identity, account_id: DID, handle: HANDLE, confirmed: true,
-        confirm_event_id: 'e'.repeat(64), confirm_created_at: 1_760_000_000,
+        confirm_event_id: 'e'.repeat(64), confirm_created_at: 1_760_000_000, kept: true,
       })
-      expect(ttlOf(kv, 'bluesky', identity)).toEqual({ expirationTtl: 2592000 })
+      expect(ttlOf(kv, 'bluesky', identity)).toBeUndefined()
     }
   })
 
@@ -152,7 +152,7 @@ describe('saving a sign-in', () => {
     }
   })
 
-  it('signing in again restarts the 30 days for the handle and the DID record', async () => {
+  it('signing in again refreshes the handle and the DID record, still with no expiry', async () => {
     const T = 1_800_000_000
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(T * 1000)
@@ -164,39 +164,30 @@ describe('saving a sign-in', () => {
       for (const identity of [HANDLE, DID]) expect(read(store, 'bluesky', identity).checked_at).toBe(T + 20 * 24 * 60 * 60)
       const writes = kv.put.mock.calls.filter(c => String(c[0]).startsWith('oauth_verified:'))
       expect(writes).toHaveLength(4)
-      for (const write of writes) expect(write[2]).toEqual({ expirationTtl: 2592000 })
+      for (const write of writes) expect(write[2]).toBeUndefined()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('lets an unconfirmed Bluesky sign-in replace a confirmed pair past 30 days, and not one within', async () => {
+  it('does not let an unconfirmed Bluesky sign-in replace a confirmed pair, however old', async () => {
     const NOW = 1_800_000_000
     const DAY = 24 * 60 * 60
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(NOW * 1000)
     try {
-      for (const [ageDays, replaced] of [[31, true], [29, false]] as const) {
+      for (const ageDays of [29, 31, 400]) {
         const { env, store, kv } = createEnv({ SIGNIN_CONFIRMATION: 'optional' })
         for (const identity of [HANDLE, DID]) {
           store.set(oauthVerificationKey('bluesky', identity, PUBKEY), JSON.stringify({
             platform: 'bluesky', identity, pubkey: PUBKEY, verified: true, method: 'oauth',
-            checked_at: NOW - ageDays * DAY, account_id: DID, handle: HANDLE, confirmed: true,
+            checked_at: NOW - ageDays * DAY, account_id: DID, handle: HANDLE, confirmed: true, kept: true,
           }))
         }
         await saveSignIn(env, PUBKEY, bluesky, null)
         const writes = kv.put.mock.calls.filter(c => String(c[0]).startsWith('oauth_verified:'))
-        if (replaced) {
-          expect(writes.map(c => c[0]).sort()).toEqual([oauthVerificationKey('bluesky', HANDLE, PUBKEY), oauthVerificationKey('bluesky', DID, PUBKEY)].sort())
-          for (const identity of [HANDLE, DID]) {
-            expect(read(store, 'bluesky', identity).confirmed).toBeUndefined()
-            expect(read(store, 'bluesky', identity).checked_at).toBe(NOW)
-            expect(ttlOf(kv, 'bluesky', identity)).toEqual({ expirationTtl: 86400 })
-          }
-        } else {
-          expect(writes).toHaveLength(0)
-          for (const identity of [HANDLE, DID]) expect(read(store, 'bluesky', identity).confirmed).toBe(true)
-        }
+        expect(writes).toHaveLength(0)
+        for (const identity of [HANDLE, DID]) expect(read(store, 'bluesky', identity).confirmed).toBe(true)
       }
     } finally {
       vi.useRealTimers()
@@ -305,13 +296,13 @@ describe('how long a sign-in record counts', () => {
     expect(await countsAt({}, { checked_at: NOW - DAY - 1 })).toBe(false)
   })
 
-  it('a confirmed Bluesky record with a DID does not count 400 days on', async () => {
+  it('a confirmed Bluesky record with a DID still counts 400 days on', async () => {
     const { env, store } = createEnv(required)
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), JSON.stringify({
       platform: 'bluesky', identity: HANDLE, pubkey: PUBKEY, verified: true, method: 'oauth',
       checked_at: NOW - 400 * DAY, account_id: DID, handle: HANDLE, confirmed: true,
     }))
-    expect(await getCountedSignIn(env, 'bluesky', HANDLE, PUBKEY)).toBeNull()
+    expect(await getCountedSignIn(env, 'bluesky', HANDLE, PUBKEY)).not.toBeNull()
   })
 })
 

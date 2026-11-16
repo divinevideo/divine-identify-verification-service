@@ -123,11 +123,8 @@ describe.each([
     expect(await check(blueskyEnv(NOW - 29 * DAY).env)).toMatchObject({ verified: true, method: 'oauth' })
   })
 
-  it('is not verified 31 days after it was confirmed', async () => {
-    const result = await check(blueskyEnv(NOW - 31 * DAY).env)
-    expect(result.verified).toBe(false)
-    expect(result.method).not.toBe('oauth')
-    expect(result.code).toBe('signin_expired')
+  it('is still verified 400 days after it was confirmed, since it is kept until unlinked', async () => {
+    expect(await check(blueskyEnv(NOW - 400 * DAY).env)).toMatchObject({ verified: true, method: 'oauth' })
   })
 
   it('writes no sign-in record when verifying a confirmed Bluesky link', async () => {

@@ -31,8 +31,8 @@ describe('whether a sign-in record is current', () => {
     ['confirmed TikTok, 29 days', true, record('tiktok', 29 * DAY, confirmed)],
     ['confirmed TikTok, exactly 30 days', true, record('tiktok', 30 * DAY, confirmed)],
     ['confirmed TikTok, 30 days and a second', false, record('tiktok', 30 * DAY + 1, confirmed)],
-    ['confirmed Bluesky with a DID, 400 days', false, record('bluesky', 400 * DAY, withDid)],
-    ['confirmed Bluesky without a DID, 31 days', false, record('bluesky', 31 * DAY, confirmed)],
+    ['confirmed Bluesky with a DID, 400 days', true, record('bluesky', 400 * DAY, withDid)],
+    ['confirmed Bluesky without a DID, 31 days', true, record('bluesky', 31 * DAY, confirmed)],
     ['unconfirmed TikTok, a day and a second', false, record('tiktok', DAY + 1)],
     ['unconfirmed Bluesky with a DID, a day and a second', false, record('bluesky', DAY + 1, { account_id: withDid.account_id })],
     ['unconfirmed Twitter, exactly a day', true, record('twitter', DAY)],
@@ -59,9 +59,23 @@ describe('whether a sign-in record is current', () => {
     expect(signInIsCurrent(rec, NOW)).toBe(false)
   })
 
-  it('counts a confirmed Bluesky record with a DID for 30 days, then not', () => {
-    expect(signInIsCurrent(record('bluesky', 30 * DAY, withDid), NOW)).toBe(true)
-    expect(signInIsCurrent(record('bluesky', 30 * DAY + 1, withDid), NOW)).toBe(false)
+  it('counts a confirmed Bluesky record 31 days old', () => {
+    expect(signInIsCurrent(record('bluesky', 31 * DAY, confirmed), NOW)).toBe(true)
+  })
+
+  it('counts a confirmed Bluesky record 3 years old', () => {
+    expect(signInIsCurrent(record('bluesky', 3 * 365 * DAY, confirmed), NOW)).toBe(true)
+  })
+
+  it('does not count a confirmed Twitter record 31 days old', () => {
+    expect(signInIsCurrent(record('twitter', 31 * DAY, confirmed), NOW)).toBe(false)
+  })
+
+  it('does not count an unconfirmed Bluesky record 25 hours old', () => {
+    expect(signInIsCurrent(record('bluesky', 25 * 60 * 60), NOW)).toBe(false)
+  })
+
+  it('does not count a confirmed Bluesky record without a numeric checked_at', () => {
     const undated = { ...record('bluesky', 0, withDid), checked_at: undefined } as unknown as OAuthVerification
     expect(signInIsCurrent(undated, NOW)).toBe(false)
   })

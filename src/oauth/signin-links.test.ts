@@ -91,10 +91,10 @@ async function check(env: Bindings, identity = HANDLE) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('how long a sign-in record lasts', () => {
-  it('keeps a confirmed Bluesky sign-in for 30 days', async () => {
+  it('keeps a confirmed Bluesky sign-in with no expiry', async () => {
     const { kv } = createEnv()
     await storeOAuthVerification(kv as unknown as KVNamespace, { platform: 'bluesky', identity: HANDLE, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1, account_id: DID, confirmed: true })
-    expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 2592000 })
+    expect(kv.put.mock.calls[0][2]).toBeUndefined()
   })
 
   it('keeps an unconfirmed Bluesky sign-in for a day', async () => {

@@ -90,10 +90,10 @@ describe('sign-in records answer every check the same way', () => {
     expect(await check(envWith({ ...vars, SIGNIN_LINKS_OFF: 'tiktok' }, { confirmed: true }, TIKTOK), TIKTOK)).toBe(false)
   })
 
-  it.each(CHECKS)('%s: a confirmed X or Bluesky record past its lifetime does not count', async (_name, check) => {
+  it.each(CHECKS)('%s: a confirmed X record past its lifetime does not count, and a confirmed Bluesky record still counts', async (_name, check) => {
     const checkedAt = Math.floor(Date.now() / 1000) - 31 * 24 * 60 * 60
     expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required' }, { confirmed: true, checked_at: checkedAt }))).toBe(false)
     const blueskyRecord = { confirmed: true, checked_at: checkedAt, account_id: 'did:plc:alice111111111111111111', handle: BLUESKY.identity }
-    expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required' }, blueskyRecord, BLUESKY), BLUESKY)).toBe(false)
+    expect(await check(envWith({ SIGNIN_CONFIRMATION: 'required' }, blueskyRecord, BLUESKY), BLUESKY)).toBe(true)
   })
 })

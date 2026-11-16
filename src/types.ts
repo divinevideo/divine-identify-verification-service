@@ -83,6 +83,8 @@ export interface OAuthVerification {
   // The confirming event, so a later unlink can tell a newer list from an older one (#76).
   confirm_event_id?: string
   confirm_created_at?: number
+  // Stored with no expiry (#90). Set only by storeOAuthVerification, for confirmed Bluesky records.
+  kept?: true
   // Saved while the Confirmation gate was on, so it counts only while the
   // owner has Confirmation and the gate is on. Records without it are never checked.
   access_required?: true
