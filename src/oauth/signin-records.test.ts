@@ -203,6 +203,13 @@ describe('saving a sign-in', () => {
     }
   })
 
+  it('a fresh sign-in forgets the cached account answer', async () => {
+    const { env, store } = createEnv()
+    store.set(`bsky_account_status:${DID}`, 'inactive')
+    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
+    expect(store.has(`bsky_account_status:${DID}`)).toBe(false)
+  })
+
   it('removes the record left under the account\'s previous handle', async () => {
     const { env, store } = createEnv()
     await saveSignIn(env, PUBKEY, { ...bluesky, identity: 'old.bsky.social', handle: 'old.bsky.social' }, CONFIRMATION)

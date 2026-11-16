@@ -3,6 +3,7 @@ import { fetchPublic } from './utils/safe-fetch'
 import { discardBody, fetchFromPlatform, PlatformUnavailableError, readJson, throwIfUnanswered } from './platforms/base'
 
 export type DidDocument = {
+  id?: string
   alsoKnownAs?: string[]
   service?: Array<{ id?: string; serviceEndpoint?: string }>
 }
@@ -86,20 +87,40 @@ export async function resolveHandle(handle: string): Promise<string | null> {
   return typeof resolved?.did === 'string' && resolved.did ? resolved.did : null
 }
 
-export async function resolveDidDocument(did: string): Promise<DidDocument | null> {
-  if (did.startsWith('did:plc:')) {
-    return await lookUp('PLC directory', `https://plc.directory/${did}`) as DidDocument | null
-  }
-
+/**
+ * Where a DID's document is published, and how to ask for it: the PLC
+ * directory for a did:plc, the host's did.json for a did:web, which is the
+ * person's own host and so is fetched with fetchPublic. Null for another
+ * method, a malformed did:web, or a did:web host this service won't call.
+ */
+export function didDocumentSource(did: string): { url: string; label: string; fetcher?: Fetcher } | null {
+  if (did.startsWith('did:plc:')) return { url: `https://plc.directory/${did}`, label: 'PLC directory' }
   if (did.startsWith('did:web:')) {
     const domain = didWebHost(did)
     if (!domain) return null
-    const didWebUrl = `https://${domain}/.well-known/did.json`
-    if (!isSafeUrl(didWebUrl)) return null
-    return await lookUp('did:web host', didWebUrl, fetchPublic) as DidDocument | null
+    const url = `https://${domain}/.well-known/did.json`
+    return isSafeUrl(url) ? { url, label: 'did:web host', fetcher: fetchPublic } : null
   }
-
   return null
+}
+
+export async function resolveDidDocument(did: string): Promise<DidDocument | null> {
+  const source = didDocumentSource(did)
+  if (!source) return null
+  return await lookUp(source.label, source.url, source.fetcher) as DidDocument | null
+}
+
+/**
+ * Whether a DID document lists an #atproto_pds service at all, usable endpoint
+ * or not. A service id may be written short, or in full as the document's DID
+ * followed by the fragment; both name the same service. The full form is
+ * compared ignoring case, as the account status lookup compares the
+ * document's id with the DID (src/oauth/bluesky-account-status.ts).
+ */
+export function hasPdsService(didDoc: DidDocument): boolean {
+  const services = Array.isArray(didDoc.service) ? didDoc.service : []
+  const fullId = typeof didDoc.id === 'string' ? `${didDoc.id}#atproto_pds`.toLowerCase() : null
+  return services.some(s => s?.id === '#atproto_pds' || (fullId !== null && typeof s?.id === 'string' && s.id.toLowerCase() === fullId))
 }
 
 export function getPdsEndpoint(didDoc: DidDocument): string | null {

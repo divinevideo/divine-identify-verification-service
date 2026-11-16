@@ -146,4 +146,9 @@ describe('landing page after the move', () => {
     for (const term of CONFIRMATION_TERMS) expect(html).toContain(term)
     expect(html).not.toContain('\u2014')
   })
+
+  it('says renewing Confirmation restores a link only while its account has not changed', async () => {
+    const html = await (await get('/docs', { CONFIRMATION_GATE: 'on' })).text()
+    expect(html).toContain('Renewing restores it without signing in again, unless the linked account itself has changed since, which then answers <code>signin_account_changed</code>.')
+  })
 })

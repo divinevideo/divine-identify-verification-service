@@ -560,7 +560,7 @@ auth.get('/:platform/status', async (c) => {
   const normalizedPubkey = normalizePubkey(pubkey)
   const verification = await getCountedSignIn(c.env, platform, identity, normalizedPubkey)
 
-  if (verification && await signInAccountStillMatches(c.env, verification, identity)) {
+  if (verification && await signInAccountStillMatches(c.env, verification, identity) === 'matches') {
     return c.json({
       platform,
       identity: verification.identity,

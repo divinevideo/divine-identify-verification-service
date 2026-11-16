@@ -8,6 +8,7 @@ import auth, { isAllowedReturnUrl } from './auth'
 import worker from '../index'
 import { oauthStateKey, oauthVerificationKey, storeOAuthVerification } from '../oauth/state'
 import { sha256Hex } from '../oauth/unlink-proof'
+import { blueskyAccountAnswer } from '../test-support/bluesky-account'
 
 // Mount auth sub-app at /auth to match production routing
 const app = new Hono<{ Bindings: Bindings }>()
@@ -911,13 +912,36 @@ describe('unlinking after the Bluesky handle changed', () => {
 })
 
 describe('GET /auth/bluesky/status for a kept sign-in', () => {
+  // A well-formed did:plc: a malformed one is never looked up, so its account host would not be asked.
+  const DID = 'did:plc:alice2222222222222222222'
+
+  // The handle resolves to DID, and DID's host answers with `account`.
+  function stubBluesky(account: { active?: boolean, status?: string } = {}) {
+    const fetched: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      fetched.push(String(input))
+      return blueskyAccountAnswer(String(input), DID, account) ?? new Response(JSON.stringify({ did: DID }), { status: 200 })
+    }))
+    return fetched
+  }
+
   it('is verified while the handle still points to the linked account', async () => {
     const env = createTestEnv()
     const pubkey = 'a'.repeat(64)
-    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), account_id: 'did:plc:alice111111111111111111', handle: 'alice.bsky.social' }))
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ did: 'did:plc:alice111111111111111111' }), { status: 200 })))
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), account_id: DID, handle: 'alice.bsky.social' }))
+    const fetched = stubBluesky()
     const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
     expect(await res.json()).toMatchObject({ verified: true, method: 'oauth' })
+    expect(fetched.some(u => u.includes('com.atproto.sync.getRepoStatus'))).toBe(true)
+  })
+
+  it('is not verified once the account host says the linked account is deactivated', async () => {
+    const env = createTestEnv()
+    const pubkey = 'a'.repeat(64)
+    await env.CACHE_KV.put(`oauth_verified:bluesky:alice.bsky.social:${pubkey}`, JSON.stringify({ platform: 'bluesky', identity: 'alice.bsky.social', pubkey, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), account_id: DID, handle: 'alice.bsky.social' }))
+    stubBluesky({ active: false, status: 'deactivated' })
+    const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
+    expect(await res.json()).toMatchObject({ verified: false, method: null })
   })
 
   it('is not verified when the handle now points to a different account', async () => {
