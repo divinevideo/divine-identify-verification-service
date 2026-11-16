@@ -226,7 +226,7 @@ describe('gate on, edge cases', () => {
 
   it('keeps Confirmation access per pubkey when one batch mixes marked sign-in links for two pubkeys', async () => {
     const OTHER = 'cd'.repeat(32)
-    const { env, store } = makeEnv()
+    const { env, store, kv } = makeEnv()
     // Two marked links per pubkey, so one ask per pubkey also shows each answer is shared.
     const links = [['twitter', 'jack'], ['youtube', '@somechannel']] as const
     const claims = [PUBKEY, OTHER].flatMap((pubkey) => links.map(([platform, identity]) => {
@@ -241,6 +241,10 @@ describe('gate on, edge cases', () => {
     for (const result of results.slice(0, 2)) expect(result).toMatchObject({ verified: true, method: 'oauth' })
     for (const result of results.slice(2)) expect(result).toMatchObject({ verified: false, code: 'signin_needs_confirmation', error: NEEDS })
     expect(accessUrls().sort()).toEqual([`${ACCESS_URL}/${PUBKEY}`, `${ACCESS_URL}/${OTHER}`])
+    // Each answer is cached once, under its own pubkey.
+    for (const [pubkey, answer] of [[PUBKEY, 'yes'], [OTHER, 'no']]) {
+      expect(kv.put.mock.calls.filter(([key]) => key === confirmationAccessKey(pubkey)).map(([, value]) => value)).toEqual([answer])
+    }
   })
 
   it('does not hold a sibling platform check behind a slow Confirmation check for a sign-in link', async () => {
