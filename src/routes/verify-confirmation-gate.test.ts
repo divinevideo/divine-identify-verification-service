@@ -54,12 +54,18 @@ async function single(env: Bindings, platform: string, identity: string, proof: 
   return await res.json() as Answer
 }
 
-async function batch(env: Bindings, platform: string, identity: string, proof: string): Promise<Answer> {
+type Claim = { platform: string; identity: string; proof: string; pubkey: string }
+
+async function postClaims(env: Bindings, claims: readonly Claim[]): Promise<Answer[]> {
   const res = await worker.fetch(new Request('https://verifier.divine.video/verify', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ claims: [{ platform, identity, proof, pubkey: PUBKEY }] }),
+    body: JSON.stringify({ claims }),
   }), env)
-  return (await res.json() as { results: Answer[] }).results[0]
+  return (await res.json() as { results: Answer[] }).results
+}
+
+async function batch(env: Bindings, platform: string, identity: string, proof: string): Promise<Answer> {
+  return (await postClaims(env, [{ platform, identity, proof, pubkey: PUBKEY }]))[0]
 }
 
 async function link(env: Bindings, platform: string, identity: string, proof: string): Promise<Answer> {
@@ -207,14 +213,7 @@ describe('gate on, edge cases', () => {
     for (const [platform, identity] of ACCOUNTS) markedRecord(store, platform, identity)
     access('no')
 
-    const res = await worker.fetch(new Request('https://verifier.divine.video/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        claims: ACCOUNTS.map(([platform, identity]) => ({ platform, identity, proof: 'oauth', pubkey: PUBKEY })),
-      }),
-    }), env)
-    const { results } = await res.json() as { results: Answer[] }
+    const results = await postClaims(env, ACCOUNTS.map(([platform, identity]) => ({ platform, identity, proof: 'oauth', pubkey: PUBKEY })))
 
     expect(results).toHaveLength(3)
     for (const result of results) {
@@ -232,17 +231,10 @@ describe('gate on, edge cases', () => {
     markedRecord(store, 'twitter', 'jack', { pubkey: OTHER })
     access({ [PUBKEY]: 'yes', [OTHER]: 'no' })
 
-    const res = await worker.fetch(new Request('https://verifier.divine.video/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        claims: [
-          { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
-          { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: OTHER },
-        ],
-      }),
-    }), env)
-    const { results } = await res.json() as { results: Answer[] }
+    const results = await postClaims(env, [
+      { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
+      { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: OTHER },
+    ])
 
     expect(results[0]).toMatchObject({ verified: true, method: 'oauth' })
     expect(results[1]).toMatchObject({ verified: false, code: 'signin_needs_confirmation', error: NEEDS })
@@ -269,20 +261,14 @@ describe('gate on, edge cases', () => {
       return new Response('', { status: 404 })
     })
 
-    const pending = worker.fetch(new Request('https://verifier.divine.video/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        claims: [
-          { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
-          { platform: 'github', identity: 'octocat', proof: 'proofsiblingx', pubkey: PUBKEY },
-        ],
-      }),
-    }), env)
+    const pending = postClaims(env, [
+      { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
+      { platform: 'github', identity: 'octocat', proof: 'proofsiblingx', pubkey: PUBKEY },
+    ])
 
     await vi.waitFor(() => expect(githubFetched).toBe(true))
     releaseAccess()
-    const { results } = await (await pending).json() as { results: Answer[] }
+    const results = await pending
     expect(results[0]).toMatchObject({ verified: false, code: 'signin_needs_confirmation' })
     expect(results[1]).toMatchObject({ verified: false })
   })
