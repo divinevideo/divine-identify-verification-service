@@ -1,5 +1,5 @@
 import type { OAuthState, OAuthVerification } from '../types'
-import { FIXED_SIGNIN_LIFETIME_DAYS } from './signin-lifetime'
+import { FIXED_SIGNIN_LIFETIME_DAYS, keepsUntilUnlinked } from './signin-lifetime'
 
 const STATE_TTL = 600 // 10 minutes for OAuth flow
 const OAUTH_VERIFICATION_TTL = 24 * 60 * 60 // 24 hours
@@ -30,24 +30,27 @@ export async function deleteOAuthState(kv: KVNamespace, stateId: string): Promis
   await kv.delete(oauthStateKey(stateId))
 }
 
-// How long a record kept for an account that is gone stays stored after retiring.
-export const RETIRE_TTL_SECONDS = FIXED_SIGNIN_LIFETIME_DAYS * 24 * 60 * 60
+const CONFIRMED_TTL_SECONDS = FIXED_SIGNIN_LIFETIME_DAYS * 24 * 60 * 60
 
-// A confirmed Bluesky sign-in is stored with no expiry and marked `kept`, so it
+// How long a record kept for an account that is gone stays stored after retiring.
+export const RETIRE_TTL_SECONDS = CONFIRMED_TTL_SECONDS
+
+// A confirmed Bluesky sign-in saved with its DID is stored with no expiry and marked `kept`, so it
 // lasts until its owner unlinks it (#90). Every other confirmed sign-in is
 // stored for 30 days, and an unconfirmed one for a day. The age check
-// (signin-lifetime.ts) counts a confirmed Bluesky record at any age. If the
+// (signin-lifetime.ts) counts such a record at any age; one without a DID is
+// stored for 30 days like the other platforms'. If the
 // code is rolled back to before #90, a kept record stays stored until it is
 // unlinked, but the older age check stops counting it after 30 days, while
 // other records still end at 30 days as before.
 export async function storeOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
   const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
   const { kept: _kept, ...record } = verification
-  if (record.platform === 'bluesky' && record.confirmed === true) {
+  if (keepsUntilUnlinked(record)) {
     await kv.put(key, JSON.stringify({ ...record, kept: true }))
     return
   }
-  const ttl = record.confirmed === true ? RETIRE_TTL_SECONDS : OAUTH_VERIFICATION_TTL
+  const ttl = record.confirmed === true ? CONFIRMED_TTL_SECONDS : OAUTH_VERIFICATION_TTL
   await kv.put(key, JSON.stringify(record), { expirationTtl: ttl })
 }
 

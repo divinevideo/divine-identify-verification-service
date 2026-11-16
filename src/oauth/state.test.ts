@@ -68,6 +68,9 @@ describe('deleteOAuthVerification', () => {
 })
 
 describe('storing a sign-in record', () => {
+  const DAY = 24 * 60 * 60
+  const DID = 'did:plc:alice'
+
   function spyKV() {
     const store = new Map<string, string>()
     const put = vi.fn(async (key: string, value: string, _opts?: { expirationTtl?: number }) => { store.set(key, value) })
@@ -75,71 +78,36 @@ describe('storing a sign-in record', () => {
   }
   const base = { pubkey: 'aabb', verified: true as const, method: 'oauth' as const, checked_at: 1 }
 
-  // A confirmed Bluesky record has no expiry (#90); other confirmed records end
-  // at the same 30 days as the age check (signin-lifetime.ts).
-  it('stores a confirmed Bluesky record with no expiry, and other confirmed records for 30 days', async () => {
-    for (const [record, ttl] of [
-      [{ platform: 'bluesky' as const, identity: 'alice.bsky.social', account_id: 'did:plc:alice', handle: 'alice.bsky.social' }, undefined],
-      [{ platform: 'tiktok' as const, identity: 'creator', account_id: 'acct-1' }, { expirationTtl: 2592000 }],
-      [{ platform: 'twitter' as const, identity: 'jack' }, { expirationTtl: 2592000 }],
-    ] as const) {
-      const { kv, put, store } = spyKV()
-      await storeOAuthVerification(kv, { ...base, ...record, confirmed: true })
-      expect(put).toHaveBeenCalledTimes(1)
-      expect(put.mock.calls[0][2]).toEqual(ttl)
-      const stored = JSON.parse(store.get(oauthVerificationKey(record.platform, record.identity, 'aabb')) ?? '{}')
-      expect(stored).toMatchObject({ ...record, confirmed: true })
-    }
-  })
-
-  it('stores an unconfirmed record for a day', async () => {
-    const { kv, put } = spyKV()
-    await storeOAuthVerification(kv, { ...base, platform: 'bluesky', identity: 'alice.bsky.social', account_id: 'did:plc:alice' })
-    expect(put.mock.calls[0][2]).toEqual({ expirationTtl: 86400 })
-  })
-})
-
-describe('how long a stored sign-in lasts', () => {
-  const base = { identity: 'alice', pubkey: 'aabb', verified: true, method: 'oauth', checked_at: 1_800_000_000 } as const
-  const DAY = 24 * 60 * 60
-
-  function spyKV() {
-    const put = vi.fn(async () => {})
-    return { kv: { put } as unknown as KVNamespace, put }
-  }
-
-  it('stores a confirmed Bluesky record with no expiry and kept: true', async () => {
-    const { kv, put } = spyKV()
-    const rec: OAuthVerification = { ...base, platform: 'bluesky', confirmed: true }
+  // A confirmed Bluesky record with its DID has no expiry (#90); other confirmed
+  // records end at the same 30 days as the age check (signin-lifetime.ts).
+  // `kept` is set only for the first case, and a stale one is stripped.
+  it.each([
+    ['a confirmed Bluesky record with its DID', { platform: 'bluesky', identity: 'alice.bsky.social', account_id: DID, handle: 'alice.bsky.social', confirmed: true }, undefined, true],
+    ['a confirmed Bluesky record without account_id', { platform: 'bluesky', identity: 'alice.bsky.social', confirmed: true }, { expirationTtl: 30 * DAY }, false],
+    ['a confirmed TikTok record', { platform: 'tiktok', identity: 'creator', account_id: 'acct-1', confirmed: true }, { expirationTtl: 30 * DAY }, false],
+    ['a confirmed Twitter record', { platform: 'twitter', identity: 'jack', confirmed: true }, { expirationTtl: 30 * DAY }, false],
+    ['an unconfirmed Bluesky record', { platform: 'bluesky', identity: 'alice.bsky.social', account_id: DID }, { expirationTtl: DAY }, false],
+  ] as const)('stores %s with the right expiry and kept flag', async (_label, fields, ttl, kept) => {
+    const { kv, put, store } = spyKV()
+    const rec = { ...base, ...fields, kept: true } as unknown as OAuthVerification
     await storeOAuthVerification(kv, rec)
     expect(put).toHaveBeenCalledTimes(1)
     const call = put.mock.calls[0] as unknown as unknown[]
-    expect(call).toHaveLength(2)
-    expect(JSON.parse(call[1] as string)).toEqual({ ...rec, kept: true })
-  })
-
-  it('stores a confirmed twitter record for 30 days, without kept', async () => {
-    const { kv, put } = spyKV()
-    await storeOAuthVerification(kv, { ...base, platform: 'twitter', confirmed: true, kept: true } as OAuthVerification)
-    const call = put.mock.calls[0] as unknown as unknown[]
-    expect(call[2]).toEqual({ expirationTtl: 30 * DAY })
-    expect(JSON.parse(call[1] as string)).not.toHaveProperty('kept')
-  })
-
-  it('stores an unconfirmed Bluesky record for a day', async () => {
-    const { kv, put } = spyKV()
-    await storeOAuthVerification(kv, { ...base, platform: 'bluesky', kept: true } as OAuthVerification)
-    const call = put.mock.calls[0] as unknown as unknown[]
-    expect(call[2]).toEqual({ expirationTtl: DAY })
-    expect(JSON.parse(call[1] as string)).not.toHaveProperty('kept')
+    expect(call[2]).toEqual(ttl)
+    if (!ttl) expect(call).toHaveLength(2)
+    const stored = JSON.parse(store.get(oauthVerificationKey(rec.platform, rec.identity, 'aabb')) ?? '{}')
+    expect(stored).toMatchObject(fields)
+    if (kept) expect(stored.kept).toBe(true)
+    else expect(stored).not.toHaveProperty('kept')
   })
 
   it('retire stores the record for 30 days without kept', async () => {
     const { kv, put } = spyKV()
-    await retireOAuthVerification(kv, { ...base, platform: 'bluesky', confirmed: true, kept: true } as OAuthVerification)
+    const rec = { ...base, platform: 'bluesky', identity: 'alice', account_id: DID, confirmed: true } as const
+    await retireOAuthVerification(kv, { ...rec, kept: true } as OAuthVerification)
     const call = put.mock.calls[0] as unknown as unknown[]
     expect(RETIRE_TTL_SECONDS).toBe(30 * DAY)
     expect(call[2]).toEqual({ expirationTtl: RETIRE_TTL_SECONDS })
-    expect(JSON.parse(call[1] as string)).toEqual({ ...base, platform: 'bluesky', confirmed: true })
+    expect(JSON.parse(call[1] as string)).toEqual(rec)
   })
 })

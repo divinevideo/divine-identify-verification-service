@@ -32,7 +32,7 @@ describe('whether a sign-in record is current', () => {
     ['confirmed TikTok, exactly 30 days', true, record('tiktok', 30 * DAY, confirmed)],
     ['confirmed TikTok, 30 days and a second', false, record('tiktok', 30 * DAY + 1, confirmed)],
     ['confirmed Bluesky with a DID, 400 days', true, record('bluesky', 400 * DAY, withDid)],
-    ['confirmed Bluesky without a DID, 31 days', true, record('bluesky', 31 * DAY, confirmed)],
+    ['confirmed Bluesky without a DID, 31 days', false, record('bluesky', 31 * DAY, confirmed)],
     ['unconfirmed TikTok, a day and a second', false, record('tiktok', DAY + 1)],
     ['unconfirmed Bluesky with a DID, a day and a second', false, record('bluesky', DAY + 1, { account_id: withDid.account_id })],
     ['unconfirmed Twitter, exactly a day', true, record('twitter', DAY)],
@@ -59,12 +59,16 @@ describe('whether a sign-in record is current', () => {
     expect(signInIsCurrent(rec, NOW)).toBe(false)
   })
 
-  it('counts a confirmed Bluesky record 31 days old', () => {
-    expect(signInIsCurrent(record('bluesky', 31 * DAY, confirmed), NOW)).toBe(true)
+  it('counts a confirmed Bluesky record with a DID 31 days old', () => {
+    expect(signInIsCurrent(record('bluesky', 31 * DAY, withDid), NOW)).toBe(true)
   })
 
-  it('counts a confirmed Bluesky record 3 years old', () => {
-    expect(signInIsCurrent(record('bluesky', 3 * 365 * DAY, confirmed), NOW)).toBe(true)
+  it('counts a confirmed Bluesky record with a DID 3 years old', () => {
+    expect(signInIsCurrent(record('bluesky', 3 * 365 * DAY, withDid), NOW)).toBe(true)
+  })
+
+  it('does not count a confirmed Bluesky record without account_id 31 days old', () => {
+    expect(signInIsCurrent(record('bluesky', 31 * DAY, confirmed), NOW)).toBe(false)
   })
 
   it('does not count a confirmed Twitter record 31 days old', () => {
