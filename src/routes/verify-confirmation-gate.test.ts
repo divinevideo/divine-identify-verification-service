@@ -227,17 +227,19 @@ describe('gate on, edge cases', () => {
   it('keeps Confirmation access per pubkey when one batch mixes marked sign-in links for two pubkeys', async () => {
     const OTHER = 'cd'.repeat(32)
     const { env, store } = makeEnv()
-    markedRecord(store, 'twitter', 'jack')
-    markedRecord(store, 'twitter', 'jack', { pubkey: OTHER })
+    // Two marked links per pubkey, so one ask per pubkey also shows each answer is shared.
+    const links = [['twitter', 'jack'], ['youtube', '@somechannel']] as const
+    const claims = [PUBKEY, OTHER].flatMap((pubkey) => links.map(([platform, identity]) => {
+      markedRecord(store, platform, identity, { pubkey })
+      return { platform, identity, proof: 'oauth', pubkey }
+    }))
     access({ [PUBKEY]: 'yes', [OTHER]: 'no' })
 
-    const results = await postClaims(env, [
-      { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
-      { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: OTHER },
-    ])
+    const results = await postClaims(env, claims)
 
-    expect(results[0]).toMatchObject({ verified: true, method: 'oauth' })
-    expect(results[1]).toMatchObject({ verified: false, code: 'signin_needs_confirmation', error: NEEDS })
+    expect(results).toHaveLength(4)
+    for (const result of results.slice(0, 2)) expect(result).toMatchObject({ verified: true, method: 'oauth' })
+    for (const result of results.slice(2)) expect(result).toMatchObject({ verified: false, code: 'signin_needs_confirmation', error: NEEDS })
     expect(accessUrls().sort()).toEqual([`${ACCESS_URL}/${PUBKEY}`, `${ACCESS_URL}/${OTHER}`])
   })
 
