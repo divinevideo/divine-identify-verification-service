@@ -220,6 +220,41 @@ describe('gate on, edge cases', () => {
     expect(accessWrites).toHaveLength(1)
   })
 
+  it('keeps Confirmation access per pubkey when one batch mixes marked sign-in links for two pubkeys', async () => {
+    const OTHER = 'cd'.repeat(32)
+    const { env, store } = makeEnv()
+    markedRecord(store, 'twitter', 'jack')
+    store.set(oauthVerificationKey('twitter', 'jack', OTHER), JSON.stringify({
+      platform: 'twitter', identity: 'jack', pubkey: OTHER, verified: true, method: 'oauth',
+      checked_at: Math.floor(Date.now() / 1000), confirmed: true, access_required: true,
+    }))
+    const asked: string[] = []
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith(ACCESS_URL)) {
+        asked.push(url)
+        return json({ isActive: url === `${ACCESS_URL}/${PUBKEY}` })
+      }
+      return new Response('', { status: 404 })
+    })
+
+    const res = await worker.fetch(new Request('https://verifier.divine.video/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        claims: [
+          { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
+          { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: OTHER },
+        ],
+      }),
+    }), env)
+    const { results } = await res.json() as { results: Answer[] }
+
+    expect(results[0]).toMatchObject({ verified: true, method: 'oauth' })
+    expect(results[1]).toMatchObject({ verified: false, code: 'signin_needs_confirmation', error: NEEDS })
+    expect([...asked].sort()).toEqual([`${ACCESS_URL}/${PUBKEY}`, `${ACCESS_URL}/${OTHER}`].sort())
+  })
+
   it('does not hold a sibling platform check behind a slow Confirmation check for a sign-in link', async () => {
     const { env, store } = makeEnv()
     markedRecord(store, 'twitter', 'jack')
