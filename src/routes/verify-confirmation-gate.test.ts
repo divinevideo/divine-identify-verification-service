@@ -78,11 +78,15 @@ function markedRecord(store: Map<string, string>, platform: string, identity: st
   }))
 }
 
-// The access service answers for PUBKEY; everything else (Bluesky) falls through to routes or 404.
-function access(answer: 'yes' | 'no' | 'down', routes?: (url: string) => Response | null) {
+type AccessAnswer = 'yes' | 'no' | 'down'
+
+// The access service answers for PUBKEY, or for each pubkey in a map; everything else (Bluesky) falls through to routes or 404.
+function access(answer: AccessAnswer | Record<string, AccessAnswer>, routes?: (url: string) => Response | null) {
+  const answers = new Map(Object.entries(typeof answer === 'string' ? { [PUBKEY]: answer } : answer))
   fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input)
-    if (url === `${ACCESS_URL}/${PUBKEY}`) return answer === 'down' ? new Response('', { status: 500 }) : json({ isActive: answer === 'yes' })
+    const said = url.startsWith(`${ACCESS_URL}/`) ? answers.get(url.slice(ACCESS_URL.length + 1)) : undefined
+    if (said) return said === 'down' ? new Response('', { status: 500 }) : json({ isActive: said === 'yes' })
     return routes?.(url) ?? new Response('', { status: 404 })
   })
 }
@@ -95,7 +99,8 @@ function blueskyRoutes(records: unknown[]) {
     return null
   }
 }
-const accessCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).startsWith(ACCESS_URL)).length
+const accessUrls = () => fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith(ACCESS_URL))
+const accessCalls = () => accessUrls().length
 const BSKY = 'alice.bsky.social'
 const LINK_RECORD = {
   uri: `at://${DID}/video.divine.identity.link/nostr-npub`,
@@ -225,15 +230,7 @@ describe('gate on, edge cases', () => {
     const { env, store } = makeEnv()
     markedRecord(store, 'twitter', 'jack')
     markedRecord(store, 'twitter', 'jack', { pubkey: OTHER })
-    const asked: string[] = []
-    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url.startsWith(ACCESS_URL)) {
-        asked.push(url)
-        return json({ isActive: url === `${ACCESS_URL}/${PUBKEY}` })
-      }
-      return new Response('', { status: 404 })
-    })
+    access({ [PUBKEY]: 'yes', [OTHER]: 'no' })
 
     const res = await worker.fetch(new Request('https://verifier.divine.video/verify', {
       method: 'POST',
@@ -249,7 +246,7 @@ describe('gate on, edge cases', () => {
 
     expect(results[0]).toMatchObject({ verified: true, method: 'oauth' })
     expect(results[1]).toMatchObject({ verified: false, code: 'signin_needs_confirmation', error: NEEDS })
-    expect([...asked].sort()).toEqual([`${ACCESS_URL}/${PUBKEY}`, `${ACCESS_URL}/${OTHER}`].sort())
+    expect(accessUrls().sort()).toEqual([`${ACCESS_URL}/${PUBKEY}`, `${ACCESS_URL}/${OTHER}`])
   })
 
   it('does not hold a sibling platform check behind a slow Confirmation check for a sign-in link', async () => {
