@@ -11,7 +11,7 @@ the clients ignore. Any successor to this worker must pass the whole suite befor
 | divine-mobile | 1.0.25 | the above, with `POST /auth/:platform/start`, the return, and `POST /auth/confirm`; `/platforms` read for `label` and `supported` |
 | divine-mobile | 1.0.26 | as 1.0.25, and `/platforms` `oauth` hides the sign-in button |
 | divine-mobile | 1.0.27 | reads this service as 1.0.26 does |
-| divine-mobile | #10726 (open PR, unreleased) | as 1.0.27, and reads `code` `signin_expired` and `signin_account_changed` from the verify endpoints and `signin_expires_after_days` from `/platforms` |
+| divine-mobile | #10726 (open PR, unreleased) | as 1.0.27, and reads `code` `signin_expired` and `signin_account_changed` from the verify endpoints and `signin_expires_after_days` from `/platforms` (omitted for Bluesky by design: its confirmed links last until unlinked, and the app shows no lifetime note when the field is missing) |
 | divine-web | main | `POST /api/verify`, links to `GET /verify/:platform/:identity/:proof` |
 | outside callers of the old host's `/verified` | following the `verify.divine.video` redirect | `GET /verified/<pubkey>`, `GET /verified?platform=&identity=` |
 | verifier page | this repo | revoke with the signed list (T4.4) |

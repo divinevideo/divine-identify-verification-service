@@ -62,7 +62,8 @@ export function getPlatformInfo(opts?: {
   const days = opts?.signinLifetimeDays
   if (typeof days === 'number') {
     for (const info of Object.values(platforms)) {
-      if (info.oauth) info.signin_expires_after_days = days
+      // A confirmed Bluesky link lasts until it is unlinked, so it has no length to report.
+      if (info.oauth && info !== platforms.bluesky) info.signin_expires_after_days = days
     }
   }
   const requires = opts?.signinRequires

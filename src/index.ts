@@ -136,9 +136,9 @@ app.get('/', (c) => {
     ? `<a class="platform-pill" href="#quick-connect" data-platform="${platform.value}" aria-label="Link ${platform.label} by signing in">${platform.icon} ${platform.label}</a>`
     : `<a class="platform-pill" href="#link-with-post" data-platform="${platform.value}" aria-label="Link ${platform.label} with a post">${platform.icon} ${platform.label}</a>`,
   ).join('\n      ')
-  // Every confirmed sign-in link lasts the same time, so the sign-in card says
-  // it once, before the person starts.
-  const signInLifetimeCardNote = `<p class="field-help">Links made by signing in last ${FIXED_SIGNIN_LIFETIME_DAYS} days. After that, sign in again to keep them verified.</p>`
+  // The card says how long links last once, before the person starts: Bluesky
+  // links last until unlinked, every other sign-in link the same fixed time.
+  const signInLifetimeCardNote = `<p class="field-help">A confirmed Bluesky sign-in link lasts until you unlink it. Sign-in links for other platforms last ${FIXED_SIGNIN_LIFETIME_DAYS} days; after that, sign in again to keep them verified.</p>`
   const oauthPlatformOptions = oauthPlatforms.map(platform => `<option value="${platform.value}">${platform.optionLabel}</option>`).join('')
   const proofPlatformOptions = `<option value="github">GitHub</option><option value="twitter">Twitter / X</option><option value="bluesky">Bluesky</option><option value="mastodon">Mastodon</option><option value="telegram">Telegram</option><option value="discord">Discord</option>${hasYouTube ? '<option value="youtube">YouTube</option>' : ''}${hasTikTok ? '<option value="tiktok">TikTok</option>' : ''}`
 
