@@ -248,7 +248,8 @@ describe('gate on, edge cases', () => {
   })
 
   it('keeps Confirmation access per pubkey when one batch mixes marked sign-in links for two pubkeys', async () => {
-    const OTHER = 'cd'.repeat(32)
+    // Differs from PUBKEY only in its middle byte, so an answer kept under a pubkey's first 32 or last 30 hex characters can't pass for it.
+    const OTHER = `${PUBKEY.slice(0, 32)}cd${PUBKEY.slice(34)}`
     const { env, store, kv } = makeEnv()
     // Two marked links per pubkey, so one ask per pubkey also shows each answer is shared.
     const links = [['twitter', 'jack'], ['youtube', '@somechannel']] as const
