@@ -70,8 +70,8 @@ describe.each([['/verify/single', single], ['/verify', batch]] as const)('a TikT
   })
 })
 
-// A Bluesky link lasts the same 30 days. Past them, the claim falls through to
-// Bluesky's identity-link records, and there are none here.
+// A confirmed Bluesky link saved with its DID keeps counting at any age.
+// No proof post or identity-link record is needed while the sign-in counts.
 describe.each([
   ['the handle', 'alice.bsky.social'],
   ['the DID', 'did:plc:alice111111111111111111'],
