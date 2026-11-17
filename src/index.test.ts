@@ -584,7 +584,7 @@ Content-Type: application/json
     const docs = oauthDocsSection(await docsHtml())
     expect(docs).toContain("The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>.")
     expect(docs).toContain('The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.')
-    expect(docs).toContain("A sign-in counts only after you confirm it by publishing, and for 30 days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting unless the account's host reports the account inactive. A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated, suspended or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting and the host is asked again after a minute.")
+    expect(docs).toContain("A sign-in counts only after you confirm it by publishing. A new confirmed Bluesky sign-in saved with its DID is stored until it is unlinked. Account checks do not change the stored record; an inactive account stops counting and counts again if a later check finds it active. Existing Bluesky links keep their original 30-day expiry; after expiry, sign in and confirm once more to get a record with no expiry. Other sign-in links last 30 days from when you confirmed them, and after that you sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting unless the account's host reports the account inactive. A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated, suspended or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting and the host is asked again after a minute.")
     expect(docs).not.toContain('without asking Bluesky')
     expect(docs).not.toMatch(/no fixed lifetime|re-checked at each verification/)
   })
@@ -877,7 +877,7 @@ describe('how long sign-in links last, on the page', () => {
     OAUTH_REDIRECT_BASE: 'https://verifier.divine.video',
     TIKTOK_OAUTH_ENABLED: 'true',
   }
-  const line = 'Links made by signing in last 30 days. After that, sign in again to keep them verified.'
+  const line = 'A confirmed Bluesky sign-in link lasts until you unlink it. Sign-in links for other platforms last 30 days; after that, sign in again to keep them verified.'
 
   // The Quick Connect card, from its heading to its Continue button.
   function signInCard(html: string): string {
@@ -890,7 +890,7 @@ describe('how long sign-in links last, on the page', () => {
 
   // Bluesky sign-in is always offered on the page, so there is no page without a
   // sign-in platform to check for the line's absence.
-  it('says once, in the sign-in card, that sign-in links last 30 days with only Bluesky on', async () => {
+  it('says once, in the sign-in card, the Bluesky and 30-day lifetimes with only Bluesky on', async () => {
     const html = await homeHtml()
     expect(signInCard(html)).toContain(line)
     expect(html.split(line)).toHaveLength(2)
@@ -907,11 +907,12 @@ describe('how long sign-in links last, on the page', () => {
     const html = await homeHtml()
     expect(html).not.toMatch(/no fixed lifetime|re-checked at each verification/)
     expect(html).not.toContain('for 30 days or until it is unlinked')
+    expect(html).not.toContain('Links made by signing in last 30 days')
   })
 
   it('says which /platforms entries include signin_expires_after_days', async () => {
     const html = await docsHtml()
-    expect(html).toContain('Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts.')
+    expect(html).toContain('Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts. Bluesky leaves it out: new confirmed links saved with a DID have no expiry. Account inactivity stops a link counting without changing its stored record.')
   })
 })
 

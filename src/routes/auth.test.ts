@@ -952,6 +952,52 @@ describe('GET /auth/bluesky/status for a kept sign-in', () => {
     const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
     expect((await res.json() as { verified: boolean }).verified).toBe(false)
   })
+
+  // A confirmed link saved under the handle and the DID, kept with no expiry.
+  async function keptLink(env: Bindings, pubkey: string) {
+    for (const identity of ['alice.bsky.social', DID]) {
+      await storeOAuthVerification(env.CACHE_KV, { platform: 'bluesky', identity, pubkey, verified: true, method: 'oauth', checked_at: Math.floor(Date.now() / 1000), account_id: DID, handle: 'alice.bsky.social', confirmed: true })
+    }
+  }
+  const recordPuts = (put: { mock: { calls: unknown[][] } }) => put.mock.calls.filter(c => String(c[0]).startsWith('oauth_verified:'))
+
+  it('the status route answers not verified for a gone account without rewriting records', async () => {
+    const env = createTestEnv()
+    const pubkey = 'a'.repeat(64)
+    await keptLink(env, pubkey)
+    const put = vi.spyOn(env.CACHE_KV, 'put')
+    stubBluesky({ active: false, status: 'deleted' })
+    const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
+    expect(await res.json()).toMatchObject({ verified: false, method: null })
+    expect(recordPuts(put)).toEqual([])
+  })
+
+  it('the status route keeps the records of a deactivated account as they are', async () => {
+    const env = createTestEnv()
+    const pubkey = 'a'.repeat(64)
+    await keptLink(env, pubkey)
+    const put = vi.spyOn(env.CACHE_KV, 'put')
+    stubBluesky({ active: false, status: 'deactivated' })
+    const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
+    expect(await res.json()).toMatchObject({ verified: false, method: null })
+    expect(recordPuts(put)).toEqual([])
+  })
+
+  it('the status route counts a link whose account becomes active again without rewriting records', async () => {
+    const env = createTestEnv()
+    const pubkey = 'a'.repeat(64)
+    await keptLink(env, pubkey)
+    const put = vi.spyOn(env.CACHE_KV, 'put')
+    stubBluesky({ active: false, status: 'deleted' })
+    const inactive = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
+    expect(await inactive.json()).toMatchObject({ verified: false, method: null })
+    expect(recordPuts(put)).toEqual([])
+    await env.CACHE_KV.delete(`bsky_account_status:${DID}`)
+    stubBluesky()
+    const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
+    expect(await res.json()).toMatchObject({ verified: true, method: 'oauth' })
+    expect(recordPuts(put)).toEqual([])
+  })
 })
 
 // Signed the same way as signNip98Event, for any kind and tags.

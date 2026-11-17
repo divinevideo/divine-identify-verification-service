@@ -99,5 +99,33 @@ part of local validation or PR publication.
    Reconcile main with the fix before re-enabling CD; replaying an obsolete main
    run is deliberately refused.
 
+Rolling back to the previous 30-day Bluesky sign-in behavior also affects stored
+links:
+
+- New confirmed records saved with a DID and no expiry remain stored. A version
+  rollback does not restore a KV expiry.
+- The older age check stops counting links confirmed more than 30 days earlier,
+  so those owners see `signin_expired` until they sign in again.
+- Records saved by the older code during rollback have a 30-day expiry. Rolling
+  forward does not migrate them; after expiry, their owners sign in and confirm
+  again to get a record with no expiry.
+
 References: [Wrangler versions and deployments](https://developers.cloudflare.com/workers/wrangler/commands/workers/#versions),
 [rollback limitations](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/).
+
+## Existing Bluesky links and storage transition
+
+- New confirmed Bluesky sign-in records saved with the account's DID have no
+  expiry and are stored until unlink. Account checks do not rewrite these
+  records or set an expiry. Inactive, deleted or taken-down accounts stop
+  counting; if a later check finds the account active again, the link counts
+  again without a record write. There is no automatic cleanup of gone accounts.
+- Records stored before deployment are not migrated. They keep their original
+  30-day physical expiry. After expiry, the owner signs in and confirms once more
+  to get a new record with no expiry. There is no one-time migration script.
+- Unlink remains best effort: a stale or cached KV miss, or a failed deletion of
+  an old-handle record after a handle change, can leave a record behind. A record
+  with no expiry stays stored until removed and may still be encountered during
+  bounded owner discovery. Naming an owner still requires their current list and
+  a successful verification. Cloudflare KV is eventually consistent; see
+  [how KV works](https://developers.cloudflare.com/kv/concepts/how-kv-works/).

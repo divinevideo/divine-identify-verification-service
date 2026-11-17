@@ -91,6 +91,29 @@ beforeEach(() => { vi.spyOn(console, 'warn').mockImplementation(() => {}); vi.sp
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('GET /verified?platform=&identity=', () => {
+  it.each(['sign-in', 'proof'] as const)('finds the current Bluesky account via %s after a handle changes accounts', async method => {
+    const { env, store, kv } = envWith()
+    const handle = 'synthetic.bsky.social'
+    const currentDid = 'did:plc:abcdefghijklmnopqrstuvwx'
+    const previousDid = 'did:plc:zyxwvutsrqponmlkjihgfedcb'
+    for (let i = 0; i < MAX_LOOKUP_CANDIDATES; i++) {
+      const previousOwner = i.toString(16).padStart(64, '0')
+      seedSignIn(store, 'bluesky', handle, previousOwner, { account_id: previousDid, handle, kept: true })
+    }
+    if (method === 'sign-in') {
+      seedSignIn(store, 'bluesky', handle, PK, { account_id: currentDid, handle, kept: true })
+      seedSignIn(store, 'bluesky', currentDid, PK, { account_id: currentDid, handle, kept: true })
+    } else {
+      await seedProof(kv, 'bluesky', handle, 'synthetic-post')
+    }
+    store.set(`bsky_handle_did:${handle}`, currentDid)
+    store.set(`bsky_account_status:${currentDid}`, 'active')
+    relaysWith([await signedList([['i', `bluesky:${handle}`, method === 'sign-in' ? 'oauth' : 'synthetic-post']])])
+    const response = await get(env, `/verified?platform=bluesky&identity=${handle}`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ pubkey: PK, method: method === 'sign-in' ? 'oauth' : 'proof-post' })
+  })
+
   it("finds a sign-in owner from the verifier's own records", async () => {
     const { env, store } = envWith()
     const checkedAt = seedSignIn(store, 'twitter', 'jack')

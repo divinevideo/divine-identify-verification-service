@@ -37,7 +37,8 @@ export function getPlatformInfo(opts?: {
   // youtube and tiktok; other platforms have no sign-in path.
   oauthAvailable?: { twitter?: boolean; bluesky?: boolean; youtube?: boolean; tiktok?: boolean }
   // Days a confirmed sign-in link lasts. Reported on every platform where
-  // sign-in is set up (oauth is true).
+  // sign-in is set up (oauth is true), except Bluesky, whose confirmed links
+  // last until unlinked.
   signinLifetimeDays?: number
   // Set while the Divine Confirmation gate is on. Reported on every platform
   // where sign-in is set up (oauth is true), whether or not a lifetime is given.
@@ -61,8 +62,9 @@ export function getPlatformInfo(opts?: {
   platforms.tiktok = { label: 'TikTok', supported: true, oauth: !!opts?.oauthAvailable?.tiktok }
   const days = opts?.signinLifetimeDays
   if (typeof days === 'number') {
-    for (const info of Object.values(platforms)) {
-      if (info.oauth) info.signin_expires_after_days = days
+    for (const [name, info] of Object.entries(platforms)) {
+      // A confirmed Bluesky link lasts until it is unlinked, so it has no length to report.
+      if (info.oauth && name !== 'bluesky') info.signin_expires_after_days = days
     }
   }
   const requires = opts?.signinRequires

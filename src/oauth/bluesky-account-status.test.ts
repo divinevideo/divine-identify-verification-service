@@ -59,7 +59,8 @@ describe('blueskyAccountStatus', () => {
     expect(kv.put).toHaveBeenCalledWith(`bsky_account_status:${DID}`, 'active', { expirationTtl: 3600 })
   })
 
-  it.each(['deactivated', 'deleted', 'takendown', 'suspended', undefined])(
+  // Paused or unclear: the account may come back soon, so its link record is kept.
+  it.each(['deactivated', 'suspended', 'an unknown status', undefined])(
     'answers inactive for active:false with status %s, remembered for five minutes',
     async (status) => {
       const { env, kv } = createEnv()
@@ -69,17 +70,34 @@ describe('blueskyAccountStatus', () => {
     },
   )
 
-  it('answers inactive for a tombstoned DID (PLC 410) without asking a PDS', async () => {
+  // Gone for the long term: the link stops counting, but its stored record is unchanged.
+  it.each(['deleted', 'takendown'])(
+    'answers gone for active:false with status %s, remembered for five minutes',
+    async (status) => {
+      const { env, kv } = createEnv()
+      stubFetch(() => json({ did: DID, active: false, status }))
+      expect(await blueskyAccountStatus(env, DID)).toBe('gone')
+      expect(kv.put).toHaveBeenCalledWith(`bsky_account_status:${DID}`, 'gone', { expirationTtl: 300 })
+    },
+  )
+
+  it('answers active for active:true whatever the status says', async () => {
+    const { env } = createEnv()
+    stubFetch(() => json({ did: DID, active: true, status: 'deleted' }))
+    expect(await blueskyAccountStatus(env, DID)).toBe('active')
+  })
+
+  it('answers gone for a tombstoned DID (PLC 410) without asking a PDS', async () => {
     const { env } = createEnv()
     const fetchMock = stubFetch(() => json({ did: DID, active: true }), { plc: () => json({ message: 'DID not available' }, 410) })
-    expect(await blueskyAccountStatus(env, DID)).toBe('inactive')
+    expect(await blueskyAccountStatus(env, DID)).toBe('gone')
     expect(fetchMock.mock.calls.map(c => String(c[0]))).toEqual([PLC_URL])
   })
 
-  it('answers inactive for a DID PLC has never seen (404)', async () => {
+  it('answers gone for a DID PLC has never seen (404)', async () => {
     const { env } = createEnv()
     stubFetch(() => json({ did: DID, active: true }), { plc: () => json({ message: 'DID not registered' }, 404) })
-    expect(await blueskyAccountStatus(env, DID)).toBe('inactive')
+    expect(await blueskyAccountStatus(env, DID)).toBe('gone')
   })
 
   it('answers inactive for a DID document without an #atproto_pds service', async () => {
@@ -198,9 +216,11 @@ describe('blueskyAccountStatus', () => {
       }))
     }
 
-    it('answers inactive when the host has no did.json (404)', async () => {
+    // A did:web host can lose its did.json and get it back (a misconfigured
+    // server, a lapsed domain), so this is not a long-term answer.
+    it.each([404, 410])('answers inactive, not gone, when the host answers %s for did.json', async (status) => {
       const { env } = createEnv()
-      stubWeb(() => new Response('nope', { status: 404 }))
+      stubWeb(() => new Response('nope', { status }))
       expect(await blueskyAccountStatus(env, WEB_DID)).toBe('inactive')
     })
 
@@ -267,7 +287,7 @@ describe('blueskyAccountStatus', () => {
     expect(kv.put).not.toHaveBeenCalled()
   })
 
-  it('does not replace a fresh answer from a concurrent lookup with "couldn\'t tell"', async () => {
+  it('a gone answer is cached and not overwritten by couldn\'t-tell', async () => {
     vi.useFakeTimers()
     const { env, store } = createEnv()
     let plcCalls = 0
@@ -275,6 +295,26 @@ describe('blueskyAccountStatus', () => {
       if (String(input) !== PLC_URL) throw new Error('unexpected fetch')
       // Lookup A's request hangs; lookup B's finds the DID tombstoned.
       return ++plcCalls === 1 ? new Promise<Response>(() => {}) : new Response('', { status: 410 })
+    }))
+    const a = blueskyAccountStatus(env, DID)
+    expect(await blueskyAccountStatus(env, DID)).toBe('gone')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(await a).toBeNull()
+    expect(store.get(accountStatusKey(DID))).toBe('gone')
+  })
+
+  it('does not replace a fresh inactive answer from a concurrent lookup with "couldn\'t tell"', async () => {
+    vi.useFakeTimers()
+    const { env, store } = createEnv()
+    let plcCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      // Lookup A's PLC request hangs; lookup B's finds the account deactivated.
+      if (url === PLC_URL && ++plcCalls === 1) return new Promise<Response>(() => {})
+      if (url === STATUS_URL) return json({ did: DID, active: false, status: 'deactivated' })
+      const answer = blueskyAccountAnswer(url, DID)
+      if (answer) return answer
+      throw new Error('unexpected fetch')
     }))
     const a = blueskyAccountStatus(env, DID)
     expect(await blueskyAccountStatus(env, DID)).toBe('inactive')
@@ -290,10 +330,10 @@ describe('blueskyAccountStatus', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('reuses a remembered answer without fetching', async () => {
-    const { env } = createEnv({ [accountStatusKey(DID)]: 'inactive' })
+  it.each(['inactive', 'gone'])('reuses a remembered %s answer without fetching', async (remembered) => {
+    const { env } = createEnv({ [accountStatusKey(DID)]: remembered })
     const fetchMock = stubFetch(() => json({ did: DID, active: true }))
-    expect(await blueskyAccountStatus(env, DID)).toBe('inactive')
+    expect(await blueskyAccountStatus(env, DID)).toBe(remembered)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

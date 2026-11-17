@@ -31,7 +31,7 @@ describe('whether a sign-in record is current', () => {
     ['confirmed TikTok, 29 days', true, record('tiktok', 29 * DAY, confirmed)],
     ['confirmed TikTok, exactly 30 days', true, record('tiktok', 30 * DAY, confirmed)],
     ['confirmed TikTok, 30 days and a second', false, record('tiktok', 30 * DAY + 1, confirmed)],
-    ['confirmed Bluesky with a DID, 400 days', false, record('bluesky', 400 * DAY, withDid)],
+    ['confirmed Bluesky with a DID, 400 days', true, record('bluesky', 400 * DAY, withDid)],
     ['confirmed Bluesky without a DID, 31 days', false, record('bluesky', 31 * DAY, confirmed)],
     ['unconfirmed TikTok, a day and a second', false, record('tiktok', DAY + 1)],
     ['unconfirmed Bluesky with a DID, a day and a second', false, record('bluesky', DAY + 1, { account_id: withDid.account_id })],
@@ -59,9 +59,27 @@ describe('whether a sign-in record is current', () => {
     expect(signInIsCurrent(rec, NOW)).toBe(false)
   })
 
-  it('counts a confirmed Bluesky record with a DID for 30 days, then not', () => {
-    expect(signInIsCurrent(record('bluesky', 30 * DAY, withDid), NOW)).toBe(true)
-    expect(signInIsCurrent(record('bluesky', 30 * DAY + 1, withDid), NOW)).toBe(false)
+  it('counts a confirmed Bluesky record with a DID 31 days old', () => {
+    expect(signInIsCurrent(record('bluesky', 31 * DAY, withDid), NOW)).toBe(true)
+  })
+
+  it('counts a confirmed Bluesky record with a DID 3 years old', () => {
+    expect(signInIsCurrent(record('bluesky', 3 * 365 * DAY, withDid), NOW)).toBe(true)
+  })
+
+  it('does not count a confirmed Bluesky record without account_id 31 days old', () => {
+    expect(signInIsCurrent(record('bluesky', 31 * DAY, confirmed), NOW)).toBe(false)
+  })
+
+  it('does not count a confirmed Twitter record 31 days old', () => {
+    expect(signInIsCurrent(record('twitter', 31 * DAY, confirmed), NOW)).toBe(false)
+  })
+
+  it('does not count an unconfirmed Bluesky record 25 hours old', () => {
+    expect(signInIsCurrent(record('bluesky', 25 * 60 * 60), NOW)).toBe(false)
+  })
+
+  it('does not count a confirmed Bluesky record without a numeric checked_at', () => {
     const undated = { ...record('bluesky', 0, withDid), checked_at: undefined } as unknown as OAuthVerification
     expect(signInIsCurrent(undated, NOW)).toBe(false)
   })
@@ -71,11 +89,13 @@ describe('the README states the fixed lifetime', () => {
   it('states FIXED_SIGNIN_LIFETIME_DAYS for sign-in links', async () => {
     const { readFileSync } = await import('node:fs' as string) as { readFileSync: (path: string, encoding: string) => string }
     const readme = readFileSync('README.md', 'utf8')
-    expect(readme).toContain(`and lasts ${FIXED_SIGNIN_LIFETIME_DAYS} days from then`)
+    expect(readme).toContain('A new confirmed Bluesky sign-in link saved with its DID is stored until it is unlinked.')
+    expect(readme).toContain('Existing Bluesky links keep their original 30-day expiry; after expiry, sign in and confirm once more to get a record with no expiry.')
+    expect(readme).toContain(`Other sign-in links last ${FIXED_SIGNIN_LIFETIME_DAYS} days from confirmation`)
     expect(readme).toContain('stops counting once the handle points to another account or no longer resolves')
     expect(readme).toContain("the link keeps counting unless the account's host reports the account inactive). A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated, suspended or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting and the host is asked again after a minute.")
     expect(readme).not.toContain('without asking Bluesky')
     expect(readme).not.toMatch(/no fixed lifetime|re-checked at each verification/)
-    expect(readme).not.toMatch(/until (it is )?unlinked/)
+    expect(readme).toContain('Bluesky leaves it out: new confirmed links saved with a DID have no expiry. Account inactivity stops a link counting without changing its stored record.')
   })
 })

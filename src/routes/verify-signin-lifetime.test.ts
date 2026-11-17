@@ -70,8 +70,8 @@ describe.each([['/verify/single', single], ['/verify', batch]] as const)('a TikT
   })
 })
 
-// A Bluesky link lasts the same 30 days. Past them, the claim falls through to
-// Bluesky's identity-link records, and there are none here.
+// A confirmed Bluesky link saved with its DID keeps counting at any age.
+// No proof post or identity-link record is needed while the sign-in counts.
 describe.each([
   ['the handle', 'alice.bsky.social'],
   ['the DID', 'did:plc:alice111111111111111111'],
@@ -123,11 +123,8 @@ describe.each([
     expect(await check(blueskyEnv(NOW - 29 * DAY).env)).toMatchObject({ verified: true, method: 'oauth' })
   })
 
-  it('is not verified 31 days after it was confirmed', async () => {
-    const result = await check(blueskyEnv(NOW - 31 * DAY).env)
-    expect(result.verified).toBe(false)
-    expect(result.method).not.toBe('oauth')
-    expect(result.code).toBe('signin_expired')
+  it('is still verified 400 days after it was confirmed, since it is kept until unlinked', async () => {
+    expect(await check(blueskyEnv(NOW - 400 * DAY).env)).toMatchObject({ verified: true, method: 'oauth' })
   })
 
   it('writes no sign-in record when verifying a confirmed Bluesky link', async () => {

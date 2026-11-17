@@ -1,5 +1,5 @@
 import type { OAuthState, OAuthVerification } from '../types'
-import { FIXED_SIGNIN_LIFETIME_DAYS } from './signin-lifetime'
+import { FIXED_SIGNIN_LIFETIME_DAYS, keepsUntilUnlinked } from './signin-lifetime'
 
 const STATE_TTL = 600 // 10 minutes for OAuth flow
 const OAUTH_VERIFICATION_TTL = 24 * 60 * 60 // 24 hours
@@ -30,14 +30,24 @@ export async function deleteOAuthState(kv: KVNamespace, stateId: string): Promis
   await kv.delete(oauthStateKey(stateId))
 }
 
-// A confirmed sign-in is stored for 30 days, and an unconfirmed one for a day.
-// Storage and the age check (signin-lifetime.ts) end a record at the same 30
-// days, so a rollback to code without the age check still ends it.
-// TODO(#90): keep Bluesky sign-ins until they are unlinked, once unlinking works for everyone (#76).
+const CONFIRMED_TTL_SECONDS = FIXED_SIGNIN_LIFETIME_DAYS * 24 * 60 * 60
+
+// A confirmed Bluesky sign-in saved with its DID is stored with no expiry and marked `kept`,
+// so it lasts until its owner unlinks it (#90). Every other confirmed sign-in is stored for
+// 30 days, and an unconfirmed one for a day. The age check (signin-lifetime.ts) counts such a
+// record at any age; one without a DID is stored for 30 days like the other platforms'. Any
+// `kept` mark passed in is dropped, so only this function sets it.
+// Rolling the code back below #90 leaves kept records behind: see Rollback
+// in docs/production-deployment.md.
 export async function storeOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
   const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
-  const ttl = verification.confirmed === true ? FIXED_SIGNIN_LIFETIME_DAYS * 24 * 60 * 60 : OAUTH_VERIFICATION_TTL
-  await kv.put(key, JSON.stringify(verification), { expirationTtl: ttl })
+  const { kept: _kept, ...record } = verification
+  if (keepsUntilUnlinked(record)) {
+    await kv.put(key, JSON.stringify({ ...record, kept: true }))
+    return
+  }
+  const ttl = record.confirmed === true ? CONFIRMED_TTL_SECONDS : OAUTH_VERIFICATION_TTL
+  await kv.put(key, JSON.stringify(record), { expirationTtl: ttl })
 }
 
 export async function getOAuthVerification(
@@ -63,6 +73,11 @@ export async function getOAuthVerification(
 // fails partway can be retried. Other platforms save each link under its one
 // identity, so only that record goes, even when another link shares its
 // account ID.
+// Two best-effort paths can leave a record behind: a read of the requested or
+// paired record that is a stale or cached miss, and a failed delete of the
+// old-handle record after a handle change. Before #90 such a leftover expired
+// within 30 days; a kept one now stays until removed. It can still be found
+// during owner discovery, but verification requires a claim on the owner's current list.
 export async function deleteOAuthVerification(
   kv: KVNamespace,
   platform: string,

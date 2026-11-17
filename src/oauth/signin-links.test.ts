@@ -8,7 +8,7 @@ import { generateDPoPKeyPair } from './crypto'
 import { blueskyAccountAnswer } from '../test-support/bluesky-account'
 
 // An account linked by signing in to Bluesky, once its owner confirms it
-// (#113), stays verified for 30 days, or until it is unlinked (#58).
+// (#113), lasts with its DID until it is unlinked (#58).
 // A Bluesky link is tied to the account's DID, so a handle that now points
 // somewhere else stops verifying.
 
@@ -91,10 +91,10 @@ async function check(env: Bindings, identity = HANDLE) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('how long a sign-in record lasts', () => {
-  it('keeps a confirmed Bluesky sign-in for 30 days', async () => {
+  it('keeps a confirmed Bluesky sign-in with no expiry', async () => {
     const { kv } = createEnv()
     await storeOAuthVerification(kv as unknown as KVNamespace, { platform: 'bluesky', identity: HANDLE, pubkey: PUBKEY, verified: true, method: 'oauth', checked_at: 1, account_id: DID, confirmed: true })
-    expect(kv.put.mock.calls[0][2]).toEqual({ expirationTtl: 2592000 })
+    expect(kv.put.mock.calls[0][2]).toBeUndefined()
   })
 
   it('keeps an unconfirmed Bluesky sign-in for a day', async () => {
@@ -293,6 +293,122 @@ describe('checking a Bluesky sign-in link', () => {
     await check(env)
     expect(fetched.filter(u => u.includes('resolveHandle'))).toHaveLength(1)
   })
+})
+
+// atproto.com/specs/account: `deleted` and `takendown` are "permanent or
+// long-term, though may be reverted", and a tombstoned identity's status
+// "should be interpreted as `deleted`"; `deactivated` and `suspended` are
+// "time-limited". Neither answer rewrites the saved sign-in records.
+describe('a Bluesky account gone for the long term', () => {
+  // A confirmed link saved under the handle and the DID, as sign-in saves it:
+  // with no expiry, marked kept.
+  async function keptLink(kv: ReturnType<typeof createEnv>['kv']) {
+    for (const identity of [HANDLE, DID]) {
+      await storeOAuthVerification(kv as unknown as KVNamespace, {
+        platform: 'bluesky', identity, pubkey: PUBKEY, verified: true, method: 'oauth',
+        checked_at: Math.floor(Date.now() / 1000), account_id: DID, handle: HANDLE, confirmed: true,
+      })
+    }
+  }
+
+  // Writes to sign-in records made by the check, in order.
+  const recordPuts = (kv: ReturnType<typeof createEnv>['kv']) => kv.put.mock.calls.filter(c => String(c[0]).startsWith('oauth_verified:'))
+
+  it.each([
+    ['deleted', { active: false, status: 'deleted' }],
+    ['taken down', { active: false, status: 'takendown' }],
+    ['tombstoned', 'tombstone'],
+  ] as const)('/verify with a kept record and a %s account answers inactive without rewriting records', async (_label, account) => {
+    const { env, store, kv } = createEnv()
+    await keptLink(kv)
+    kv.put.mockClear()
+    vi.stubGlobal('fetch', bluesky(DID, account).mock)
+    expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+    expect(recordPuts(kv)).toEqual([])
+    expect(store.has(oauthVerificationKey('bluesky', DID, PUBKEY))).toBe(true)
+  })
+
+  it('answers inactive for a claim of the DID without rewriting records', async () => {
+    const { env, kv } = createEnv()
+    await keptLink(kv)
+    kv.put.mockClear()
+    vi.stubGlobal('fetch', bluesky(OTHER_DID, { active: false, status: 'deleted' }).mock)
+    expect(await check(env, DID)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+    expect(recordPuts(kv)).toEqual([])
+  })
+
+  it.each(['deactivated', 'suspended'])('/verify with a %s account gives the same answer and keeps the records as they are', async status => {
+    const { env, kv } = createEnv()
+    await keptLink(kv)
+    kv.put.mockClear()
+    vi.stubGlobal('fetch', bluesky(DID, { active: false, status }).mock)
+    expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+    expect(recordPuts(kv)).toEqual([])
+  })
+
+  it('a gone answer while the handle lookup is down does not rewrite records', async () => {
+    const { env, kv } = createEnv()
+    await keptLink(kv)
+    kv.put.mockClear()
+    vi.stubGlobal('fetch', bluesky('unreachable', { active: false, status: 'deleted' }).mock)
+    expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+    expect(recordPuts(kv)).toEqual([])
+  })
+
+  it.each([
+    ['the account host cannot be reached', DID],
+    ['neither the handle lookup nor the account host can be reached', 'unreachable'],
+  ] as const)('an outage never rewrites records: %s', async (_label, handleAnswer) => {
+    const { env, kv } = createEnv()
+    await keptLink(kv)
+    kv.put.mockClear()
+    vi.stubGlobal('fetch', bluesky(handleAnswer, 'unreachable').mock)
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(recordPuts(kv)).toEqual([])
+  })
+
+  it('a record that is not kept is left as it is', async () => {
+    const { env, store, kv } = createEnv()
+    store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
+    vi.stubGlobal('fetch', bluesky(DID, { active: false, status: 'deleted' }).mock)
+    expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+    expect(recordPuts(kv)).toEqual([])
+  })
+
+  it('a link whose account becomes active again counts without rewriting records', async () => {
+    const { env, kv, store } = createEnv()
+    await keptLink(kv)
+    kv.put.mockClear()
+    vi.stubGlobal('fetch', bluesky(DID, { active: false, status: 'deleted' }).mock)
+    expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+    expect(recordPuts(kv)).toEqual([])
+    store.delete(`bsky_account_status:${DID}`)
+    vi.stubGlobal('fetch', bluesky(DID).mock)
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(recordPuts(kv)).toEqual([])
+  })
+
+  it.each([
+    ['a kept record', true],
+    ['a confirmed record saved before records were kept, still with its 30-day expiry', false],
+  ] as const)('a record is not re-saved when it counts: %s', async (_label, kept) => {
+    const { env, kv, store } = createEnv()
+    if (kept) {
+      await keptLink(kv)
+    } else {
+      for (const identity of [HANDLE, DID]) {
+        store.set(oauthVerificationKey('bluesky', identity, PUBKEY), JSON.stringify({
+          platform: 'bluesky', identity, pubkey: PUBKEY, verified: true, method: 'oauth',
+          checked_at: Math.floor(Date.now() / 1000), account_id: DID, handle: HANDLE, confirmed: true,
+        }))
+      }
+    }
+    kv.put.mockClear()
+    vi.stubGlobal('fetch', bluesky(DID).mock)
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(recordPuts(kv)).toEqual([])
+  })
+
 })
 
 describe('checking a Bluesky sign-in link claimed by DID', () => {

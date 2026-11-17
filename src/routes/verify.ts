@@ -138,14 +138,15 @@ type FirstLook = { answer: Promise<VerifyResult> } | { check: PendingCheck } | {
 // Not "expired": the record is intact, but the handle was deleted or now
 // points to another account, or the account is no longer active. Apps offer
 // the same "Sign in again" for both codes, where the platform offers sign-in.
-function accountChangedAnswer(claim: VerifyClaim, now: number, why: 'moved' | 'inactive'): VerifyResult {
+// An account gone for the long term answers as an inactive one; neither changes storage.
+function accountChangedAnswer(claim: VerifyClaim, now: number, why: 'moved' | 'inactive' | 'gone'): VerifyResult {
   return {
     platform: claim.platform,
     identity: claim.identity,
     verified: false,
-    error: why === 'inactive'
-      ? 'The account that signed in is no longer active on Bluesky, so the link no longer counts.'
-      : 'This handle no longer points to the account that signed in, so the link no longer counts.',
+    error: why === 'moved'
+      ? 'This handle no longer points to the account that signed in, so the link no longer counts.'
+      : 'The account that signed in is no longer active on Bluesky, so the link no longer counts.',
     code: 'signin_account_changed',
     checked_at: now,
     cached: false,
@@ -209,13 +210,19 @@ async function signInAnswer(
 // verified by a proof post or identity-link record on that account, so it is
 // checked for those (from the cache, or by a check of its own). Everything
 // else answers that the account changed and spends no platform quota.
+// Checking never changes the saved sign-in record.
 async function signInLook(env: Bindings, oauthResult: OAuthVerification, pending: PendingCheck): Promise<SignInLook> {
   const { claim, tidy, tidied, key, now } = pending
   const account = await blueskySignInAccount(env, oauthResult, tidy.identity)
-  if (account === 'matches') return { answer: signedInAnswer(claim, oauthResult, tidied) }
-  // An inactive account, a look-alike spelling and a handle that no longer
-  // resolves are answered as they stand: no cache read, no reservation, no
-  // Bluesky fetch. None names an account a check could find evidence on.
+  if (account === 'matches') {
+    return { answer: signedInAnswer(claim, oauthResult, tidied) }
+  }
+  // An inactive or gone account, a look-alike spelling and a handle that no
+  // longer resolves are answered as they stand: no cache read, no reservation,
+  // no Bluesky fetch. None gives a check an account to look for other
+  // evidence on: an inactive or gone answer comes either from a claim that
+  // still names the account that signed in, or from a handle lookup that
+  // couldn't say which account the handle names now.
   if (typeof account === 'string') return { answer: accountChangedAnswer(claim, now, account) }
 
   // Only a verification stands in for the sign-in; anything else cached (a
