@@ -76,8 +76,8 @@ export async function getOAuthVerification(
 // Two best-effort paths can leave a record behind: a read of the requested or
 // paired record that is a stale or cached miss, and a failed delete of the
 // old-handle record after a handle change. Before #90 such a leftover expired
-// within 30 days; a kept one now stays until removed. It shows only if its
-// owner's profile names it again.
+// within 30 days; a kept one now stays until removed. It can still be found
+// during owner discovery, but verification requires a claim on the owner's current list.
 export async function deleteOAuthVerification(
   kv: KVNamespace,
   platform: string,

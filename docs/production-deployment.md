@@ -125,6 +125,7 @@ References: [Wrangler versions and deployments](https://developers.cloudflare.co
   to get a new record with no expiry. There is no one-time migration script.
 - Unlink remains best effort: a stale or cached KV miss, or a failed deletion of
   an old-handle record after a handle change, can leave a record behind. A record
-  with no expiry stays stored until removed and shows only if its owner's profile
-  names it again. Cloudflare KV is eventually consistent; see
+  with no expiry stays stored until removed and may still be encountered during
+  bounded owner discovery. Naming an owner still requires their current list and
+  a successful verification. Cloudflare KV is eventually consistent; see
   [how KV works](https://developers.cloudflare.com/kv/concepts/how-kv-works/).

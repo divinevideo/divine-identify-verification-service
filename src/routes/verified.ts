@@ -4,6 +4,7 @@
 
 import { Hono } from 'hono'
 import { getOAuthVerification, oauthVerificationKey } from '../oauth/state'
+import { lookUpHandle } from '../oauth/signin-account'
 import type { Bindings, Platform, VerifyClaim, VerifyResult } from '../types'
 import { asSignedEvent, verifyEventSignature, type SignedNostrEvent } from '../utils/nostr-event'
 import { checkRateLimit, RATE_LIMITS } from '../utils/rate-limit'
@@ -134,6 +135,27 @@ interface CandidateOutcome {
  */
 async function signInCandidates(env: Bindings, platform: Platform, identity: string): Promise<{ pubkeys: string[]; identities: string[]; incomplete: boolean }> {
   if (!SIGNIN_PLATFORMS.has(platform)) return { pubkeys: [], identities: [], incomplete: false }
+  if (platform === 'bluesky' && !identity.startsWith('did:')) {
+    const lookup = await lookUpHandle(env, identity)
+    if (lookup && 'did' in lookup) {
+      // Prefer records saved under the account's current DID. Handle records
+      // can belong to an earlier account, so they are only a bounded fallback
+      // for older sign-ins that were not also saved under their DID.
+      const current = await signInCandidates(env, platform, lookup.did)
+      const prefix = oauthVerificationKey(platform, identity, '')
+      const { keys, list_complete } = await env.CACHE_KV.list({ prefix })
+      const owners = keys.map(key => key.name.slice(prefix.length)).filter(pubkey => HEX_PUBKEY.test(pubkey))
+      const bounded = owners.slice(0, MAX_LOOKUP_CANDIDATES)
+      const records = await Promise.all(bounded.map(pubkey => getOAuthVerification(env.CACHE_KV, platform, identity, pubkey)))
+      const compatible = bounded.filter((_, i) => !records[i]?.account_id || records[i]?.account_id === lookup.did)
+      const all = [...new Set([...current.pubkeys, ...compatible])]
+      return {
+        pubkeys: all.slice(0, MAX_LOOKUP_CANDIDATES),
+        identities: [identity, lookup.did],
+        incomplete: current.incomplete || list_complete === false || owners.length > bounded.length || all.length > MAX_LOOKUP_CANDIDATES,
+      }
+    }
+  }
   const prefix = oauthVerificationKey(platform, identity, '')
   // Only the first few owners are checked, so one page of keys is enough.
   const { keys, list_complete } = await env.CACHE_KV.list({ prefix })

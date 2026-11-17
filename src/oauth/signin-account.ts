@@ -30,7 +30,7 @@ export async function forgetHandleLookup(env: Bindings, handle: string): Promise
 
 type Lookup = { did: string } | { notFound: true } | null
 
-async function lookUpHandle(env: Bindings, handle: string): Promise<Lookup> {
+export async function lookUpHandle(env: Bindings, handle: string): Promise<Lookup> {
   const key = handleLookupKey(handle)
   const cached = await env.CACHE_KV.get(key)
   if (cached) return cached === 'not-found' ? { notFound: true } : { did: cached }
