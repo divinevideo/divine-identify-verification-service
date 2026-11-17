@@ -1,5 +1,5 @@
-// ABOUTME: How long a sign-in record counts, decided from when it was saved: a confirmed
-// ABOUTME: Bluesky record with its DID until it is unlinked, other confirmed records 30 days, unconfirmed a day.
+// ABOUTME: How long a sign-in record counts, decided from when it was saved: a confirmed Bluesky
+// ABOUTME: record with its DID until unlinked, other confirmed records 30 days, unconfirmed a day.
 import type { OAuthVerification } from '../types'
 
 /** How long a confirmed sign-in link lasts, except a Bluesky one saved with its DID, which is kept until unlinked. */

@@ -35,15 +35,13 @@ const CONFIRMED_TTL_SECONDS = FIXED_SIGNIN_LIFETIME_DAYS * 24 * 60 * 60
 // How long a record kept for an account that is gone stays stored after retiring.
 export const RETIRE_TTL_SECONDS = CONFIRMED_TTL_SECONDS
 
-// A confirmed Bluesky sign-in saved with its DID is stored with no expiry and marked `kept`, so it
-// lasts until its owner unlinks it (#90). Every other confirmed sign-in is
-// stored for 30 days, and an unconfirmed one for a day. The age check
-// (signin-lifetime.ts) counts such a record at any age; one without a DID is
-// stored for 30 days like the other platforms'. If the
-// code is rolled back to before #90, a kept record stays stored until it is
-// unlinked, but the older age check stops counting it after 30 days, while
-// other records still end at 30 days as before. Any `kept` or `retired` mark
-// passed in is dropped, so a retired record stored again is stored like a new one.
+// A confirmed Bluesky sign-in saved with its DID is stored with no expiry and marked `kept`,
+// so it lasts until its owner unlinks it (#90). Every other confirmed sign-in is stored for
+// 30 days, and an unconfirmed one for a day. The age check (signin-lifetime.ts) counts such a
+// record at any age; one without a DID is stored for 30 days like the other platforms'. Any
+// `kept` or `retired` mark passed in is dropped, so a retired record stored again is stored
+// like a new one. Rolling the code back below #90 leaves kept records behind: see Rollback
+// in docs/production-deployment.md.
 export async function storeOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
   const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
   const { kept: _kept, retired: _retired, ...record } = verification
@@ -88,6 +86,11 @@ export async function getOAuthVerification(
 // fails partway can be retried. Other platforms save each link under its one
 // identity, so only that record goes, even when another link shares its
 // account ID.
+// Two best-effort paths can leave a record behind: a read of the requested or
+// paired record that is a stale or cached miss, and a failed delete of the
+// old-handle record after a handle change. Before #90 such a leftover expired
+// within 30 days; a kept one now stays until removed. It shows only if its
+// owner's profile names it again.
 export async function deleteOAuthVerification(
   kv: KVNamespace,
   platform: string,

@@ -99,6 +99,17 @@ part of local validation or PR publication.
    Reconcile main with the fix before re-enabling CD; replaying an obsolete main
    run is deliberately refused.
 
+Rolling back below #90 also affects stored Bluesky sign-in links (#90):
+
+- Kept records stay stored with no expiry under the older code, and nothing in
+  the older code ends them.
+- The older age check stops counting any link confirmed more than 30 days
+  earlier at once, so those owners see `signin_expired` until they sign in again.
+- Retired records are not affected: the older code ignores `retired`, and their
+  30-day expiry ends them.
+- Records the older code saves during the rollback have a 30-day expiry and no
+  `kept` mark. Rolling forward again means re-running the keep script below.
+
 References: [Wrangler versions and deployments](https://developers.cloudflare.com/workers/wrangler/commands/workers/#versions),
 [rollback limitations](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/).
 
@@ -119,9 +130,24 @@ Run it only on Matt's go, right after the #90 deploy is live. It needs a
 2. Write: `node scripts/keep-bluesky-links.mjs --write` (optionally
    `--pace-ms N`, default 300, the pause between API calls).
 
-Running it again is safe: records already stored with no expiry are skipped. A
-record that changed or was removed between the script reading and writing it is
-left alone and counted in `changed`. If Cloudflare rate-limits the run, the
+3. Dry run again: `eligible` should be 0 and `expiring` should have dropped by
+   the number kept in step 2. That confirms in production that the write cleared
+   each expiry.
+
+Running it again is safe: records already stored with no expiry are skipped. The
+script reads each record again just before writing it, and skips one that
+changed (counted in `changed`). That narrows, but does not close, a window in
+which a link unlinked a moment earlier is written back: Cloudflare documents KV
+as eventually consistent ("changes may take up to 60 seconds or more to be
+visible", and "Negative lookups indicating that the key does not exist are also
+cached") without saying whether REST API reads are fresher
+([how KV works](https://developers.cloudflare.com/kv/concepts/how-kv-works/)).
+If a link was unlinked in the minute before the script reached it, it can come
+back kept; unlinking it again removes it. Two paths can also leave a kept record
+behind when an unlink is best effort (a read that is a stale or cached miss, and
+a failed delete of the old-handle record after a handle change). Before #90 such
+a leftover expired within 30 days; a kept one now stays until removed, and shows
+only if its owner's profile names it again. If Cloudflare rate-limits the run, the
 script stops with a message; run it again to continue. It prints counts only,
 never key names, values or URLs.
 

@@ -493,6 +493,26 @@ describe('retiring and un-retiring a Bluesky link', () => {
     expect(read(store, 'bluesky', DID)).toMatchObject({ kept: true, handle: NEW })
   })
 
+  it('does not store the pair\'s other record again when it is already retired, or confirmed but not kept', async () => {
+    const { env, store, kv } = createEnv()
+    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
+    const kept = read(store, 'bluesky', HANDLE)
+    const didKey = oauthVerificationKey('bluesky', DID, PUBKEY)
+    const didRecord = read(store, 'bluesky', DID)
+    // Already retired: its 30 days must not start over.
+    await retireOAuthVerification(env.CACHE_KV, didRecord)
+    kv.put.mockClear()
+    await retireSignIn(env, kept)
+    expect(recordPuts(kv).map(c => c[0])).toEqual([oauthVerificationKey('bluesky', HANDLE, PUBKEY)])
+    // Confirmed but not kept: it already has its own expiry, and must not be marked retired.
+    const { kept: _kept, ...notKept } = didRecord
+    store.set(didKey, JSON.stringify(notKept))
+    kv.put.mockClear()
+    await retireSignIn(env, kept)
+    expect(recordPuts(kv).map(c => c[0])).toEqual([oauthVerificationKey('bluesky', HANDLE, PUBKEY)])
+    expect(read(store, 'bluesky', DID)).not.toHaveProperty('retired')
+  })
+
   it('does not un-retire a DID record that now belongs to a newer sign-in with another handle', async () => {
     const { env, store, kv } = createEnv()
     await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)

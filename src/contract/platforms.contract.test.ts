@@ -73,7 +73,7 @@ describe('GET /platforms (mobile verifier_platform.dart)', () => {
   // positive integer, only where oauth is true; it is absent where oauth is false and on
   // platforms without sign-in. Bluesky never sends it: its confirmed links last until unlinked,
   // and the app shows no lifetime note when the field is missing.
-  describe('T2.8 reports signin_expires_after_days only where sign-in is on', () => {
+  describe('T2.8 reports signin_expires_after_days only where sign-in is on, and never for Bluesky', () => {
     it.each(Object.keys(SIGNIN_SETUPS) as SignInPlatform[])('%s', async (platform) => {
       const on = (await platformsFor(SIGNIN_SETUPS[platform].on))[platform]
       expect(on.oauth, 'on').toBe(true)
