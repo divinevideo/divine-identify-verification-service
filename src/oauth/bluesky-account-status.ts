@@ -9,7 +9,7 @@ import { fetchPublic } from '../utils/safe-fetch'
 /**
  * `inactive`: paused or unclear, so the account may come back soon. `gone`:
  * gone for the long term, though it can still come back. Both stop a link
- * counting; only how long its record is kept differs (signin-records.ts).
+ * counting. Neither answer changes the saved sign-in record or its expiry.
  * `null` means the lookup couldn't tell, which keeps a link counting.
  */
 export type AccountStatus = 'active' | 'inactive' | 'gone' | null
@@ -156,8 +156,8 @@ async function askHost(did: string): Promise<AccountStatus> {
   // all have `active: false`, and services "should use the `active` flag"
   // rather than the `status` string. A body without a boolean `active` isn't
   // the lexicon's shape, so it isn't an answer. So `active` alone decides
-  // whether the link counts; the status only decides how long an inactive
-  // account's record is kept. The same spec says `deleted` and `takendown` are
+  // whether the link counts; the status describes the inactive account but
+  // never changes its stored record. The same spec says `deleted` and `takendown` are
   // "implied permanent or long-term, though may be reverted", so they are gone;
   // `deactivated` and `suspended` are "implied time-limited", and any other or
   // missing status says nothing more, so those are inactive.

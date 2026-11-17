@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import worker from '../index'
 import type { Bindings, CachedResult } from '../types'
 import { cacheKey } from '../utils/cache'
-import { oauthVerificationKey, retireOAuthVerification, storeOAuthVerification } from './state'
+import { oauthVerificationKey, storeOAuthVerification } from './state'
 import { handleBlueskyCallback } from './bluesky'
 import { generateDPoPKeyPair } from './crypto'
 import { blueskyAccountAnswer } from '../test-support/bluesky-account'
 
 // An account linked by signing in to Bluesky, once its owner confirms it
-// (#113), stays verified for 30 days, or until it is unlinked (#58).
+// (#113), lasts with its DID until it is unlinked (#58).
 // A Bluesky link is tied to the account's DID, so a handle that now points
 // somewhere else stops verifying.
 
@@ -298,12 +298,8 @@ describe('checking a Bluesky sign-in link', () => {
 // atproto.com/specs/account: `deleted` and `takendown` are "permanent or
 // long-term, though may be reverted", and a tombstoned identity's status
 // "should be interpreted as `deleted`"; `deactivated` and `suspended` are
-// "time-limited". A link to an account gone for the long term stops counting
-// and its records end 30 days later (retired); one paused or unclear stops
-// counting and is kept. Either way it counts again once the account is active.
+// "time-limited". Neither answer rewrites the saved sign-in records.
 describe('a Bluesky account gone for the long term', () => {
-  const DAY = 24 * 60 * 60
-
   // A confirmed link saved under the handle and the DID, as sign-in saves it:
   // with no expiry, marked kept.
   async function keptLink(kv: ReturnType<typeof createEnv>['kv']) {
@@ -315,52 +311,30 @@ describe('a Bluesky account gone for the long term', () => {
     }
   }
 
-  // The same link after an earlier read found the account gone.
-  async function retiredLink(kv: ReturnType<typeof createEnv>['kv'], store: Map<string, string>) {
-    await keptLink(kv)
-    for (const identity of [HANDLE, DID]) {
-      await retireOAuthVerification(kv as unknown as KVNamespace, JSON.parse(store.get(oauthVerificationKey('bluesky', identity, PUBKEY)) ?? '{}'))
-    }
-  }
-
   // Writes to sign-in records made by the check, in order.
   const recordPuts = (kv: ReturnType<typeof createEnv>['kv']) => kv.put.mock.calls.filter(c => String(c[0]).startsWith('oauth_verified:'))
-
-  function expectRetired(kv: ReturnType<typeof createEnv>['kv'], readLast: string) {
-    const puts = recordPuts(kv)
-    expect(puts.map(c => c[0])).toEqual([
-      oauthVerificationKey('bluesky', readLast === HANDLE ? DID : HANDLE, PUBKEY),
-      oauthVerificationKey('bluesky', readLast, PUBKEY),
-    ])
-    for (const [, value, opts] of puts) {
-      expect(opts).toEqual({ expirationTtl: 30 * DAY })
-      const stored = JSON.parse(value)
-      expect(stored).not.toHaveProperty('kept')
-      expect(stored).toMatchObject({ retired: true, confirmed: true, account_id: DID, handle: HANDLE })
-    }
-  }
 
   it.each([
     ['deleted', { active: false, status: 'deleted' }],
     ['taken down', { active: false, status: 'takendown' }],
     ['tombstoned', 'tombstone'],
-  ] as const)('/verify with a kept record and a %s account answers inactive and retires both records for 30 days', async (_label, account) => {
+  ] as const)('/verify with a kept record and a %s account answers inactive without rewriting records', async (_label, account) => {
     const { env, store, kv } = createEnv()
     await keptLink(kv)
     kv.put.mockClear()
     vi.stubGlobal('fetch', bluesky(DID, account).mock)
     expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
-    expectRetired(kv, HANDLE)
+    expect(recordPuts(kv)).toEqual([])
     expect(store.has(oauthVerificationKey('bluesky', DID, PUBKEY))).toBe(true)
   })
 
-  it('retires both records from a claim of the DID too', async () => {
+  it('answers inactive for a claim of the DID without rewriting records', async () => {
     const { env, kv } = createEnv()
     await keptLink(kv)
     kv.put.mockClear()
     vi.stubGlobal('fetch', bluesky(OTHER_DID, { active: false, status: 'deleted' }).mock)
     expect(await check(env, DID)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
-    expectRetired(kv, DID)
+    expect(recordPuts(kv)).toEqual([])
   })
 
   it.each(['deactivated', 'suspended'])('/verify with a %s account gives the same answer and keeps the records as they are', async status => {
@@ -372,19 +346,19 @@ describe('a Bluesky account gone for the long term', () => {
     expect(recordPuts(kv)).toEqual([])
   })
 
-  it('a gone answer while the handle lookup is down still retires', async () => {
+  it('a gone answer while the handle lookup is down does not rewrite records', async () => {
     const { env, kv } = createEnv()
     await keptLink(kv)
     kv.put.mockClear()
     vi.stubGlobal('fetch', bluesky('unreachable', { active: false, status: 'deleted' }).mock)
     expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
-    expectRetired(kv, HANDLE)
+    expect(recordPuts(kv)).toEqual([])
   })
 
   it.each([
     ['the account host cannot be reached', DID],
     ['neither the handle lookup nor the account host can be reached', 'unreachable'],
-  ] as const)('an outage never retires: %s', async (_label, handleAnswer) => {
+  ] as const)('an outage never rewrites records: %s', async (_label, handleAnswer) => {
     const { env, kv } = createEnv()
     await keptLink(kv)
     kv.put.mockClear()
@@ -393,7 +367,7 @@ describe('a Bluesky account gone for the long term', () => {
     expect(recordPuts(kv)).toEqual([])
   })
 
-  it('retire once only: a record that is not kept is left as it is', async () => {
+  it('a record that is not kept is left as it is', async () => {
     const { env, store, kv } = createEnv()
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
     vi.stubGlobal('fetch', bluesky(DID, { active: false, status: 'deleted' }).mock)
@@ -401,36 +375,23 @@ describe('a Bluesky account gone for the long term', () => {
     expect(recordPuts(kv)).toEqual([])
   })
 
-  it('a retired record seen gone again is not retired again', async () => {
+  it('a link whose account becomes active again counts without rewriting records', async () => {
     const { env, kv, store } = createEnv()
-    await retiredLink(kv, store)
+    await keptLink(kv)
     kv.put.mockClear()
     vi.stubGlobal('fetch', bluesky(DID, { active: false, status: 'deleted' }).mock)
     expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
     expect(recordPuts(kv)).toEqual([])
-  })
-
-  it('a retired record whose account is active again counts and is re-saved kept with no expiry', async () => {
-    const { env, kv, store } = createEnv()
-    await retiredLink(kv, store)
-    kv.put.mockClear()
+    store.delete(`bsky_account_status:${DID}`)
     vi.stubGlobal('fetch', bluesky(DID).mock)
     expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
-    const puts = recordPuts(kv)
-    // The record read goes last, as when retiring.
-    expect(puts.map(c => c[0])).toEqual([oauthVerificationKey('bluesky', DID, PUBKEY), oauthVerificationKey('bluesky', HANDLE, PUBKEY)])
-    for (const call of puts) {
-      expect(call[2]).toBeUndefined()
-      const stored = JSON.parse(call[1])
-      expect(stored).not.toHaveProperty('retired')
-      expect(stored).toMatchObject({ kept: true, confirmed: true, account_id: DID, handle: HANDLE })
-    }
+    expect(recordPuts(kv)).toEqual([])
   })
 
   it.each([
     ['a kept record', true],
     ['a confirmed record saved before records were kept, still with its 30-day expiry', false],
-  ] as const)('a record that was never retired is not re-saved when it counts: %s', async (_label, kept) => {
+  ] as const)('a record is not re-saved when it counts: %s', async (_label, kept) => {
     const { env, kv, store } = createEnv()
     if (kept) {
       await keptLink(kv)
@@ -448,38 +409,6 @@ describe('a Bluesky account gone for the long term', () => {
     expect(recordPuts(kv)).toEqual([])
   })
 
-  it('a retired record is not re-saved while the account host cannot be reached', async () => {
-    const { env, kv, store } = createEnv()
-    await retiredLink(kv, store)
-    kv.put.mockClear()
-    vi.stubGlobal('fetch', bluesky(DID, 'unreachable').mock)
-    // Counted, by the outage rule, but nothing says the account is back.
-    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
-    expect(recordPuts(kv)).toEqual([])
-  })
-
-  it.each([
-    ['retire', { active: false, status: 'deleted' }, { verified: false, code: 'signin_account_changed', error: INACTIVE }],
-    ['un-retire', {}, { verified: true, method: 'oauth' }],
-  ] as const)('a failed %s write still leaves the answer unchanged, and logs no identifier', async (label, account, answer) => {
-    const { env, kv, store } = createEnv()
-    if (label === 'retire') await keptLink(kv)
-    else await retiredLink(kv, store)
-    kv.put.mockImplementation(async (key: string, value: string) => {
-      if (key.startsWith('oauth_verified:')) throw new Error(`KV PUT failed ${key} ${value}`)
-      store.set(key, value)
-    })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    vi.stubGlobal('fetch', bluesky(DID, account).mock)
-    try {
-      expect(await check(env)).toMatchObject(answer)
-      const logged = warn.mock.calls.flat().map(a => String(a)).join(' ')
-      expect(warn).toHaveBeenCalled()
-      for (const secret of [PUBKEY, HANDLE, DID, 'oauth_verified:']) expect(logged).not.toContain(secret)
-    } finally {
-      warn.mockRestore()
-    }
-  })
 })
 
 describe('checking a Bluesky sign-in link claimed by DID', () => {

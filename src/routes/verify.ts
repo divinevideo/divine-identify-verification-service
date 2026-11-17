@@ -8,7 +8,7 @@ import { getVerifier } from '../platforms/registry'
 import { PLATFORM_CHECK_TIME_BUDGET_MS, PlatformUnavailableError, withinTimeBudget } from '../platforms/base'
 import { isDiscordMessageLink, MESSAGE_LINK_HOSTS } from '../platforms/discord'
 import { confirmationAccess, type ConfirmationAccess } from '../oauth/confirmation-access'
-import { retireSignIn, signInStanding, unretireSignIn } from '../oauth/signin-records'
+import { signInStanding } from '../oauth/signin-records'
 import { blueskySignInAccount, signInAccountStillMatches } from '../oauth/signin-account'
 import { tidyClaim } from '../utils/tidy-claim'
 import { setPagePolicy } from '../content-security-policy'
@@ -138,8 +138,7 @@ type FirstLook = { answer: Promise<VerifyResult> } | { check: PendingCheck } | {
 // Not "expired": the record is intact, but the handle was deleted or now
 // points to another account, or the account is no longer active. Apps offer
 // the same "Sign in again" for both codes, where the platform offers sign-in.
-// An account gone for the long term answers as an inactive one: only how long
-// its record is kept differs (retireSignIn).
+// An account gone for the long term answers as an inactive one; neither changes storage.
 function accountChangedAnswer(claim: VerifyClaim, now: number, why: 'moved' | 'inactive' | 'gone'): VerifyResult {
   return {
     platform: claim.platform,
@@ -210,18 +209,14 @@ async function signInAnswer(
 // still matches. One whose claim now names another account can still be
 // verified by a proof post or identity-link record on that account, so it is
 // checked for those (from the cache, or by a check of its own). Everything
-// else answers that the account changed and spends no platform quota. A
-// retired record that counts again is kept again, and a kept one whose account
-// is gone for the long term is retired (signin-records.ts); neither changes
-// the answer.
+// else answers that the account changed and spends no platform quota.
+// Checking never changes the saved sign-in record.
 async function signInLook(env: Bindings, oauthResult: OAuthVerification, pending: PendingCheck): Promise<SignInLook> {
   const { claim, tidy, tidied, key, now } = pending
   const account = await blueskySignInAccount(env, oauthResult, tidy.identity)
   if (account === 'matches') {
-    await unretireSignIn(env, oauthResult)
     return { answer: signedInAnswer(claim, oauthResult, tidied) }
   }
-  if (account === 'gone') await retireSignIn(env, oauthResult)
   // An inactive or gone account, a look-alike spelling and a handle that no
   // longer resolves are answered as they stand: no cache read, no reservation,
   // no Bluesky fetch. None gives a check an account to look for other

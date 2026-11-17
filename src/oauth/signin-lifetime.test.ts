@@ -89,11 +89,13 @@ describe('the README states the fixed lifetime', () => {
   it('states FIXED_SIGNIN_LIFETIME_DAYS for sign-in links', async () => {
     const { readFileSync } = await import('node:fs' as string) as { readFileSync: (path: string, encoding: string) => string }
     const readme = readFileSync('README.md', 'utf8')
-    expect(readme).toContain(`A confirmed Bluesky sign-in link lasts until it is unlinked, unless the account's host reports the account deleted or taken down: then the link stops counting at once, and its record ends 30 days after a check finds the account gone, unless a later check finds it active again. The other sign-in links last ${FIXED_SIGNIN_LIFETIME_DAYS} days from confirmation`)
+    expect(readme).toContain('A new confirmed Bluesky sign-in link saved with its DID is stored until it is unlinked.')
+    expect(readme).toContain('Existing Bluesky links keep their original 30-day expiry; after expiry, sign in and confirm once more to get a record with no expiry.')
+    expect(readme).toContain(`Other sign-in links last ${FIXED_SIGNIN_LIFETIME_DAYS} days from confirmation`)
     expect(readme).toContain('stops counting once the handle points to another account or no longer resolves')
     expect(readme).toContain("the link keeps counting unless the account's host reports the account inactive). A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated, suspended or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting and the host is asked again after a minute.")
     expect(readme).not.toContain('without asking Bluesky')
     expect(readme).not.toMatch(/no fixed lifetime|re-checked at each verification/)
-    expect(readme).toContain("Bluesky leaves it out, because a confirmed Bluesky link lasts until it is unlinked, unless the account's host reports the account deleted or taken down.")
+    expect(readme).toContain('Bluesky leaves it out: new confirmed links saved with a DID have no expiry. Account inactivity stops a link counting without changing its stored record.')
   })
 })

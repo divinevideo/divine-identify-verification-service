@@ -6,7 +6,7 @@ import type { Bindings, OAuthVerification } from '../types'
 import type { SignedNostrEvent } from '../utils/nostr-event'
 import auth, { isAllowedReturnUrl } from './auth'
 import worker from '../index'
-import { oauthStateKey, oauthVerificationKey, retireOAuthVerification, storeOAuthVerification } from '../oauth/state'
+import { oauthStateKey, oauthVerificationKey, storeOAuthVerification } from '../oauth/state'
 import { sha256Hex } from '../oauth/unlink-proof'
 import { blueskyAccountAnswer } from '../test-support/bluesky-account'
 
@@ -961,7 +961,7 @@ describe('GET /auth/bluesky/status for a kept sign-in', () => {
   }
   const recordPuts = (put: { mock: { calls: unknown[][] } }) => put.mock.calls.filter(c => String(c[0]).startsWith('oauth_verified:'))
 
-  it('the status route answers not verified for a gone account and retires it', async () => {
+  it('the status route answers not verified for a gone account without rewriting records', async () => {
     const env = createTestEnv()
     const pubkey = 'a'.repeat(64)
     await keptLink(env, pubkey)
@@ -969,14 +969,7 @@ describe('GET /auth/bluesky/status for a kept sign-in', () => {
     stubBluesky({ active: false, status: 'deleted' })
     const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
     expect(await res.json()).toMatchObject({ verified: false, method: null })
-    const puts = recordPuts(put)
-    expect(puts.map(c => c[0])).toEqual([oauthVerificationKey('bluesky', DID, pubkey), oauthVerificationKey('bluesky', 'alice.bsky.social', pubkey)])
-    for (const call of puts) {
-      expect(call[2]).toEqual({ expirationTtl: 30 * 24 * 60 * 60 })
-      const stored = JSON.parse(String(call[1]))
-      expect(stored).not.toHaveProperty('kept')
-      expect(stored).toMatchObject({ retired: true })
-    }
+    expect(recordPuts(put)).toEqual([])
   })
 
   it('the status route keeps the records of a deactivated account as they are', async () => {
@@ -990,25 +983,20 @@ describe('GET /auth/bluesky/status for a kept sign-in', () => {
     expect(recordPuts(put)).toEqual([])
   })
 
-  it('the status route answers verified for a retired record whose account is active again, and keeps it again', async () => {
+  it('the status route counts a link whose account becomes active again without rewriting records', async () => {
     const env = createTestEnv()
     const pubkey = 'a'.repeat(64)
     await keptLink(env, pubkey)
-    for (const identity of ['alice.bsky.social', DID]) {
-      await retireOAuthVerification(env.CACHE_KV, JSON.parse(await env.CACHE_KV.get(oauthVerificationKey('bluesky', identity, pubkey)) ?? '{}'))
-    }
     const put = vi.spyOn(env.CACHE_KV, 'put')
+    stubBluesky({ active: false, status: 'deleted' })
+    const inactive = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
+    expect(await inactive.json()).toMatchObject({ verified: false, method: null })
+    expect(recordPuts(put)).toEqual([])
+    await env.CACHE_KV.delete(`bsky_account_status:${DID}`)
     stubBluesky()
     const res = await app.request(`/auth/bluesky/status?pubkey=${pubkey}&identity=alice.bsky.social`, {}, env)
     expect(await res.json()).toMatchObject({ verified: true, method: 'oauth' })
-    const puts = recordPuts(put)
-    expect(puts).toHaveLength(2)
-    for (const call of puts) {
-      expect(call[2]).toBeUndefined()
-      const stored = JSON.parse(String(call[1]))
-      expect(stored.kept).toBe(true)
-      expect(stored).not.toHaveProperty('retired')
-    }
+    expect(recordPuts(put)).toEqual([])
   })
 })
 

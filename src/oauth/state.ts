@@ -32,35 +32,22 @@ export async function deleteOAuthState(kv: KVNamespace, stateId: string): Promis
 
 const CONFIRMED_TTL_SECONDS = FIXED_SIGNIN_LIFETIME_DAYS * 24 * 60 * 60
 
-// How long a record kept for an account that is gone stays stored after retiring.
-export const RETIRE_TTL_SECONDS = CONFIRMED_TTL_SECONDS
-
 // A confirmed Bluesky sign-in saved with its DID is stored with no expiry and marked `kept`,
 // so it lasts until its owner unlinks it (#90). Every other confirmed sign-in is stored for
 // 30 days, and an unconfirmed one for a day. The age check (signin-lifetime.ts) counts such a
 // record at any age; one without a DID is stored for 30 days like the other platforms'. Any
-// `kept` or `retired` mark passed in is dropped, so a retired record stored again is stored
-// like a new one. Rolling the code back below #90 leaves kept records behind: see Rollback
+// `kept` mark passed in is dropped, so only this function sets it.
+// Rolling the code back below #90 leaves kept records behind: see Rollback
 // in docs/production-deployment.md.
 export async function storeOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
   const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
-  const { kept: _kept, retired: _retired, ...record } = verification
+  const { kept: _kept, ...record } = verification
   if (keepsUntilUnlinked(record)) {
     await kv.put(key, JSON.stringify({ ...record, kept: true }))
     return
   }
   const ttl = record.confirmed === true ? CONFIRMED_TTL_SECONDS : OAUTH_VERIFICATION_TTL
   await kv.put(key, JSON.stringify(record), { expirationTtl: ttl })
-}
-
-// Gives a kept record an expiry again, for an account that is gone for the long
-// term, so it stops lingering forever. It ends after 30 days like other links,
-// marked `retired` so it can be kept again if the account comes back first
-// (unretireSignIn in signin-records.ts).
-export async function retireOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
-  const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
-  const { kept: _kept, ...record } = verification
-  await kv.put(key, JSON.stringify({ ...record, retired: true }), { expirationTtl: RETIRE_TTL_SECONDS })
 }
 
 export async function getOAuthVerification(

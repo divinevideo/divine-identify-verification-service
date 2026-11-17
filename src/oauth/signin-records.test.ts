@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Bindings } from '../types'
-import { oauthVerificationKey, deleteOAuthVerification, retireOAuthVerification } from './state'
-import { saveSignIn, getCountedSignIn, signInStanding, retireSignIn, unretireSignIn } from './signin-records'
-import { accountStatusKey } from './bluesky-account-status'
+import { oauthVerificationKey, deleteOAuthVerification } from './state'
+import { saveSignIn, getCountedSignIn, signInStanding } from './signin-records'
 import { confirmationAccessKey } from './confirmation-access'
 
 const PUBKEY = 'ab'.repeat(32)
@@ -456,115 +455,6 @@ describe('which marked records count', () => {
     for (const line of lines) {
       expect(line).not.toContain(PUBKEY)
       expect(line).not.toContain('jack')
-    }
-  })
-})
-
-// Retiring (an account gone for the long term) and un-retiring (it came back)
-// rewrite a Bluesky link under its handle and its DID, the rule unlinking uses:
-// the other record only while it still belongs to this sign-in.
-describe('retiring and un-retiring a Bluesky link', () => {
-  const NEW = 'alice2.bsky.social'
-  const recordPuts = (kv: ReturnType<typeof createEnv>['kv']) => kv.put.mock.calls.filter(c => String(c[0]).startsWith('oauth_verified:'))
-
-  it('retires a kept link under both records, the one read last', async () => {
-    const { env, store, kv } = createEnv()
-    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
-    kv.put.mockClear()
-    await retireSignIn(env, read(store, 'bluesky', HANDLE))
-    expect(recordPuts(kv).map(c => c[0])).toEqual([oauthVerificationKey('bluesky', DID, PUBKEY), oauthVerificationKey('bluesky', HANDLE, PUBKEY)])
-    for (const identity of [HANDLE, DID]) {
-      expect(ttlOf(kv, 'bluesky', identity)).toEqual({ expirationTtl: 2592000 })
-      expect(read(store, 'bluesky', identity)).toMatchObject({ retired: true })
-      expect(read(store, 'bluesky', identity)).not.toHaveProperty('kept')
-    }
-  })
-
-  it('does not retire a DID record that now belongs to a newer sign-in with another handle', async () => {
-    const { env, store, kv } = createEnv()
-    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
-    const old = read(store, 'bluesky', HANDLE)
-    // The account signed in again under a new handle, which replaced the DID record.
-    await saveSignIn(env, PUBKEY, { ...bluesky, identity: NEW, handle: NEW }, CONFIRMATION)
-    store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), JSON.stringify(old))
-    kv.put.mockClear()
-    await retireSignIn(env, old)
-    expect(recordPuts(kv).map(c => c[0])).toEqual([oauthVerificationKey('bluesky', HANDLE, PUBKEY)])
-    expect(read(store, 'bluesky', DID)).toMatchObject({ kept: true, handle: NEW })
-  })
-
-  it('does not store the pair\'s other record again when it is already retired, or confirmed but not kept', async () => {
-    const { env, store, kv } = createEnv()
-    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
-    const kept = read(store, 'bluesky', HANDLE)
-    const didKey = oauthVerificationKey('bluesky', DID, PUBKEY)
-    const didRecord = read(store, 'bluesky', DID)
-    // Already retired: its 30 days must not start over.
-    await retireOAuthVerification(env.CACHE_KV, didRecord)
-    kv.put.mockClear()
-    await retireSignIn(env, kept)
-    expect(recordPuts(kv).map(c => c[0])).toEqual([oauthVerificationKey('bluesky', HANDLE, PUBKEY)])
-    // Confirmed but not kept: it already has its own expiry, and must not be marked retired.
-    const { kept: _kept, ...notKept } = didRecord
-    store.set(didKey, JSON.stringify(notKept))
-    kv.put.mockClear()
-    await retireSignIn(env, kept)
-    expect(recordPuts(kv).map(c => c[0])).toEqual([oauthVerificationKey('bluesky', HANDLE, PUBKEY)])
-    expect(read(store, 'bluesky', DID)).not.toHaveProperty('retired')
-  })
-
-  it('does not un-retire a DID record that now belongs to a newer sign-in with another handle', async () => {
-    const { env, store, kv } = createEnv()
-    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
-    // Signing in forgets a remembered status, so the account's answer is set after.
-    store.set(accountStatusKey(DID), 'active')
-    await retireOAuthVerification(env.CACHE_KV, read(store, 'bluesky', HANDLE))
-    const retired = read(store, 'bluesky', HANDLE)
-    await retireOAuthVerification(env.CACHE_KV, { ...read(store, 'bluesky', DID), handle: NEW })
-    kv.put.mockClear()
-    await unretireSignIn(env, retired)
-    expect(recordPuts(kv).map(c => c[0])).toEqual([oauthVerificationKey('bluesky', HANDLE, PUBKEY)])
-    expect(read(store, 'bluesky', DID)).toMatchObject({ retired: true, handle: NEW })
-  })
-
-  it('un-retires a retired link only once its account reads active', async () => {
-    const { env, store, kv } = createEnv()
-    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
-    await retireSignIn(env, read(store, 'bluesky', HANDLE))
-    store.set(accountStatusKey(DID), 'active')
-    kv.put.mockClear()
-    await unretireSignIn(env, read(store, 'bluesky', HANDLE))
-    expect(recordPuts(kv).map(c => c[0])).toEqual([oauthVerificationKey('bluesky', DID, PUBKEY), oauthVerificationKey('bluesky', HANDLE, PUBKEY)])
-    for (const identity of [HANDLE, DID]) {
-      expect(ttlOf(kv, 'bluesky', identity)).toBeUndefined()
-      expect(read(store, 'bluesky', identity)).toMatchObject({ kept: true })
-      expect(read(store, 'bluesky', identity)).not.toHaveProperty('retired')
-    }
-  })
-
-  it('keeps the Confirmation gate mark on both records through retire and un-retire', async () => {
-    const { env, store } = createEnv({ CONFIRMATION_GATE: 'on', ...GATE })
-    await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
-    expect(read(store, 'bluesky', HANDLE).access_required).toBe(true)
-    await retireSignIn(env, read(store, 'bluesky', HANDLE))
-    for (const identity of [HANDLE, DID]) expect(read(store, 'bluesky', identity)).toMatchObject({ retired: true, access_required: true })
-    store.set(accountStatusKey(DID), 'active')
-    await unretireSignIn(env, read(store, 'bluesky', HANDLE))
-    for (const identity of [HANDLE, DID]) expect(read(store, 'bluesky', identity)).toMatchObject({ kept: true, access_required: true })
-  })
-
-  it('does not un-retire a link whose account is not known to be active', async () => {
-    for (const status of ['inactive', 'gone', 'unknown', null]) {
-      const { env, store, kv } = createEnv()
-      await saveSignIn(env, PUBKEY, bluesky, CONFIRMATION)
-      await retireSignIn(env, read(store, 'bluesky', HANDLE))
-      if (status) store.set(accountStatusKey(DID), status)
-      kv.put.mockClear()
-      // With no answer remembered, the host is asked, and it can't be reached.
-      vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network down') }))
-      await unretireSignIn(env, read(store, 'bluesky', HANDLE))
-      vi.unstubAllGlobals()
-      expect(recordPuts(kv)).toEqual([])
     }
   })
 })
