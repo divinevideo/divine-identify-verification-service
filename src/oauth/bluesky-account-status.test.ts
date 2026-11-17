@@ -70,7 +70,7 @@ describe('blueskyAccountStatus', () => {
     },
   )
 
-  // Gone for the long term: the link record ends 30 days later (signin-records.ts).
+  // Gone for the long term: the link stops counting, but its stored record is unchanged.
   it.each(['deleted', 'takendown'])(
     'answers gone for active:false with status %s, remembered for five minutes',
     async (status) => {
