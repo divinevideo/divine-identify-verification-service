@@ -65,6 +65,23 @@ describe('verifier health', () => {
     }
   })
 
+  it('reports the Confirmation gate mode in effect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      for (const [value, mode] of [[undefined, 'off'], ['shadow', 'shadow'], [' ON ', 'on'], ['onn', 'off']]) {
+        const res = await worker.fetch(new Request('https://verifier.divine.video/health'), { CONFIRMATION_GATE: value } as never)
+        expect((await res.json() as { confirmation_gate?: string }).confirmation_gate).toBe(mode)
+      }
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('does not list testers on /health', async () => {
+    const res = await worker.fetch(new Request('https://verifier.divine.video/health'), { CONFIRMATION_TESTERS: 'a'.repeat(64) } as never)
+    expect(await res.text()).not.toContain('a'.repeat(64))
+  })
+
   it('documents the mode it reports on the page', async () => {
     const response = await worker.fetch(new Request('https://verifier.divine.video/docs'), {} as never)
     const html = await response.text()
@@ -360,6 +377,12 @@ describe('confirm refusal for switched-off sign-in links', () => {
   it('the page explains a confirm refused because sign-in links are switched off', async () => {
     expect(await homeHtml()).toContain("signin_unavailable: 'Sign-in links for this platform are switched off right now.'")
   })
+
+  it('the page explains a confirm refused because Divine Confirmation is required or could not be checked', async () => {
+    const html = await homeHtml()
+    expect(html).toContain("confirmation_required: 'Linking by sign-in needs Divine Confirmation. Proof posts stay free.'")
+    expect(html).toContain("confirmation_unavailable: 'Divine Confirmation couldn\\'t be checked right now. Press Publish to try again.'")
+  })
 })
 
 describe('verifier Bluesky sign-in shutoff', () => {
@@ -561,12 +584,13 @@ Content-Type: application/json
     const docs = oauthDocsSection(await docsHtml())
     expect(docs).toContain("The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>.")
     expect(docs).toContain('The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.')
-    expect(docs).toContain("A sign-in counts only after you confirm it by publishing, and for 30 days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting. A claim of the account's DID is compared with the DID saved at sign-in, without asking Bluesky.")
+    expect(docs).toContain("A sign-in counts only after you confirm it by publishing, and for 30 days from when you confirmed it; after that, sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting unless the account's host reports the account inactive. A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated, suspended or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting and the host is asked again after a minute.")
+    expect(docs).not.toContain('without asking Bluesky')
     expect(docs).not.toMatch(/no fixed lifetime|re-checked at each verification/)
   })
 
-  it('says signin_account_changed also covers a YouTube handle spelled unlike the sign-in', async () => {
-    expect(await docsHtml()).toContain('<code>signin_account_changed</code> means the handle no longer points to the account that signed in (it was deleted, or now points to another account). For a YouTube sign-in claimed by handle, it also means the claim spells the handle differently from the sign-in, beyond the letter case of A to Z.')
+  it('says signin_account_changed covers an inactive account, still checks Bluesky proofs, and covers a YouTube handle spelled unlike the sign-in', async () => {
+    expect(await docsHtml()).toContain('<code>signin_account_changed</code> means the handle no longer points to the account that signed in (it was deleted, or now points to another account), or that account is no longer active. On Bluesky, when the handle points to another account, a proof post or identity-link record on that account is checked before this answer, and verifies the claim as usual. A verification of that claim remembered from the last 24 hours also counts. <code>signin_account_changed</code> also means, for a YouTube sign-in claimed by handle, that the claim spells the handle differently from the sign-in, beyond the letter case of A to Z.')
   })
 
   it('says how a YouTube sign-in is checked against its channel, only while YouTube is on', async () => {

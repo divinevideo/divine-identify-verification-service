@@ -48,6 +48,13 @@ DISCORD_VERIFY_CHANNEL_ID = "1484771306179133582"
 # TIKTOK_CLIENT_KEY - TikTok Login Kit client key
 # TIKTOK_CLIENT_SECRET - TikTok Login Kit client secret
 # OAUTH_REDIRECT_BASE - Base URL for callbacks (e.g., https://verifier.divine.video)
+#
+# Confirmation gate (leave CONFIRMATION_GATE unset here; set it with
+# wrangler secret put so the mode can change without a deploy):
+# CONFIRMATION_GATE - off | shadow | on
+# CONFIRMATION_TESTERS - lowercase hex pubkeys, separated by commas or spaces
+# CONFIRMATION_ACCESS_URL - base URL of the access service
+# CONFIRMATION_ACCESS_TOKEN - bearer token for the access service
 
 [[kv_namespaces]]
 binding = "CACHE_KV"

@@ -30,6 +30,17 @@ export type Bindings = {
   // platforms' links stop counting and new sign-ins and confirmations are
   // refused, unlike removing credentials, which only stops new sign-ins.
   SIGNIN_LINKS_OFF?: string
+  // "off" (unset), "shadow" or "on": whether Divine Confirmation gates access.
+  // Any other value is treated as "off".
+  CONFIRMATION_GATE?: string
+  // A Worker secret listing lowercase hex pubkeys (separated by commas or
+  // spaces) that are treated as having Confirmation, in every gate mode,
+  // without asking the access service.
+  CONFIRMATION_TESTERS?: string
+  // Base URL of the access service the gate asks whether a pubkey has Confirmation.
+  CONFIRMATION_ACCESS_URL?: string
+  // A Worker secret: the bearer token the access service requires.
+  CONFIRMATION_ACCESS_TOKEN?: string
 }
 
 export type OAuthPlatform = 'twitter' | 'bluesky' | 'youtube' | 'tiktok'
@@ -72,6 +83,9 @@ export interface OAuthVerification {
   // The confirming event, so a later unlink can tell a newer list from an older one (#76).
   confirm_event_id?: string
   confirm_created_at?: number
+  // Saved while the Confirmation gate was on, so it counts only while the
+  // owner has Confirmation and the gate is on. Records without it are never checked.
+  access_required?: true
 }
 
 export type Platform = 'github' | 'twitter' | 'mastodon' | 'telegram' | 'bluesky' | 'discord' | 'youtube' | 'tiktok'
@@ -90,6 +104,7 @@ export type VerificationCode =
   | 'discord_npub_not_in_message'
   | 'temporarily_unavailable'
   | 'signin_expired'
+  | 'signin_needs_confirmation'
   | 'signin_account_changed'
 
 export interface VerifyClaim {
@@ -160,6 +175,9 @@ export interface PlatformInfo {
   // Days a confirmed sign-in link on this platform lasts, then the person signs
   // in again. Present where oauth is true.
   signin_expires_after_days?: number
+  // What a person needs before a sign-in link counts, while the Divine
+  // Confirmation gate is on. Present where oauth is true.
+  signin_requires?: 'confirmation'
 }
 
 export interface SignInCallbackResult {

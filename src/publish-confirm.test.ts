@@ -394,6 +394,38 @@ describe('publishing a link that is waiting for confirmation', () => {
     expect(h.store.has(PENDING_KEY)).toBe(true)
   })
 
+  it('explains confirmation_required without forgetting the waiting sign-in or signed event, so a retry after getting Confirmation succeeds', async () => {
+    const h = await publishHarness({
+      confirmAnswers: [
+        { status: 403, body: { code: 'confirmation_required', error: 'Linking by sign-in needs Divine Confirmation. Proof posts stay free.' } },
+        LINKED,
+      ],
+    })
+    await h.page.publishIdentityTagToNostr()
+    expect(h.published).toHaveLength(0)
+    expect(h.confirmBodies).toHaveLength(1)
+    expect(h.lastStatus()).toEqual(['publish-status', 'Linking by sign-in needs Divine Confirmation. Proof posts stay free.', 'error'])
+    expect(h.store.has(PENDING_KEY)).toBe(true)
+
+    await h.page.publishIdentityTagToNostr()
+    expect(h.signCount).toBe(1)
+    expect(h.confirmBodies).toHaveLength(2)
+    expect(h.confirmBodies[1].event.id).toBe(h.confirmBodies[0].event.id)
+    expect(h.published).toHaveLength(1)
+    expect(h.store.has(PENDING_KEY)).toBe(false)
+  })
+
+  it('explains confirmation_unavailable after retrying, and keeps the waiting sign-in', async () => {
+    const h = await publishHarness({
+      confirmAnswers: [{ status: 503, body: { code: 'confirmation_unavailable' } }],
+      deadlinePassed: true,
+    })
+    await h.page.publishIdentityTagToNostr()
+    expect(h.published).toHaveLength(0)
+    expect(h.lastStatus()).toEqual(['publish-status', 'Divine Confirmation couldn\'t be checked right now. Press Publish to try again.', 'error'])
+    expect(h.store.has(PENDING_KEY)).toBe(true)
+  })
+
   it('publishes a post proof from another account while a sign-in for the same account waits', async () => {
     const h = await publishHarness({ confirmAnswers: [LINKED], pendingPubkey: OTHER_PUBKEY, proof: '1234567890' })
     await h.page.publishIdentityTagToNostr()
