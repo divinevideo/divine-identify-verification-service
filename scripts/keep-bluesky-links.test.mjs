@@ -100,6 +100,15 @@ describe('keepBlueskyLinks', () => {
     expect(api.store.get(key('b')).expiration).toBeUndefined()
   })
 
+  it('does not keep again a record retired because its account was gone for the long term', async () => {
+    // A retired record has a 30-day expiry on purpose (retireSignIn, src/oauth/signin-records.ts).
+    const api = fake([[key('a'), { value: record({ retired: true }), expiration: EXP }]])
+    const counts = await run(api, { write: true })
+    expect(counts).toMatchObject({ listed: 1, expiring: 1, eligible: 0, kept: 0 })
+    expect(api.puts()).toHaveLength(0)
+    expect(api.store.get(key('a')).expiration).toBe(EXP)
+  })
+
   it('a second real run writes nothing', async () => {
     const api = fake(sample())
     await run(api, { write: true })
@@ -252,6 +261,11 @@ describe('isKeptRecord', () => {
       { ...base, account_id: '' }, { ...base, platform: 'github' }, { ...base, kept: true },
     ]
     for (const r of table) expect(isKeptRecord(r)).toBe(keepsUntilUnlinked(r))
+  })
+  it('rejects a retired record, which keepsUntilUnlinked still accepts', () => {
+    const retired = { platform: 'bluesky', identity: 'x', pubkey: PK, confirmed: true, account_id: 'did:plc:abc', checked_at: 1, retired: true }
+    expect(keepsUntilUnlinked(retired)).toBe(true)
+    expect(isKeptRecord(retired)).toBe(false)
   })
   it('rejects non-objects', () => {
     for (const v of [null, 'x', 3, [], undefined]) expect(isKeptRecord(v)).toBe(false)

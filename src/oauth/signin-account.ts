@@ -85,22 +85,29 @@ async function youTubeChannelStillMatches(env: Bindings, record: OAuthVerificati
   return 'channelId' in lookup && lookup.channelId === record.account_id
 }
 
-/** `moved`: the claim no longer names the account that signed in. `inactive`: it does, but the account's host says it is gone. */
-export type SignInAccountCheck = 'matches' | 'moved' | 'inactive'
+/**
+ * `moved`: the claim no longer names the account that signed in. `inactive`
+ * and `gone`: the account's host says the account that signed in is no longer
+ * active, paused or unclear (`inactive`) or gone for the long term (`gone`,
+ * bluesky-account-status.ts), and either the claim still names that account or
+ * the handle lookup couldn't tell which account it names.
+ */
+export type SignInAccountCheck = 'matches' | 'moved' | 'inactive' | 'gone'
 
 /**
- * What the account check found for a Bluesky sign-in. `{ movedTo }`: the claim
- * now names another account, whose DID is given, so a proof post or
- * identity-link record on that account can still verify it. `moved`: the claim
- * names no account such a check could find (a look-alike spelling, or a handle
- * that no longer resolves).
+ * What the account check found for a Bluesky sign-in. `inactive` and `gone`:
+ * as in SignInAccountCheck. `{ movedTo }`: the claim now names another account,
+ * whose DID is given, so a proof post or identity-link record on that account
+ * can still verify it. `moved`: the claim names no account such a check could
+ * find (a look-alike spelling, or a handle that no longer resolves).
  */
-export type BlueskySignInAccount = 'matches' | 'inactive' | 'moved' | { movedTo: string }
+export type BlueskySignInAccount = 'matches' | 'inactive' | 'gone' | 'moved' | { movedTo: string }
 
 // Whether the account itself is still active on its host (bluesky-account-status.ts).
 // An answer that couldn't be had keeps the link counting.
-async function blueskyAccountCheck(env: Bindings, did: string): Promise<'matches' | 'inactive'> {
-  return (await blueskyAccountStatus(env, did)) === 'inactive' ? 'inactive' : 'matches'
+async function blueskyAccountCheck(env: Bindings, did: string): Promise<'matches' | 'inactive' | 'gone'> {
+  const status = await blueskyAccountStatus(env, did)
+  return status === 'inactive' || status === 'gone' ? status : 'matches'
 }
 
 /**
@@ -109,7 +116,7 @@ async function blueskyAccountCheck(env: Bindings, did: string): Promise<'matches
  * it, and in both cases only while the account's host still reports it active.
  * An older record without the account's id keeps the record as it is, and so
  * does a handle lookup Bluesky couldn't answer, unless the host reports the
- * account inactive.
+ * account inactive or gone.
  */
 export async function blueskySignInAccount(env: Bindings, record: OAuthVerification, identity: string): Promise<BlueskySignInAccount> {
   if (!record.account_id) return 'matches'
@@ -123,11 +130,11 @@ export async function blueskySignInAccount(env: Bindings, record: OAuthVerificat
   // The status lookup needs only the saved DID, so it runs alongside the handle
   // lookup. Its answer is used when the handle still points to that account,
   // and also when the handle lookup couldn't answer: no handle answer could
-  // make an inactive account's sign-in count (the same DID is inactive,
-  // another DID goes to the check for other evidence, no DID means it moved),
-  // so a known-inactive account stops counting even then. It is left unread
-  // otherwise, hence the catch, which keeps an unread failure from going
-  // unhandled; an awaited one still throws.
+  // make an inactive or gone account's sign-in count (the same DID is not
+  // active, another DID goes to the check for other evidence, no DID means it
+  // moved), so a known-inactive or gone account stops counting even then. It
+  // is left unread otherwise, hence the catch, which keeps an unread failure
+  // from going unhandled; an awaited one still throws.
   const status = blueskyAccountCheck(env, record.account_id)
   status.catch(() => {})
   const lookup = await lookUpHandle(env, identity)
@@ -142,7 +149,7 @@ export async function blueskySignInAccount(env: Bindings, record: OAuthVerificat
  * Bluesky, blueskySignInAccount; a YouTube record saved with its channel id
  * likewise (youTubeChannelStillMatches). An older record without the account's
  * id, other platforms, and a lookup the platform couldn't answer all keep the
- * record as it is, except a Bluesky account its host reports inactive.
+ * record as it is, except a Bluesky account its host reports inactive or gone.
  */
 export async function signInAccountStillMatches(env: Bindings, record: OAuthVerification, identity: string): Promise<SignInAccountCheck> {
   if (!record.account_id) return 'matches'

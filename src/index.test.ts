@@ -584,7 +584,7 @@ Content-Type: application/json
     const docs = oauthDocsSection(await docsHtml())
     expect(docs).toContain("The sign-in returns to <code>return_url</code> (the verifier page, or the Divine app's return address) with a one-time code after the <code>#</code>.")
     expect(docs).toContain('The link counts once the account owner sends that code, the start secret and their signed linked-accounts list to <code>/auth/confirm</code>.')
-    expect(docs).toContain("A sign-in counts only after you confirm it by publishing. A confirmed Bluesky sign-in lasts until it is unlinked; other sign-in links last 30 days from when you confirmed them, and after that you sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting unless the account's host reports the account inactive. A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated, suspended or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting and the host is asked again after a minute.")
+    expect(docs).toContain("A sign-in counts only after you confirm it by publishing. A confirmed Bluesky sign-in lasts until it is unlinked, unless the account's host reports the account deleted or taken down: then the link stops counting at once, and its record ends 30 days later unless the account comes back. Other sign-in links last 30 days from when you confirmed them, and after that you sign in again. A Bluesky sign-in claimed by handle also stops counting once the handle points to another account or no longer resolves. Bluesky's answer is reused for up to an hour, and while Bluesky can't answer, the link keeps counting unless the account's host reports the account inactive. A claim of the account's DID must match the DID saved at sign-in. For a claim by handle or by DID, the account's host is also asked whether the account is still active, and a deleted, deactivated, suspended or taken-down account stops counting. That answer is reused for up to an hour (five minutes for an inactive account), and while the host can't answer, the link keeps counting and the host is asked again after a minute.")
     expect(docs).not.toContain('without asking Bluesky')
     expect(docs).not.toMatch(/no fixed lifetime|re-checked at each verification/)
   })
@@ -912,7 +912,7 @@ describe('how long sign-in links last, on the page', () => {
 
   it('says which /platforms entries include signin_expires_after_days', async () => {
     const html = await docsHtml()
-    expect(html).toContain('Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts. Bluesky leaves it out, because a confirmed Bluesky link lasts until it is unlinked.')
+    expect(html).toContain('Where sign-in is set up (<code>oauth</code> is <code>true</code>), the entry also includes <code>signin_expires_after_days</code>: how many days a confirmed sign-in link lasts. Bluesky leaves it out, because a confirmed Bluesky link lasts until it is unlinked, unless the account\'s host reports the account deleted or taken down.')
   })
 })
 

@@ -1,24 +1,30 @@
 // ABOUTME: Whether a Bluesky account is still active on its own host, asked of the PDS that hosts it,
 // ABOUTME: so a sign-in link stops counting once the account is deleted or deactivated.
+// ABOUTME: It tells an account gone for the long term (`gone`) from one paused or unclear (`inactive`).
 import type { Bindings } from '../types'
 import { didDocumentSource, getPdsEndpoint, hasPdsService, isMalformedDid, type DidDocument } from '../atproto'
 import { discardBody, fetchFromPlatform, PlatformUnavailableError, readJson, throwIfUnanswered, withinTimeBudget } from '../platforms/base'
 import { fetchPublic } from '../utils/safe-fetch'
 
-/** `null` means the lookup couldn't tell, which keeps a link counting. */
-export type AccountStatus = 'active' | 'inactive' | null
+/**
+ * `inactive`: paused or unclear, so the account may come back soon. `gone`:
+ * gone for the long term, though it can still come back. Both stop a link
+ * counting; only how long its record is kept differs (signin-records.ts).
+ * `null` means the lookup couldn't tell, which keeps a link counting.
+ */
+export type AccountStatus = 'active' | 'inactive' | 'gone' | null
 
 // Cached like the handle lookup in signin-account.ts: an active answer for an
-// hour, an inactive one for five minutes, so a reactivated account verifies
-// again soon. "Couldn't tell" is remembered for a minute, Cloudflare KV's
-// shortest lifetime, under a value of its own that reads back as null: the
-// link keeps counting, and the claims and status requests that follow within
-// that minute don't ask the host again.
+// hour, an inactive or gone one for five minutes, so a reactivated account
+// verifies again soon. "Couldn't tell" is remembered for a minute, Cloudflare
+// KV's shortest lifetime, under a value of its own that reads back as null:
+// the link keeps counting, and the claims and status requests that follow
+// within that minute don't ask the host again.
 const ACTIVE_TTL = 60 * 60
 const INACTIVE_TTL = 5 * 60
 const UNKNOWN_TTL = 60
 const UNKNOWN = 'unknown'
-const TTL = { active: ACTIVE_TTL, inactive: INACTIVE_TTL, [UNKNOWN]: UNKNOWN_TTL } as const
+const TTL = { active: ACTIVE_TTL, inactive: INACTIVE_TTL, gone: INACTIVE_TTL, [UNKNOWN]: UNKNOWN_TTL } as const
 // The whole lookup (DID document, then the PDS) gets the handle lookup's 3 seconds.
 const LOOKUP_BUDGET_MS = 3000
 
@@ -50,7 +56,7 @@ async function rememberUnknown(env: Bindings, did: string): Promise<void> {
     console.warn('Bluesky account status cache unreadable:', err instanceof Error ? err.name : 'unknown')
     return
   }
-  if (current === 'active' || current === 'inactive') return
+  if (current === 'active' || current === 'inactive' || current === 'gone') return
   await remember(env, did, UNKNOWN)
 }
 
@@ -61,10 +67,10 @@ export async function forgetBlueskyAccountStatus(env: Bindings, did: string): Pr
 
 // The DID document for `did`, or a verdict when the lookup says the account is
 // gone. Unlike resolveDidDocument (src/atproto.ts), which folds every failed
-// status into "no document", this tells "the identity is gone" (inactive) from
-// "the lookup didn't say" (null), because a doubtful answer must keep a link
-// counting.
-async function lookUpDidDocument(did: string): Promise<DidDocument | 'inactive' | null> {
+// status into "no document", this tells "the identity is gone" (gone or
+// inactive) from "the lookup didn't say" (null), because a doubtful answer must
+// keep a link counting.
+async function lookUpDidDocument(did: string): Promise<DidDocument | 'inactive' | 'gone' | null> {
   // Held to did:plc's and did:web's exact syntax: PLC answers 404 for a DID it
   // doesn't know, which would read as gone, so a DID that can't name an
   // account isn't asked about.
@@ -77,11 +83,18 @@ async function lookUpDidDocument(did: string): Promise<DidDocument | 'inactive' 
   throwIfUnanswered(resp, label)
   // PLC: 404 "DID Not Found", 410 "DID Not Available (Tombstone)"
   // (did-method-plc, website/spec/plc-server-openapi3.yaml). atproto.com/specs/account:
-  // a tombstoned identity's hosting status is interpreted as `deleted`.
-  // A did:web host answering the same for did.json has no identity to host.
+  // a tombstoned identity is "implied to be permanent and final, but can
+  // technically be reversed in certain conditions", and "if the account's
+  // identity is `tombstoned`, the account hosting status should be interpreted
+  // as `deleted`", so it is gone. The spec says nothing about a DID PLC
+  // doesn't know (404); one this account signed in with is treated as gone by
+  // decision (#90), not by the text quoted. A did:web host answering the same
+  // for did.json has no identity to host for now, but a did:web document lives
+  // on a web server that can lose it and serve it again (a misconfigured
+  // server, a lapsed domain), so that is inactive, not gone.
   if (resp.status === 404 || resp.status === 410) {
     await discardBody(resp)
-    return 'inactive'
+    return did.startsWith('did:plc:') ? 'gone' : 'inactive'
   }
   // Anything else that isn't a 200 (a 401 or 403 from a CDN challenge, a 400,
   // a redirect) says nothing about the account.
@@ -99,9 +112,9 @@ async function lookUpDidDocument(did: string): Promise<DidDocument | 'inactive' 
   return doc as DidDocument
 }
 
-async function askHost(did: string): Promise<'active' | 'inactive' | null> {
+async function askHost(did: string): Promise<AccountStatus> {
   const doc = await lookUpDidDocument(did)
-  if (doc === null || doc === 'inactive') return doc
+  if (doc === null || doc === 'inactive' || doc === 'gone') return doc
   // A DID document that lists no PDS has no hosting, so no account. One that
   // lists a PDS this service won't call (not https, or a private host) is
   // doubtful, not proof the account is gone.
@@ -142,18 +155,25 @@ async function askHost(did: string): Promise<'active' | 'inactive' | null> {
   // atproto.com/specs/account: deleted, deactivated, takendown and suspended
   // all have `active: false`, and services "should use the `active` flag"
   // rather than the `status` string. A body without a boolean `active` isn't
-  // the lexicon's shape, so it isn't an answer.
-  const body = await readJson<{ active?: unknown }>(resp, label)
+  // the lexicon's shape, so it isn't an answer. So `active` alone decides
+  // whether the link counts; the status only decides how long an inactive
+  // account's record is kept. The same spec says `deleted` and `takendown` are
+  // "implied permanent or long-term, though may be reverted", so they are gone;
+  // `deactivated` and `suspended` are "implied time-limited", and any other or
+  // missing status says nothing more, so those are inactive.
+  const body = await readJson<{ active?: unknown, status?: unknown }>(resp, label)
   if (typeof body?.active !== 'boolean') return null
-  return body.active ? 'active' : 'inactive'
+  if (body.active) return 'active'
+  return body.status === 'deleted' || body.status === 'takendown' ? 'gone' : 'inactive'
 }
 
 /**
- * Whether the account behind `did` is still active on the host that serves it.
- * Answers `null` when that can't be told (an outage, a timeout, a host that
- * doesn't answer the way the lexicon says), and the caller keeps counting the
- * link: atproto.com/specs/account says "if an account's current active PDS is
- * not available, account status should remain unchanged".
+ * Whether the account behind `did` is still active on the host that serves it,
+ * and if not, whether it is gone for the long term (`gone`) or paused or
+ * unclear (`inactive`). Answers `null` when that can't be told (an outage, a
+ * timeout, a host that doesn't answer the way the lexicon says), and the caller
+ * keeps counting the link: atproto.com/specs/account says "if an account's
+ * current active PDS is not available, account status should remain unchanged".
  */
 export async function blueskyAccountStatus(env: Bindings, did: string): Promise<AccountStatus> {
   // A cache that can't be read is a miss, not a failed lookup.
@@ -163,10 +183,10 @@ export async function blueskyAccountStatus(env: Bindings, did: string): Promise<
   } catch (err) {
     console.warn('Bluesky account status cache unreadable:', err instanceof Error ? err.name : 'unknown')
   }
-  if (cached === 'active' || cached === 'inactive') return cached
+  if (cached === 'active' || cached === 'inactive' || cached === 'gone') return cached
   if (cached === UNKNOWN) return null
 
-  let status: 'active' | 'inactive' | null
+  let status: AccountStatus
   try {
     status = await withinTimeBudget(askHost(did), LOOKUP_BUDGET_MS, 'Bluesky account status')
   } catch (err) {

@@ -80,7 +80,8 @@ describe('storing a sign-in record', () => {
 
   // A confirmed Bluesky record with its DID has no expiry (#90); other confirmed
   // records end at the same 30 days as the age check (signin-lifetime.ts).
-  // `kept` is set only for the first case, and a stale one is stripped.
+  // `kept` is set only for the first case, and a stale one is stripped, as is a
+  // `retired` mark (an un-retired record is stored like a new one).
   it.each([
     ['a confirmed Bluesky record with its DID', { platform: 'bluesky', identity: 'alice.bsky.social', account_id: DID, handle: 'alice.bsky.social', confirmed: true }, undefined, true],
     ['a confirmed Bluesky record without account_id', { platform: 'bluesky', identity: 'alice.bsky.social', confirmed: true }, { expirationTtl: 30 * DAY }, false],
@@ -89,7 +90,7 @@ describe('storing a sign-in record', () => {
     ['an unconfirmed Bluesky record', { platform: 'bluesky', identity: 'alice.bsky.social', account_id: DID }, { expirationTtl: DAY }, false],
   ] as const)('stores %s with the right expiry and kept flag', async (_label, fields, ttl, kept) => {
     const { kv, put, store } = spyKV()
-    const rec = { ...base, ...fields, kept: true } as unknown as OAuthVerification
+    const rec = { ...base, ...fields, kept: true, retired: true } as unknown as OAuthVerification
     await storeOAuthVerification(kv, rec)
     expect(put).toHaveBeenCalledTimes(1)
     const call = put.mock.calls[0] as unknown as unknown[]
@@ -99,15 +100,16 @@ describe('storing a sign-in record', () => {
     expect(stored).toMatchObject(fields)
     if (kept) expect(stored.kept).toBe(true)
     else expect(stored).not.toHaveProperty('kept')
+    expect(stored).not.toHaveProperty('retired')
   })
 
-  it('retire stores the record for 30 days without kept', async () => {
+  it('retire stores the record for 30 days without kept, marked retired', async () => {
     const { kv, put } = spyKV()
     const rec = { ...base, platform: 'bluesky', identity: 'alice', account_id: DID, confirmed: true } as const
     await retireOAuthVerification(kv, { ...rec, kept: true } as OAuthVerification)
     const call = put.mock.calls[0] as unknown as unknown[]
     expect(RETIRE_TTL_SECONDS).toBe(30 * DAY)
     expect(call[2]).toEqual({ expirationTtl: RETIRE_TTL_SECONDS })
-    expect(JSON.parse(call[1] as string)).toEqual(rec)
+    expect(JSON.parse(call[1] as string)).toEqual({ ...rec, retired: true })
   })
 })

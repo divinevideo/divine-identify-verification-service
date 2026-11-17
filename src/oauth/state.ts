@@ -42,10 +42,11 @@ export const RETIRE_TTL_SECONDS = CONFIRMED_TTL_SECONDS
 // stored for 30 days like the other platforms'. If the
 // code is rolled back to before #90, a kept record stays stored until it is
 // unlinked, but the older age check stops counting it after 30 days, while
-// other records still end at 30 days as before.
+// other records still end at 30 days as before. Any `kept` or `retired` mark
+// passed in is dropped, so a retired record stored again is stored like a new one.
 export async function storeOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
   const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
-  const { kept: _kept, ...record } = verification
+  const { kept: _kept, retired: _retired, ...record } = verification
   if (keepsUntilUnlinked(record)) {
     await kv.put(key, JSON.stringify({ ...record, kept: true }))
     return
@@ -55,11 +56,13 @@ export async function storeOAuthVerification(kv: KVNamespace, verification: OAut
 }
 
 // Gives a kept record an expiry again, for an account that is gone for the long
-// term, so it stops lingering forever. It ends after 30 days like other links.
+// term, so it stops lingering forever. It ends after 30 days like other links,
+// marked `retired` so it can be kept again if the account comes back first
+// (unretireSignIn in signin-records.ts).
 export async function retireOAuthVerification(kv: KVNamespace, verification: OAuthVerification): Promise<void> {
   const key = oauthVerificationKey(verification.platform, verification.identity, verification.pubkey)
   const { kept: _kept, ...record } = verification
-  await kv.put(key, JSON.stringify(record), { expirationTtl: RETIRE_TTL_SECONDS })
+  await kv.put(key, JSON.stringify({ ...record, retired: true }), { expirationTtl: RETIRE_TTL_SECONDS })
 }
 
 export async function getOAuthVerification(

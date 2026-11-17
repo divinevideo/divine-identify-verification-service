@@ -9,7 +9,7 @@ import { verifyEventSignature, asLinkedAccountsList, LINKED_ACCOUNTS_MAX_SECONDS
 import { deleteOAuthVerification, getOAuthVerification, getOAuthState, deleteOAuthState } from '../oauth/state'
 import { listHoldsClaim, listIsNewerThanLink, readNostrAuthorization, sha256Hex, UNLINK_MAX_SECONDS_BEHIND } from '../oauth/unlink-proof'
 import { tidyClaim } from '../utils/tidy-claim'
-import { getCountedSignIn } from '../oauth/signin-records'
+import { getCountedSignIn, retireSignIn, unretireSignIn } from '../oauth/signin-records'
 import { signInAccountStillMatches } from '../oauth/signin-account'
 import { signInConfirmationMode, confirmCodePlacement, isSignInToken, type ConfirmCodePlacement } from '../oauth/confirm'
 import { startTwitterOAuth, handleTwitterCallback } from '../oauth/twitter'
@@ -560,7 +560,12 @@ auth.get('/:platform/status', async (c) => {
   const normalizedPubkey = normalizePubkey(pubkey)
   const verification = await getCountedSignIn(c.env, platform, identity, normalizedPubkey)
 
-  if (verification && await signInAccountStillMatches(c.env, verification, identity) === 'matches') {
+  // A retired record that counts again is kept again, and a kept one whose
+  // account is gone for the long term is retired (signin-records.ts), as /verify does.
+  const account = verification ? await signInAccountStillMatches(c.env, verification, identity) : null
+  if (verification && account === 'gone') await retireSignIn(c.env, verification)
+  if (verification && account === 'matches') {
+    await unretireSignIn(c.env, verification)
     return c.json({
       platform,
       identity: verification.identity,

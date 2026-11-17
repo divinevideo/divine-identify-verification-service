@@ -1,13 +1,13 @@
 // ABOUTME: Saving sign-in records, confirmed or not, holding finished sign-ins
 // ABOUTME: and reading the ones that count. Confirming is in confirm.ts (#113).
 import type { Bindings, OAuthState, OAuthVerification, SignInCallbackResult } from '../types'
-import { getOAuthVerification, storeOAuthVerification, oauthVerificationKey } from './state'
+import { getOAuthVerification, storeOAuthVerification, oauthVerificationKey, retireOAuthVerification } from './state'
 import { forgetHandleLookup } from './signin-account'
-import { forgetBlueskyAccountStatus } from './bluesky-account-status'
+import { blueskyAccountStatus, forgetBlueskyAccountStatus } from './bluesky-account-status'
 import { signInConfirmationMode, newConfirmCode, storePendingSignIn, type SignedInAccount } from './confirm'
 import { confirmationGate } from './confirmation-gate'
 import { confirmationAccess, type ConfirmationAccess } from './confirmation-access'
-import { signInIsCurrent } from './signin-lifetime'
+import { keepsUntilUnlinked, signInIsCurrent } from './signin-lifetime'
 import { signInLinksAreOff } from './signin-switch'
 import { forgetYouTubeHandleLookup } from '../platforms/youtube-handle'
 import { parseYouTubeIdentity } from '../utils/youtube-identity'
@@ -144,6 +144,85 @@ export async function signInStanding(
 /** The sign-in record for a claim, if it counts (see signInStanding). The single reader. */
 export async function getCountedSignIn(env: Bindings, platform: string, identity: string, pubkey: string): Promise<OAuthVerification | null> {
   return (await signInStanding(env, platform, identity, pubkey)).counted
+}
+
+// Rewrites a sign-in's records with `write`: a Bluesky sign-in saved under both
+// a handle and a DID is rewritten under both, so the two stay a pair that
+// lasts, and unlinks, together. The other record is rewritten only while it
+// still belongs to this sign-in (same account and handle, the rule
+// deleteOAuthVerification uses: after a handle change, the DID record belongs
+// to the newer sign-in) and is in the same state (`applies`). The record read
+// goes last, so a rewrite that fails partway is tried again on the next read.
+async function rewriteSignIn(
+  env: Bindings,
+  record: OAuthVerification,
+  applies: (record: OAuthVerification) => boolean,
+  write: (kv: KVNamespace, record: OAuthVerification) => Promise<void>,
+): Promise<void> {
+  if (record.platform === 'bluesky' && record.account_id) {
+    const others = new Set([record.handle, record.account_id]
+      .filter((id): id is string => !!id && id.toLowerCase() !== record.identity.toLowerCase())
+      .map(id => id.toLowerCase()))
+    for (const id of others) {
+      const other = await getOAuthVerification(env.CACHE_KV, record.platform, id, record.pubkey)
+      if (other && other.account_id === record.account_id && other.handle === record.handle && applies(other)) {
+        await write(env.CACHE_KV, other)
+      }
+    }
+  }
+  await write(env.CACHE_KV, record)
+}
+
+const isKept = (record: OAuthVerification) => record.kept === true
+const isRetired = (record: OAuthVerification) => record.retired === true && keepsUntilUnlinked(record)
+
+/**
+ * For a sign-in whose account is gone for the long term (bluesky-account-status.ts):
+ * a kept record, and the other record of its pair, get a 30-day expiry
+ * (retireOAuthVerification). A record that isn't kept already has an expiry,
+ * so it is left as it is, and a record retired once is not retired again.
+ * Best effort: a failed write leaves the answer as it is, and the next read
+ * that finds the account gone tries again.
+ */
+export async function retireSignIn(env: Bindings, record: OAuthVerification): Promise<void> {
+  // A write on read, with the same stale-read window as unretireSignIn: a KV
+  // read can return a record for up to about 60 seconds after an unlink
+  // deleted it, so a retire in that window stores the unlinked record again
+  // for 30 days. See unretireSignIn for why this is accepted.
+  if (!isKept(record)) return
+  try {
+    await rewriteSignIn(env, record, isKept, retireOAuthVerification)
+  } catch (err) {
+    console.warn('Sign-in record not retired:', err instanceof Error ? err.name : 'unknown')
+  }
+}
+
+/**
+ * For a retired sign-in that counts again because its account reads active
+ * once more: the record, and the other record of its pair, are stored kept with
+ * no expiry again (storeOAuthVerification). Best effort, like retireSignIn.
+ */
+export async function unretireSignIn(env: Bindings, record: OAuthVerification): Promise<void> {
+  // Only a retired record is stored again on read, never any other, whatever
+  // its expiry. A KV read can return a record for up to about 60 seconds after
+  // an unlink deleted it, so storing again on read could bring an unlinked
+  // record back with no expiry. Limited to retired records, that needs three
+  // things to line up: the owner unlinks while the account is gone, a stale
+  // read within those 60 seconds retires the deleted record back for 30 days
+  // (retireSignIn), and the account is restored within those 30 days, when
+  // this keeps it with no expiry. That is accepted as narrow; KV has no
+  // compare-and-set to close it. Unlinking again deletes the record.
+  if (!isRetired(record) || !record.account_id) return
+  try {
+    // A link counts while the account's status can't be told (the outage
+    // rule), but only an active answer says the account came back. The answer
+    // the check just remembered is read again, so this asks the host only if it
+    // couldn't be remembered.
+    if (await blueskyAccountStatus(env, record.account_id) !== 'active') return
+    await rewriteSignIn(env, record, isRetired, storeOAuthVerification)
+  } catch (err) {
+    console.warn('Sign-in record not kept again:', err instanceof Error ? err.name : 'unknown')
+  }
 }
 
 /**

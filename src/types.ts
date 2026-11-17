@@ -85,6 +85,9 @@ export interface OAuthVerification {
   confirm_created_at?: number
   // Stored with no expiry (#90). Set only by storeOAuthVerification, for confirmed Bluesky records.
   kept?: true
+  // Given a 30-day expiry again because its account was gone for the long term
+  // (#90). Set only by retireOAuthVerification; storeOAuthVerification drops it.
+  retired?: true
   // Saved while the Confirmation gate was on, so it counts only while the
   // owner has Confirmation and the gate is on. Records without it are never checked.
   access_required?: true

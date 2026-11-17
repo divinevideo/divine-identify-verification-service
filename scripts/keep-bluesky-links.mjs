@@ -9,10 +9,13 @@ export const PREFIX = 'oauth_verified:bluesky:'
 
 // Mirrors keepsUntilUnlinked (src/oauth/signin-lifetime.ts) on a parsed stored value.
 // Requiring a non-empty string account_id is deliberately stricter than its `!!account_id`, because stored values are raw JSON.
+// A retired record is skipped: its 30-day expiry was set on purpose, because its
+// account was gone for the long term (retireSignIn, src/oauth/signin-records.ts).
 export function isKeptRecord(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value)
     && value.platform === 'bluesky' && value.confirmed === true
     && typeof value.account_id === 'string' && value.account_id !== ''
+    && value.retired !== true
 }
 
 // Key names hold handles, DIDs and pubkeys, and URLs hold the key names, so no
