@@ -54,12 +54,18 @@ async function single(env: Bindings, platform: string, identity: string, proof: 
   return await res.json() as Answer
 }
 
-async function batch(env: Bindings, platform: string, identity: string, proof: string): Promise<Answer> {
+type Claim = { platform: string; identity: string; proof: string; pubkey: string }
+
+async function postClaims(env: Bindings, claims: readonly Claim[]): Promise<Answer[]> {
   const res = await worker.fetch(new Request('https://verifier.divine.video/verify', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ claims: [{ platform, identity, proof, pubkey: PUBKEY }] }),
+    body: JSON.stringify({ claims }),
   }), env)
-  return (await res.json() as { results: Answer[] }).results[0]
+  return (await res.json() as { results: Answer[] }).results
+}
+
+async function batch(env: Bindings, platform: string, identity: string, proof: string): Promise<Answer> {
+  return (await postClaims(env, [{ platform, identity, proof, pubkey: PUBKEY }]))[0]
 }
 
 async function link(env: Bindings, platform: string, identity: string, proof: string): Promise<Answer> {
@@ -70,19 +76,23 @@ async function link(env: Bindings, platform: string, identity: string, proof: st
 const ROUTES = [['single', single], ['batch', batch], ['link', link]] as const
 const ACCOUNTS = [['twitter', 'jack'], ['youtube', '@somechannel'], ['tiktok', 'someone']] as const
 
-function markedRecord(store: Map<string, string>, platform: string, identity: string, { marked = true, ageDays = 0 } = {}) {
-  store.set(oauthVerificationKey(platform as 'twitter', identity, PUBKEY), JSON.stringify({
-    platform, identity, pubkey: PUBKEY, verified: true, method: 'oauth',
+function markedRecord(store: Map<string, string>, platform: string, identity: string, { marked = true, ageDays = 0, pubkey = PUBKEY } = {}) {
+  store.set(oauthVerificationKey(platform as 'twitter', identity, pubkey), JSON.stringify({
+    platform, identity, pubkey, verified: true, method: 'oauth',
     checked_at: Math.floor(Date.now() / 1000) - ageDays * 24 * 60 * 60, confirmed: true,
     ...(marked ? { access_required: true } : {}),
   }))
 }
 
-// The access service answers for PUBKEY; everything else (Bluesky) falls through to routes or 404.
-function access(answer: 'yes' | 'no' | 'down', routes?: (url: string) => Response | null) {
+type AccessAnswer = 'yes' | 'no' | 'down'
+
+// The access service answers for PUBKEY, or for each pubkey in a map; everything else (Bluesky) falls through to routes or 404.
+function access(answer: AccessAnswer | Record<string, AccessAnswer>, routes?: (url: string) => Response | null) {
+  const answers = new Map(Object.entries(typeof answer === 'string' ? { [PUBKEY]: answer } : answer))
   fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input)
-    if (url === `${ACCESS_URL}/${PUBKEY}`) return answer === 'down' ? new Response('', { status: 500 }) : json({ isActive: answer === 'yes' })
+    const said = url.startsWith(`${ACCESS_URL}/`) ? answers.get(url.slice(ACCESS_URL.length + 1)) : undefined
+    if (said) return said === 'down' ? new Response('', { status: 500 }) : json({ isActive: said === 'yes' })
     return routes?.(url) ?? new Response('', { status: 404 })
   })
 }
@@ -95,7 +105,8 @@ function blueskyRoutes(records: unknown[]) {
     return null
   }
 }
-const accessCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).startsWith(ACCESS_URL)).length
+const accessUrls = () => fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith(ACCESS_URL))
+const accessCalls = () => accessUrls().length
 const BSKY = 'alice.bsky.social'
 const LINK_RECORD = {
   uri: `at://${DID}/video.divine.identity.link/nostr-npub`,
@@ -202,14 +213,7 @@ describe('gate on, edge cases', () => {
     for (const [platform, identity] of ACCOUNTS) markedRecord(store, platform, identity)
     access('no')
 
-    const res = await worker.fetch(new Request('https://verifier.divine.video/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        claims: ACCOUNTS.map(([platform, identity]) => ({ platform, identity, proof: 'oauth', pubkey: PUBKEY })),
-      }),
-    }), env)
-    const { results } = await res.json() as { results: Answer[] }
+    const results = await postClaims(env, ACCOUNTS.map(([platform, identity]) => ({ platform, identity, proof: 'oauth', pubkey: PUBKEY })))
 
     expect(results).toHaveLength(3)
     for (const result of results) {
@@ -218,6 +222,53 @@ describe('gate on, edge cases', () => {
     expect(accessCalls()).toBe(1)
     const accessWrites = kv.put.mock.calls.filter(([key]) => key === confirmationAccessKey(PUBKEY))
     expect(accessWrites).toHaveLength(1)
+  })
+
+  it('fetches and caches Confirmation access once when one pubkey batches a marked sign-in link, a marked Bluesky sign-in link and a proof post', async () => {
+    const { env, store, kv } = makeEnv()
+    markedRecord(store, 'twitter', 'jack')
+    markedRecord(store, 'bluesky', BSKY)
+    access('no', blueskyRoutes([]))
+    // Bluesky sign-in links and proof posts on sign-in platforms read the sign-in record on a path of their own.
+    const proof = 'https://x.com/jack/status/1234567890123456789'
+    const claim = storageForm({ platform: 'twitter', identity: 'jack', proof, pubkey: PUBKEY })!
+    store.set(cacheKey('twitter', claim.identity, claim.proof, PUBKEY), JSON.stringify({ verified: true, method: 'proof_post', checked_at: 1, type: 'verified' }))
+
+    const results = await postClaims(env, [
+      { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
+      { platform: 'bluesky', identity: BSKY, proof: 'oauth', pubkey: PUBKEY },
+      { platform: 'twitter', identity: 'jack', proof, pubkey: PUBKEY },
+    ])
+
+    expect(results[0]).toMatchObject({ verified: false, code: 'signin_needs_confirmation' })
+    expect(results[1]).toMatchObject({ verified: false, code: 'signin_needs_confirmation' })
+    expect(results[2]).toMatchObject({ verified: true, method: 'proof_post' })
+    expect(accessCalls()).toBe(1)
+    expect(kv.put.mock.calls.filter(([key]) => key === confirmationAccessKey(PUBKEY))).toHaveLength(1)
+  })
+
+  it('keeps Confirmation access per pubkey when one batch mixes marked sign-in links for two pubkeys', async () => {
+    // Differs from PUBKEY only in its middle byte, so an answer kept under a pubkey's first 32 or last 30 hex characters can't pass for it.
+    const OTHER = `${PUBKEY.slice(0, 32)}cd${PUBKEY.slice(34)}`
+    const { env, store, kv } = makeEnv()
+    // Two marked links per pubkey, so one ask per pubkey also shows each answer is shared.
+    const links = [['twitter', 'jack'], ['youtube', '@somechannel']] as const
+    const claims = [PUBKEY, OTHER].flatMap((pubkey) => links.map(([platform, identity]) => {
+      markedRecord(store, platform, identity, { pubkey })
+      return { platform, identity, proof: 'oauth', pubkey }
+    }))
+    access({ [PUBKEY]: 'yes', [OTHER]: 'no' })
+
+    const results = await postClaims(env, claims)
+
+    expect(results).toHaveLength(4)
+    for (const result of results.slice(0, 2)) expect(result).toMatchObject({ verified: true, method: 'oauth' })
+    for (const result of results.slice(2)) expect(result).toMatchObject({ verified: false, code: 'signin_needs_confirmation', error: NEEDS })
+    expect(accessUrls().sort()).toEqual([`${ACCESS_URL}/${PUBKEY}`, `${ACCESS_URL}/${OTHER}`])
+    // Each answer is cached once, under its own pubkey.
+    for (const [pubkey, answer] of [[PUBKEY, 'yes'], [OTHER, 'no']]) {
+      expect(kv.put.mock.calls.filter(([key]) => key === confirmationAccessKey(pubkey)).map(([, value]) => value)).toEqual([answer])
+    }
   })
 
   it('does not hold a sibling platform check behind a slow Confirmation check for a sign-in link', async () => {
@@ -240,20 +291,14 @@ describe('gate on, edge cases', () => {
       return new Response('', { status: 404 })
     })
 
-    const pending = worker.fetch(new Request('https://verifier.divine.video/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        claims: [
-          { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
-          { platform: 'github', identity: 'octocat', proof: 'proofsiblingx', pubkey: PUBKEY },
-        ],
-      }),
-    }), env)
+    const pending = postClaims(env, [
+      { platform: 'twitter', identity: 'jack', proof: 'oauth', pubkey: PUBKEY },
+      { platform: 'github', identity: 'octocat', proof: 'proofsiblingx', pubkey: PUBKEY },
+    ])
 
     await vi.waitFor(() => expect(githubFetched).toBe(true))
     releaseAccess()
-    const { results } = await (await pending).json() as { results: Answer[] }
+    const results = await pending
     expect(results[0]).toMatchObject({ verified: false, code: 'signin_needs_confirmation' })
     expect(results[1]).toMatchObject({ verified: false })
   })
