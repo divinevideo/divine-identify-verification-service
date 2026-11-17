@@ -159,16 +159,36 @@ describe('checking a Bluesky sign-in link', () => {
     expect(spentUnits(env)).toEqual([])
   })
 
-  it('trusts the record when Bluesky cannot be reached', async () => {
+  it('trusts the record when the handle lookup is down and the account is still active', async () => {
     const { env, store } = createEnv()
-    // The account host, asked alongside the handle lookup, would say inactive,
-    // but an outage on the handle lookup keeps the link counting whatever the
-    // host says, and makes no check for other evidence.
-    const { mock, fetched } = bluesky('unreachable', { active: false, status: 'deactivated' })
+    const { mock, fetched } = bluesky('unreachable')
+    vi.stubGlobal('fetch', mock)
+    store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
+    expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
+    expect(asksAccountHost(fetched)).toBe(true)
+    expect(fetched.some(u => u.includes('com.atproto.repo.listRecords'))).toBe(false)
+  })
+
+  it('trusts the record when neither the handle lookup nor the account host can be reached', async () => {
+    const { env, store } = createEnv()
+    const { mock, fetched } = bluesky('unreachable', 'unreachable')
     vi.stubGlobal('fetch', mock)
     store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
     expect(await check(env)).toMatchObject({ verified: true, method: 'oauth' })
     expect(fetched.some(u => u.includes('com.atproto.repo.listRecords'))).toBe(false)
+  })
+
+  it('stops verifying when the handle lookup is down but the account host says the account is inactive', async () => {
+    const { env, store } = createEnv()
+    // No handle answer could make this sign-in count: the same DID is
+    // inactive, another DID would go to the check for other evidence, and no
+    // DID means the handle moved. So the host's answer settles it.
+    const { mock, fetched } = bluesky('unreachable', { active: false, status: 'deactivated' })
+    vi.stubGlobal('fetch', mock)
+    store.set(oauthVerificationKey('bluesky', HANDLE, PUBKEY), signInRecord(HANDLE, DID))
+    expect(await check(env)).toMatchObject({ verified: false, code: 'signin_account_changed', error: INACTIVE })
+    expect(fetched.some(u => u.includes('com.atproto.repo.listRecords'))).toBe(false)
+    expect(spentUnits(env)).toEqual([])
   })
 
   it('asks the account host, not the handle lookup, for a claim made with the DID itself', async () => {
