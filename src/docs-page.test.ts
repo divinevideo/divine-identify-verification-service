@@ -131,7 +131,7 @@ describe('landing page after the move', () => {
     }
   })
 
-  const CONFIRMATION_TERMS = ['signin_requires', 'confirmation_required', 'confirmation_unavailable', 'signin_needs_confirmation', 'confirmation_gate', 'Divine Confirmation']
+  const CONFIRMATION_TERMS = ['signin_requires', 'confirmation_required', 'confirmation_unavailable', 'signin_needs_confirmation', 'confirmation_gate', 'Divine Confirmation', '/auth/confirmation-access']
 
   it('says nothing about Confirmation while the gate is off or shadow, byte for byte the same as unset', async () => {
     const unset = await (await get('/docs')).text()
